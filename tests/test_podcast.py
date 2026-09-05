@@ -10,6 +10,7 @@ import respx
 
 from markai.ingest.podcast import (
     NO_TRANSCRIPT_HINT,
+    _episode_page,
     _show_notes,
     ingest_podcast,
     load_feed_episodes,
@@ -316,3 +317,28 @@ def test_a_one_line_teaser_is_still_a_failure(respx_mock, settings, tmp_path):
         )
     assert [r for r in results if isinstance(r, Document)] == []
     assert len(results) == 1 and isinstance(results[0], IngestFailure)
+
+
+def test_the_episode_link_is_the_page_not_the_audio_file():
+    """This show's feed puts the mp3 in <link>; a citation must not be a 40 MB download."""
+    entry = {
+        "links": [
+            {"href": "https://traffic.test/SUCI476.mp3", "rel": "enclosure", "type": "audio/mpeg"}
+        ],
+        "id": "https://www.straightupchicagoinvestor.com/podcast/476",
+        "link": "https://traffic.test/SUCI476.mp3",
+    }
+    assert _episode_page(entry) == "https://www.straightupchicagoinvestor.com/podcast/476"
+
+
+def test_the_audio_link_is_kept_when_the_feed_offers_nothing_else():
+    entry = {"link": "https://traffic.test/SUCI476.mp3"}
+    assert _episode_page(entry) == "https://traffic.test/SUCI476.mp3"
+
+
+def test_a_normal_feed_link_is_left_alone():
+    entry = {
+        "links": [{"href": "https://suci.test/476", "rel": "alternate", "type": "text/html"}],
+        "link": "https://suci.test/476",
+    }
+    assert _episode_page(entry) == "https://suci.test/476"

@@ -14,6 +14,7 @@ from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -114,7 +115,7 @@ def load_feed_episodes(
             PodcastEpisode(
                 title=title or None,
                 episode=episode_number,
-                episode_url=entry.get("link"),
+                episode_url=_episode_page(entry),
                 audio_url=audio_url,
                 transcript_url=transcript_url,
                 published_at=published_at,
@@ -126,6 +127,50 @@ def load_feed_episodes(
     if max_episodes:
         episodes = episodes[:max_episodes]
     return episodes
+
+
+_MEDIA_SUFFIXES = (
+    ".mp3",
+    ".m4a",
+    ".m4v",
+    ".mp4",
+    ".mov",
+    ".wav",
+    ".ogg",
+    ".aac",
+    ".flac",
+    ".opus",
+)
+
+
+def _episode_page(entry: Any) -> str | None:
+    """The episode's own page, not its audio file.
+
+    This show's feed puts the enclosure URL in <link>, so citations would hand a landlord a
+    40 MB download where the show notes should be. Prefer any link the feed offers that is
+    not the media itself.
+    """
+    candidates: list[str] = []
+    for link in entry.get("links") or []:
+        if not isinstance(link, dict):
+            continue
+        href = str(link.get("href") or "")
+        rel = str(link.get("rel") or "")
+        media_type = str(link.get("type") or "")
+        if href and rel != "enclosure" and not media_type.startswith(("audio/", "video/")):
+            candidates.append(href)
+    guid = str(entry.get("id") or "")
+    if guid.startswith(("http://", "https://")):
+        candidates.append(guid)
+    fallback = str(entry.get("link") or "")
+    if fallback:
+        candidates.append(fallback)
+
+    for href in candidates:
+        path = urlsplit(href).path.lower()
+        if not path.endswith(_MEDIA_SUFFIXES):
+            return href
+    return fallback or None
 
 
 # Below this, a description is a one-line teaser rather than something worth storing.
