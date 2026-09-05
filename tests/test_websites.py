@@ -282,3 +282,40 @@ def test_broken_pages_cannot_run_past_max_pages(respx_mock, tmp_path, settings):
         list(ingest_websites([source], tmp_path, client, settings))
 
     assert broken.call_count <= 9, "the budget must cover attempts, not just successes"
+
+
+# --- links that are downloads, not pages ---------------------------------------------------
+
+
+def test_discover_links_skips_downloads_not_pages():
+    """48 image fetches per run spent 48 pages of the budget and 48 rows of the failure table."""
+    html = (
+        "".join(
+            f'<a href="/x{i}{suffix}">x</a>'
+            for i, suffix in enumerate([".jpg", ".png", ".pdf", ".zip", ".docx", ".css", ".woff2"])
+        )
+        + '<a href="/real-article">a</a><a href="/blog/2024/deposits">b</a>'
+    )
+    assert discover_links(html, "https://example.com/", [], []) == [
+        "https://example.com/real-article",
+        "https://example.com/blog/2024/deposits",
+    ]
+
+
+def test_a_dot_in_a_directory_name_does_not_look_like_a_file():
+    html = '<a href="/v1.2/guide">a</a><a href="/deposits">b</a>'
+    links = discover_links(html, "https://example.com/", [], [])
+    assert links == ["https://example.com/v1.2/guide", "https://example.com/deposits"]
+
+
+@respx.mock(assert_all_called=False)
+def test_a_pdf_listed_by_hand_is_still_attempted(respx_mock, tmp_path, settings):
+    """Filtering is for links we discover. What the owner typed, we try."""
+    respx_mock.get("https://example.com/robots.txt").mock(return_value=httpx.Response(404))
+    respx_mock.get("https://example.com/rlto.pdf").mock(
+        return_value=httpx.Response(200, content=b"%PDF", headers={"content-type": "text/html"})
+    )
+    source = WebsiteSource(url="https://example.com/rlto.pdf")
+    with httpx.Client() as client:
+        results = list(ingest_websites([source], tmp_path, client, settings))
+    assert len(results) == 1

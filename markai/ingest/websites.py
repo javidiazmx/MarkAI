@@ -36,6 +36,22 @@ _STRIP_TAGS = ["script", "style", "nav", "header", "footer", "aside", "noscript"
 _META_CHARSET_RE = re.compile(rb"""<meta[^>]+charset=["']?\s*([a-zA-Z0-9_\-]+)""", re.IGNORECASE)
 _WS_RE = re.compile(r"[ \t\r\f\v]+")
 
+# Links a crawler should never follow. Fetching them costs a request, spends a page from
+# max_pages, and lands in the failure table as "Not an HTML page" - noise that hides the
+# failures worth reading. A URL listed by hand in the manifest is still fetched: this only
+# filters links found while crawling.
+_NOT_A_PAGE = frozenset(
+    """
+    .jpg .jpeg .png .gif .webp .svg .ico .bmp .tif .tiff .avif .heic
+    .mp3 .mp4 .m4a .mov .avi .wmv .webm .wav .ogg .flac
+    .zip .gz .tgz .bz2 .7z .rar .dmg .exe .msi .pkg .apk
+    .doc .docx .xls .xlsx .ppt .pptx .odt .ods .rtf
+    .css .js .json .xml .rss .atom .txt .csv
+    .woff .woff2 .ttf .otf .eot
+    .pdf
+    """.split()
+)
+
 # Indirection so tests can neutralise politeness delays without patching ``time``.
 _sleep: Callable[[float], None] = time.sleep
 
@@ -224,6 +240,14 @@ def extract_main_text(html: str, url: str) -> tuple[str, str]:
     return title, text
 
 
+def _is_a_file_not_a_page(path: str) -> bool:
+    """True for a link that is plainly a download rather than a page to read."""
+    dot = path.rfind(".")
+    if dot == -1 or "/" in path[dot:]:
+        return False
+    return path[dot:].lower() in _NOT_A_PAGE
+
+
 def discover_links(
     html: str, base_url: str, include_patterns: list[str], exclude_patterns: list[str]
 ) -> list[str]:
@@ -247,6 +271,8 @@ def discover_links(
         if parts.scheme not in ("http", "https"):
             continue
         if _host_key(parts.netloc) != base_host:
+            continue
+        if _is_a_file_not_a_page(parts.path):
             continue
         canon = canonical_url(absolute)
         if canon in seen:
