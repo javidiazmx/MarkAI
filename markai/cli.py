@@ -11,6 +11,7 @@ from typing import Any
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
@@ -58,7 +59,23 @@ def _manifest(settings: Any) -> Any:
             "Run `mark init` to create one, then list your websites, videos and podcast in it.",
         )
     except Exception as exc:
-        _fail(f"sources.yaml is not valid: {exc}", "Fix the file and run `mark sources validate`.")
+        _fail(f"sources.yaml is not valid: {exc}", _yaml_hint(exc))
+
+
+def _yaml_hint(exc: Exception) -> str:
+    """Turn a YAML parser complaint into something an owner can act on."""
+    message = str(exc)
+    if "\\t" in message or "tab" in message.lower():
+        return (
+            "There is a Tab character in the file. YAML only accepts spaces. Replace every Tab "
+            "with spaces, then run `mark sources validate` again."
+        )
+    if "mapping values are not allowed" in message:
+        return (
+            "A line is probably missing its `- url:` prefix, or a value with a colon in it needs "
+            "quotes. Compare against sources/sources.example.yaml."
+        )
+    return "Fix the file and run `mark sources validate`."
 
 
 def _store(settings: Any) -> Any:
@@ -172,19 +189,20 @@ def doctor(
         f"on ({settings.embedding_model})" if settings.voyage_key() else "off (keyword search)",
     )
 
+    from markai.sources.manifest import load_manifest
+
     try:
-        manifest = _manifest(settings)
+        manifest = load_manifest(settings.sources_file)
         counts = manifest.counts()
-        table.add_row(
-            "sources.yaml",
-            "valid, " + ", ".join(f"{v} {k.replace('_', ' ')}" for k, v in counts.items() if v),
-        )
+        listed = ", ".join(f"{v} {k.replace('_', ' ')}" for k, v in counts.items() if v)
+        table.add_row("sources.yaml", f"valid, {listed}" if listed else "valid, but empty")
         for warning in manifest.warnings():
             table.add_row("[yellow]Warning[/yellow]", warning)
-    except SystemExit:
-        raise
+    except FileNotFoundError:
+        table.add_row("sources.yaml", "[red]missing[/red] (run mark init)")
     except Exception as exc:
-        table.add_row("sources.yaml", f"[red]{exc}[/red]")
+        # Report it here rather than aborting: the rest of the checkup is still useful.
+        table.add_row("sources.yaml", f"[red]not valid[/red]\n{exc}\n\n{_yaml_hint(exc)}")
 
     try:
         settings.ensure_dirs()
@@ -208,7 +226,9 @@ def doctor(
 
         table.add_row("Local transcription", "installed")
     except ImportError:
-        table.add_row("Local transcription", 'not installed (pip install "markai[transcribe]")')
+        table.add_row(
+            "Local transcription", escape('not installed (pip install "markai[transcribe]")')
+        )
 
     if online:
         table.add_row("Live API call", _probe_api(settings))
@@ -268,7 +288,12 @@ def sources_list() -> None:
     table.add_column("Episode")
     table.add_column("Date")
     for doc in documents:
-        table.add_row(doc.kind.value, doc.title[:60], doc.episode or "", doc.published_at or "")
+        table.add_row(
+            doc.kind.value,
+            escape(doc.title[:60]),
+            escape(doc.episode or ""),
+            doc.published_at or "",
+        )
     console.print(table)
     store.close()
 
@@ -295,7 +320,7 @@ def sources_match() -> None:
                 episode, settings.podcast_transcripts_dir, settings.project_root
             )
             detail = path.name if path else detail
-        table.add_row(episode.episode or "", (episode.title or "")[:50], detail)
+        table.add_row(escape(episode.episode or ""), escape((episode.title or "")[:50]), detail)
     console.print(table)
 
 
@@ -365,7 +390,7 @@ def ingest(
         force=force,
         prune=prune,
         allow_transcription=allow,
-        log=lambda message: console.print(f"[dim]{message}[/dim]"),
+        log=lambda message: console.print(f"[dim]{escape(message)}[/dim]"),
     )
     console.print(report.summary_table())
     store.close()
@@ -416,7 +441,7 @@ def gaps(top: int = typer.Option(20, "--top", help="How many to show.")) -> None
     table.add_column("When")
     table.add_column("Question")
     for row in rows:
-        table.add_row(str(row.get("asked_at", ""))[:16], str(row.get("question", ""))[:90])
+        table.add_row(str(row.get("asked_at", ""))[:16], escape(str(row.get("question", ""))[:90]))
     console.print(table)
     store.close()
 
@@ -438,9 +463,10 @@ def search(
     result = retriever.retrieve(query, k)
     console.print(f"[dim]coverage: {result.coverage}[/dim]")
     for index, rc in enumerate(result.chunks, start=1):
-        header = f"[bold]{index}. {rc.document.title}[/bold] ({rc.document.kind.value})"
-        console.print(header)
-        console.print(f"   {rc.chunk.text[:220]}…")
+        console.print(
+            f"[bold]{index}. {escape(rc.document.title)}[/bold] ({rc.document.kind.value})"
+        )
+        console.print(f"   {escape(rc.chunk.text[:220])}…")
     store.close()
 
 
@@ -454,7 +480,7 @@ def _render_answer(advisor: Any, question: str, conversation: Any) -> None:
     response = None
     for event in advisor.stream(question, conversation):
         if event.type == "text":
-            console.print(event.text, end="")
+            console.print(escape(event.text), end="")
             printed.append(event.text)
         elif event.type == "tool_call":
             console.print(f"\n[dim]running {event.text}…[/dim]")
@@ -470,7 +496,7 @@ def _render_answer(advisor: Any, question: str, conversation: Any) -> None:
         return
     if response.text.strip() != "".join(printed).strip():
         console.rule("[dim]final answer[/dim]")
-        console.print(response.text)
+        console.print(escape(response.text))
 
     if response.citations:
         console.print()
@@ -485,7 +511,7 @@ def _render_answer(advisor: Any, question: str, conversation: Any) -> None:
                 bits.append(citation.timestamp)
             if citation.url:
                 bits.append(citation.url)
-            console.print("  " + " · ".join(bits))
+            console.print("  " + escape(" · ".join(bits)))
 
     usage = response.usage or {}
     console.print(
