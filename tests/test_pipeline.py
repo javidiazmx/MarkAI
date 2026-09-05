@@ -439,3 +439,96 @@ def test_a_permanent_error_stops_immediately_without_waiting(settings, monkeypat
     assert waited == [], "an invalid key will not fix itself in 20 seconds"
     assert "401" in (result.error or "")
     store.close()
+
+
+# --- the Voyage free tier ------------------------------------------------------------------
+#
+# 3 requests and 10,000 tokens a minute. The default batch of 128 passages is about 60,000
+# tokens, so on the free tier every request is six times over the cap and retrying the same
+# oversized batch can never work.
+
+
+def test_a_batch_is_capped_by_tokens_not_just_by_count():
+    from markai.ingest.pipeline import _next_batch
+
+    class C:
+        def __init__(self, text):
+            self.text = text
+
+    chunks = [C("x" * 4000) for _ in range(50)]  # ~1000 tokens each
+    batch = _next_batch(chunks, 0, max_items=128, max_tokens=10_000)
+    assert len(batch) == 10, "ten fit the token budget, even though 128 fit the count budget"
+
+
+def test_one_oversized_chunk_is_still_attempted():
+    """Never yield an empty batch: that would spin forever."""
+    from markai.ingest.pipeline import _next_batch
+
+    class C:
+        def __init__(self, text):
+            self.text = text
+
+    assert len(_next_batch([C("x" * 90_000)], 0, 128, 10_000)) == 1
+
+
+def test_the_free_tier_is_adopted_from_voyages_own_refusal(settings, monkeypatch):
+    """No configuration: Voyage says what tier this is, and the run adjusts to it."""
+    from markai.ingest import pipeline
+
+    monkeypatch.setattr(pipeline, "_sleep", lambda _s: None)
+    store = _store_with_chunks(settings)
+
+    sizes: list[int] = []
+    state = {"refused": False}
+
+    class Embedder:
+        name = "voyage-3.5"
+
+        def embed_documents(self, texts):
+            if not state["refused"]:
+                state["refused"] = True
+                raise RuntimeError(
+                    "You have not yet added your payment method in the billing page and will "
+                    "have reduced rate limits of 3 RPM and 10K TPM."
+                )
+            sizes.append(sum(max(1, len(t) // 4) for t in texts))
+            return [[0.1, 0.2, 0.3] for _ in texts]
+
+    result = _backfill_embeddings_for(store, Embedder(), settings)
+
+    assert result.throttled is True
+    assert result.error is None
+    assert result.done > 0 and result.remaining == 0
+    assert max(sizes) <= 10_000, "every request after the refusal fits the free-tier budget"
+    store.close()
+
+
+def test_the_pacer_keeps_a_run_inside_its_budget(monkeypatch):
+    from markai.ingest import pipeline
+
+    clock = {"t": 0.0}
+    slept: list[float] = []
+    monkeypatch.setattr(pipeline, "_now", lambda: clock["t"])
+
+    def sleep(seconds):
+        slept.append(seconds)
+        clock["t"] += seconds
+
+    monkeypatch.setattr(pipeline, "_sleep", sleep)
+
+    pacer = pipeline._Pacer(requests_per_minute=3, tokens_per_minute=10_000)
+    for _ in range(3):
+        assert pacer.wait_for(3000) == 0.0, "the first three go straight out"
+    assert pacer.wait_for(3000) > 0, "the fourth waits for the window to clear"
+
+
+def test_the_pacer_waits_on_tokens_even_when_requests_are_spare(monkeypatch):
+    from markai.ingest import pipeline
+
+    clock = {"t": 0.0}
+    monkeypatch.setattr(pipeline, "_now", lambda: clock["t"])
+    monkeypatch.setattr(pipeline, "_sleep", lambda s: clock.__setitem__("t", clock["t"] + s))
+
+    pacer = pipeline._Pacer(requests_per_minute=0, tokens_per_minute=10_000)
+    pacer.wait_for(9_000)
+    assert pacer.wait_for(9_000) > 0, "the token budget binds before the request budget"

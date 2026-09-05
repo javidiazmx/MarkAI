@@ -77,6 +77,11 @@ class Settings(BaseSettings):
     )
     embedding_model: str = Field(default="voyage-3.5", description="Voyage embedding model.")
     embedding_batch_size: int = Field(default=128, ge=1, le=1000)
+    # Voyage caps an account with no payment method at 3 requests and 10,000 tokens a minute.
+    # 0 means "no limit I know of"; the backfill switches these on by itself the first time
+    # Voyage says otherwise, so a free account needs no configuration.
+    embedding_requests_per_minute: int = Field(default=0, ge=0)
+    embedding_tokens_per_minute: int = Field(default=0, ge=0)
 
     # --- Paths & knowledge base ---------------------------------------------------------------
     project_root: Path = Field(default=PROJECT_ROOT)

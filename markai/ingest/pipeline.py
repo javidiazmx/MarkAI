@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections import deque
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -403,11 +404,59 @@ def _store_document(
     (report.updated if existing is not None else report.added).append(label)
 
 
-# A Voyage account with no payment method is capped at 3 requests a minute, so a batch that
-# is refused needs a real wait, not an instant retry.
+# A Voyage account with no payment method is capped at 3 requests and 10,000 tokens a
+# minute. The default batch of 128 passages is roughly 60,000 tokens, so on the free tier
+# every request is six times over the limit and no amount of retrying helps: the batch has
+# to be smaller and the run has to be paced.
+FREE_TIER_REQUESTS_PER_MINUTE = 3
+FREE_TIER_TOKENS_PER_MINUTE = 10_000
+
+# Waits for a refusal that pacing did not prevent.
 EMBED_BACKOFF_SECONDS = (20.0, 40.0, 60.0, 120.0)
 
 _sleep: Callable[[float], None] = time.sleep
+_now: Callable[[], float] = time.monotonic
+
+
+def _estimate_tokens(text: str) -> int:
+    """Roughly four characters per token. Only needs to be close enough to stay under a cap."""
+    return max(1, len(text) // 4)
+
+
+class _Pacer:
+    """Keeps a run inside a requests-per-minute and tokens-per-minute budget.
+
+    A sliding window over the last sixty seconds, so the first requests go straight out and
+    the rate only settles once the window is full.
+    """
+
+    def __init__(self, requests_per_minute: int, tokens_per_minute: int) -> None:
+        self.requests_per_minute = requests_per_minute
+        self.tokens_per_minute = tokens_per_minute
+        self._window: deque[tuple[float, int]] = deque()
+
+    def _trim(self, now: float) -> None:
+        while self._window and now - self._window[0][0] >= 60.0:
+            self._window.popleft()
+
+    def wait_for(self, tokens: int) -> float:
+        """Sleep until this request fits the budget. Returns how long it waited."""
+        waited = 0.0
+        while True:
+            now = _now()
+            self._trim(now)
+            requests_ok = (
+                not self.requests_per_minute or len(self._window) < self.requests_per_minute
+            )
+            spent = sum(t for _, t in self._window)
+            tokens_ok = not self.tokens_per_minute or spent + tokens <= self.tokens_per_minute
+            if (requests_ok and tokens_ok) or not self._window:
+                self._window.append((now, tokens))
+                return waited
+            # Wait for the oldest entry to leave the window, then re-check.
+            pause = max(60.0 - (now - self._window[0][0]), 0.1)
+            _sleep(pause)
+            waited += pause
 
 
 @dataclass
@@ -422,6 +471,7 @@ class EmbedResult:
     done: int = 0
     remaining: int = 0
     error: str | None = None
+    throttled: bool = False
 
     def __bool__(self) -> bool:
         return self.done > 0
@@ -433,6 +483,25 @@ def _looks_like_a_rate_limit(exc: Exception) -> bool:
         marker in text
         for marker in ("rate limit", "429", "too many requests", " rpm", " tpm", "quota")
     )
+
+
+def _is_free_tier_refusal(exc: Exception) -> bool:
+    """Voyage's own wording when an account has no payment method on file."""
+    text = str(exc).lower()
+    return "payment method" in text or "reduced rate limit" in text
+
+
+def _next_batch(pending: list[Any], start: int, max_items: int, max_tokens: int) -> list[Any]:
+    """As many chunks as fit both caps, but never fewer than one."""
+    batch: list[Any] = []
+    tokens = 0
+    for chunk in pending[start : start + max_items]:
+        cost = _estimate_tokens(chunk.text)
+        if batch and max_tokens and tokens + cost > max_tokens:
+            break
+        batch.append(chunk)
+        tokens += cost
+    return batch
 
 
 def _backfill_embeddings(
@@ -452,35 +521,67 @@ def _backfill_embeddings(
     if not pending:
         return EmbedResult()
 
-    if log:
-        log(f"Embedding {len(pending)} stored passages with {embedder.name}")
-
     result = EmbedResult(remaining=len(pending))
-    batch_size = max(settings.embedding_batch_size, 1)
-    for start in range(0, len(pending), batch_size):
-        batch = pending[start : start + batch_size]
+    max_items = max(settings.embedding_batch_size, 1)
+    tokens_per_minute = settings.embedding_tokens_per_minute
+    requests_per_minute = settings.embedding_requests_per_minute
+    max_tokens = tokens_per_minute  # 0 means no cap we know about
+    pacer = (
+        _Pacer(requests_per_minute, tokens_per_minute)
+        if (requests_per_minute or tokens_per_minute)
+        else None
+    )
+
+    def adopt_free_tier() -> None:
+        """Switch to the free tier's budget after Voyage tells us that is what we are on."""
+        nonlocal max_items, max_tokens, pacer
+        max_tokens = FREE_TIER_TOKENS_PER_MINUTE
+        max_items = min(max_items, 64)
+        pacer = _Pacer(FREE_TIER_REQUESTS_PER_MINUTE, FREE_TIER_TOKENS_PER_MINUTE)
+        result.throttled = True
+
+    if log:
+        log(f"Embedding {len(pending):,} stored passages with {embedder.name}")
+
+    index = 0
+    while index < len(pending):
+        batch = _next_batch(pending, index, max_items, max_tokens)
+        tokens = sum(_estimate_tokens(c.text) for c in batch)
         vectors = None
+
         for wait in (*EMBED_BACKOFF_SECONDS, None):
+            if pacer is not None:
+                pacer.wait_for(tokens)
             try:
                 vectors = embedder.embed_documents([c.text for c in batch])
                 break
             except Exception as exc:
+                if _is_free_tier_refusal(exc) and not result.throttled:
+                    # Discovered mid-run. Shrink the batch and pace from here on, then take
+                    # this same chunk range again - nothing has been lost.
+                    adopt_free_tier()
+                    if log:
+                        log(
+                            "Voyage is on the free tier (3 requests and 10,000 tokens a "
+                            "minute), so this will be slow. Progress is saved as it goes."
+                        )
+                    break
                 if wait is None or not _looks_like_a_rate_limit(exc):
-                    # Not something waiting will fix. Stop, and say how far we got: the
-                    # embedded passages are already stored, so a re-run resumes here.
                     logger.warning("embedding stopped after %s passages: %s", result.done, exc)
                     result.error = str(exc)
                     return result
                 if log:
-                    log(f"Voyage is rate-limiting. Waiting {wait:.0f}s, then trying again.")
+                    log(f"Voyage refused that batch. Waiting {wait:.0f}s, then trying again.")
                 _sleep(wait)
-        if vectors is None:  # pragma: no cover - the loop above always sets or returns
-            return result
 
-        store.set_embeddings({c.id: v for c, v in zip(batch, vectors, strict=False)}, embedder.name)
+        if vectors is None:
+            continue  # the free tier was just adopted: retry this range, smaller and paced
+
+        store.set_embeddings({c.id: v for c, v in zip(batch, vectors, strict=True)}, embedder.name)
+        index += len(batch)
         result.done += len(batch)
         result.remaining = len(pending) - result.done
-        if log and result.done % (batch_size * 10) == 0:
+        if log and result.done % 500 < len(batch):
             log(f"  {result.done:,} of {len(pending):,} passages embedded")
     return result
 

@@ -82,6 +82,8 @@ Everything lives in `.env`. Only the first line is required.
 | `MARKAI_EFFORT` | `medium` | Reasoning depth: low, medium, high, xhigh, max |
 | `MARKAI_MAX_TOKENS` | `16000` | Ceiling per answer |
 | `MARKAI_EMBEDDING_MODEL` | `voyage-3.5` | Embedding model, when a Voyage key is set |
+| `MARKAI_EMBEDDING_TOKENS_PER_MINUTE` | `0` | Token budget per minute; 0 lets the run discover it |
+| `MARKAI_EMBEDDING_REQUESTS_PER_MINUTE` | `0` | Request budget per minute; 0 lets the run discover it |
 | `MARKAI_DATA_DIR` | `data` | Where the knowledge base and downloads live |
 | `MARKAI_SOURCES_FILE` | `sources/sources.yaml` | Which manifest to read |
 | `MARKAI_TOP_K` | `8` | Passages handed to Mark per question |
@@ -111,10 +113,16 @@ Relative paths resolve against the project folder, so `mark` works from any dire
 **Adding a Voyage key later is free.** Ingest first, add the key whenever you like: the next
 `mark ingest`, or `mark embed`, embeds the passages already on disk. Nothing is downloaded twice.
 
-A Voyage account with no payment method is capped at 3 requests a minute, which is too slow for
-a large knowledge base. A refused batch is waited out and retried, and whatever was embedded is
-saved, so `mark embed` resumes rather than restarts. Adding a card lifts the cap; the free token
-allowance still applies.
+**The Voyage free tier works, slowly.** An account with no payment method is capped at 3
+requests and 10,000 tokens a minute — and the default batch of 128 passages is about 60,000
+tokens, six times over, so retrying it could never succeed. The first time Voyage says so, the
+run adopts that budget by itself: batches are cut to fit 10,000 tokens and requests are paced
+to stay inside the window. Nothing to configure. Reckon on three to four hours for a few
+thousand passages. Progress is saved as it goes, so `mark embed` resumes rather than restarts,
+and you can stop it whenever you like.
+
+`MARKAI_EMBEDDING_TOKENS_PER_MINUTE` and `MARKAI_EMBEDDING_REQUESTS_PER_MINUTE` set the budget
+by hand if you know your account's limits.
 
 **YouTube channels.** List a whole channel under `youtube.channels` and Mark works out the
 video list itself, caching it so re-runs are instant. `mark ingest --force` re-reads the
