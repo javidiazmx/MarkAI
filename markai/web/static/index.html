@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Mark — Chicagoland landlord advisor</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f6f6f4;
+    --panel: #ffffff;
+    --ink: #1c1c1a;
+    --muted: #6b6b66;
+    --line: #e2e2dd;
+    --accent: #1f6f4a;
+    --accent-ink: #ffffff;
+    --user: #eef2f7;
+    --warn-bg: #fdf6e3;
+    --warn-ink: #6b5518;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16171a;
+      --panel: #1e2024;
+      --ink: #ececea;
+      --muted: #9b9b96;
+      --line: #2f3238;
+      --accent: #3f9a6d;
+      --user: #24272d;
+      --warn-bg: #2b2718;
+      --warn-ink: #e3cf95;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  header { padding: 18px 20px 10px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  h1 { margin: 0; font-size: 19px; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); font-size: 13px; margin-top: 3px; }
+  .banner {
+    margin: 10px 20px 0; padding: 9px 12px; border-radius: 8px;
+    background: var(--warn-bg); color: var(--warn-ink); font-size: 13px;
+  }
+  main { max-width: 780px; margin: 0 auto; padding: 16px 16px 140px; }
+  .msg { margin: 14px 0; }
+  .who { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: 4px; }
+  .bubble { padding: 12px 14px; border-radius: 10px; background: var(--panel); border: 1px solid var(--line); white-space: pre-wrap; word-wrap: break-word; }
+  .msg.you .bubble { background: var(--user); }
+  .cites { margin-top: 8px; font-size: 13px; }
+  .cites a, .cites span.nolink { display: block; padding: 5px 0; border-top: 1px dashed var(--line); color: inherit; }
+  .badge { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 20px; background: var(--accent); color: var(--accent-ink); margin-right: 6px; text-transform: uppercase; letter-spacing: .04em; }
+  .meta { color: var(--muted); font-size: 12px; margin-top: 6px; }
+  sup a { color: var(--accent); text-decoration: none; font-weight: 600; }
+  footer {
+    position: fixed; bottom: 0; left: 0; right: 0; background: var(--panel);
+    border-top: 1px solid var(--line); padding: 12px 16px;
+  }
+  .row { max-width: 780px; margin: 0 auto; display: flex; gap: 8px; }
+  textarea {
+    flex: 1; resize: none; min-height: 46px; max-height: 160px; padding: 11px 12px;
+    border: 1px solid var(--line); border-radius: 9px; background: var(--bg); color: var(--ink);
+    font: inherit;
+  }
+  button {
+    border: 0; border-radius: 9px; padding: 0 18px; background: var(--accent);
+    color: var(--accent-ink); font-weight: 600; cursor: pointer; font-size: 15px;
+  }
+  button.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+  button:disabled { opacity: .55; cursor: default; }
+  .gate { max-width: 780px; margin: 0 auto 8px; display: none; gap: 8px; }
+  .gate input { flex: 1; padding: 9px 11px; border: 1px solid var(--line); border-radius: 9px; background: var(--bg); color: var(--ink); font: inherit; }
+  .err { color: #b3261e; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Mark — Chicagoland landlord advisor</h1>
+  <div class="sub" id="sub">Loading…</div>
+</header>
+<div class="banner" id="banner"></div>
+
+<main id="log"></main>
+
+<footer>
+  <div class="gate" id="gate">
+    <input id="code" type="password" placeholder="Access code" autocomplete="off" />
+    <button class="ghost" id="save-code" type="button">Save</button>
+  </div>
+  <div class="row">
+    <textarea id="q" placeholder="Ask about screening, deposits, leases, a deal you're looking at…"></textarea>
+    <button id="send" type="button">Ask</button>
+    <button class="ghost" id="reset" type="button">Reset</button>
+  </div>
+</footer>
+
+<script>
+(function () {
+  "use strict";
+  var log = document.getElementById("log");
+  var box = document.getElementById("q");
+  var sendBtn = document.getElementById("send");
+  var resetBtn = document.getElementById("reset");
+  var gate = document.getElementById("gate");
+  var codeInput = document.getElementById("code");
+  var busy = false;
+
+  var sessionId = localStorage.getItem("mark_session");
+  if (!sessionId) {
+    sessionId = "s-" + Math.random().toString(36).slice(2) + Date.now().toString(36);
+    localStorage.setItem("mark_session", sessionId);
+  }
+
+  function accessCode() { return sessionStorage.getItem("mark_code") || ""; }
+
+  function headers() {
+    var h = { "Content-Type": "application/json" };
+    var code = accessCode();
+    if (code) h["X-Access-Code"] = code;
+    return h;
+  }
+
+  document.getElementById("save-code").addEventListener("click", function () {
+    sessionStorage.setItem("mark_code", codeInput.value.trim());
+    codeInput.value = "";
+    loadStatus();
+  });
+
+  function el(tag, cls, text) {
+    var node = document.createElement(tag);
+    if (cls) node.className = cls;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+
+  function addMessage(who, label) {
+    var wrap = el("div", "msg " + who);
+    wrap.appendChild(el("div", "who", label));
+    var bubble = el("div", "bubble", "");
+    wrap.appendChild(bubble);
+    log.appendChild(wrap);
+    window.scrollTo(0, document.body.scrollHeight);
+    return { wrap: wrap, bubble: bubble };
+  }
+
+  // Render the answer as text nodes only, turning [S1] into a footnote link.
+  function renderAnswer(bubble, text, citations) {
+    bubble.textContent = "";
+    var byMarker = {};
+    (citations || []).forEach(function (c) { byMarker[c.marker] = c; });
+    var re = /\[S(\d+)\]/g;
+    var last = 0;
+    var match;
+    while ((match = re.exec(text)) !== null) {
+      if (match.index > last) bubble.appendChild(document.createTextNode(text.slice(last, match.index)));
+      var marker = "S" + match[1];
+      var cite = byMarker[marker];
+      var sup = document.createElement("sup");
+      if (cite && cite.url) {
+        var link = el("a", null, "[" + match[1] + "]");
+        link.href = cite.url;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        sup.appendChild(link);
+      } else {
+        sup.textContent = "[" + match[1] + "]";
+      }
+      bubble.appendChild(sup);
+      last = match.index + match[0].length;
+    }
+    bubble.appendChild(document.createTextNode(text.slice(last)));
+  }
+
+  function renderCitations(wrap, citations) {
+    var old = wrap.querySelector(".cites");
+    if (old) old.remove();
+    if (!citations || !citations.length) return;
+    var box = el("div", "cites");
+    citations.forEach(function (c) {
+      var bits = [];
+      if (c.episode) bits.push("Ep. " + c.episode);
+      if (c.published_at) bits.push(c.published_at);
+      if (c.timestamp) bits.push(c.timestamp);
+      var label = c.marker + " " + c.title + (bits.length ? " · " + bits.join(" · ") : "");
+      var safeUrl = c.url && /^https?:\/\//i.test(c.url) ? c.url : null;
+      var node;
+      if (safeUrl) {
+        node = el("a", null, "");
+        node.href = safeUrl;
+        node.target = "_blank";
+        node.rel = "noopener noreferrer";
+      } else {
+        node = el("span", "nolink", "");
+      }
+      node.appendChild(el("span", "badge", c.kind));
+      node.appendChild(document.createTextNode(label));
+      box.appendChild(node);
+    });
+    wrap.appendChild(box);
+  }
+
+  function parseSse(buffer, onEvent) {
+    var blocks = buffer.split("\n\n");
+    var tail = blocks.pop();
+    blocks.forEach(function (block) {
+      var name = "message";
+      var data = [];
+      block.split("\n").forEach(function (line) {
+        if (line.indexOf("event:") === 0) name = line.slice(6).trim();
+        else if (line.indexOf("data:") === 0) data.push(line.slice(5).trim());
+      });
+      if (!data.length) return;
+      try { onEvent(name, JSON.parse(data.join("\n"))); } catch (e) { /* ignore keep-alives */ }
+    });
+    return tail;
+  }
+
+  async function send() {
+    var question = box.value.trim();
+    if (!question || busy) return;
+    busy = true;
+    sendBtn.disabled = true;
+    box.value = "";
+
+    addMessage("you", "You").bubble.textContent = question;
+    var slot = addMessage("mark", "Mark");
+    var streamed = "";
+    var citations = [];
+
+    try {
+      var response = await fetch("/api/chat", {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({ session_id: sessionId, message: question })
+      });
+      if (!response.ok) {
+        var detail = "Request failed (" + response.status + ").";
+        try { detail = (await response.json()).detail || detail; } catch (e) {}
+        slot.bubble.classList.add("err");
+        slot.bubble.textContent = detail;
+        return;
+      }
+      var reader = response.body.getReader();
+      var decoder = new TextDecoder();
+      var buffer = "";
+      while (true) {
+        var step = await reader.read();
+        if (step.done) break;
+        buffer += decoder.decode(step.value, { stream: true });
+        buffer = parseSse(buffer, function (name, data) {
+          if (name === "text") {
+            streamed += data.text;
+            slot.bubble.textContent = streamed;
+            window.scrollTo(0, document.body.scrollHeight);
+          } else if (name === "tool") {
+            slot.bubble.textContent = streamed + "\n[running " + data.name + "…]";
+          } else if (name === "citations") {
+            citations = data.citations || [];
+          } else if (name === "done") {
+            renderAnswer(slot.bubble, data.text || streamed, citations);
+            renderCitations(slot.wrap, citations);
+            var usage = data.usage || {};
+            var meta = el("div", "meta",
+              (data.model || "") + " · coverage " + (data.coverage || "?") +
+              " · " + (usage.output_tokens || 0) + " tokens out");
+            slot.wrap.appendChild(meta);
+          } else if (name === "error") {
+            slot.bubble.classList.add("err");
+            slot.bubble.textContent = data.message;
+          }
+        });
+      }
+    } catch (error) {
+      slot.bubble.classList.add("err");
+      slot.bubble.textContent = "Lost the connection: " + error;
+    } finally {
+      busy = false;
+      sendBtn.disabled = false;
+      window.scrollTo(0, document.body.scrollHeight);
+    }
+  }
+
+  sendBtn.addEventListener("click", send);
+  box.addEventListener("keydown", function (event) {
+    if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); }
+  });
+
+  resetBtn.addEventListener("click", async function () {
+    await fetch("/api/reset", {
+      method: "POST", headers: headers(), body: JSON.stringify({ session_id: sessionId })
+    });
+    log.textContent = "";
+  });
+
+  async function loadStatus() {
+    try {
+      var response = await fetch("/api/status", { headers: headers() });
+      if (response.status === 401) {
+        gate.style.display = "flex";
+        document.getElementById("sub").textContent = "Enter the access code to start.";
+        document.getElementById("banner").textContent =
+          "This copy of Mark is protected by an access code.";
+        return;
+      }
+      var data = await response.json();
+      gate.style.display = data.access_code_required && !accessCode() ? "flex" : "none";
+      var kinds = data.documents_by_kind || {};
+      var total = Object.keys(kinds).reduce(function (sum, k) { return sum + kinds[k]; }, 0);
+      document.getElementById("sub").textContent =
+        total + " sources · " + data.chunks + " passages · " +
+        (data.embeddings_enabled ? "keyword + semantic search" : "keyword search");
+      document.getElementById("banner").textContent = data.identity_notice || "";
+      if (!data.api_key_set) {
+        document.getElementById("banner").textContent +=
+          "  No Anthropic API key is configured yet, so Mark cannot answer.";
+      }
+    } catch (error) {
+      document.getElementById("sub").textContent = "Could not reach the server.";
+    }
+  }
+
+  loadStatus();
+})();
+</script>
+</body>
+</html>

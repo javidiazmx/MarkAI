@@ -1,0 +1,7 @@
+# One YouTube URL per line. Blank lines and lines starting with # are ignored.
+# Add "| Episode title" after a URL if you want a nicer title in citations.
+# Copy this to sources/youtube_urls.txt and point youtube.urls_file at it.
+
+https://www.youtube.com/watch?v=dQw4w9WgXcQ | Tenant screening that holds up
+https://youtu.be/aBcDeFgHiJk
+https://www.youtube.com/watch?v=zYxWvUtSrQp | Winter heat rules

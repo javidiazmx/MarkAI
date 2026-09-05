@@ -1,0 +1,64 @@
+# A filled-in example. Copy the shapes, not the values — every URL here is a placeholder.
+
+websites:
+  - url: https://example.com/blog/chicago-security-deposits
+    title: What Chicago landlords owe on security deposits
+    crawl: false
+  - url: https://example.com/resources/
+    title: Landlord resource library
+    crawl: true
+    max_pages: 30
+    exclude_patterns: ["/tag/", "/author/", "/page/"]
+    notes: Our own site, so crawling the whole resources section is fine.
+
+youtube:
+  channel_url: https://www.youtube.com/@examplechannel
+  channel_name: Straight Up Chicago Investor
+  urls_file: sources/youtube_urls.txt
+  episodes:
+    - url: https://www.youtube.com/watch?v=dQw4w9WgXcQ
+      title: Tenant screening that holds up
+      episode: "212"
+      published_at: "2023-04-18"
+    - url: https://youtu.be/aBcDeFgHiJk
+      title: Winter heat rules and the calls you will get
+      episode: "198"
+
+podcast:
+  show_name: Straight Up Chicago Investor
+  rss: https://feeds.example.com/straight-up-chicago
+  include_titles:
+    - security deposit
+    - "145"
+  max_episodes: 25
+  episodes:
+    - title: Deposits, interest, and the RLTO
+      episode: "145"
+      episode_url: https://example.com/episodes/145
+      audio_url: https://audio.example.com/145.mp3
+      transcript_file: data/raw/podcast/transcripts/ep-145.srt
+      published_at: "2021-03-04"
+      duration_seconds: 3300
+
+tools:
+  - name: Rental property ROI calculator
+    description: Cash flow, cap rate and cash-on-cash for a Chicago two-flat or three-flat.
+    url: https://example.com/roi-calculator
+    when_to_recommend: When someone is comparing buildings or sizing a down payment.
+  - name: Cook County property tax estimator
+    description: Estimates the tax bill from an assessed value and the local rate.
+    url: https://example.com/tax-estimator
+    when_to_recommend: When taxes are the swing factor in a deal.
+
+business:
+  name: GC Realty & Development
+  services: Property management and brokerage for small multifamily across Chicagoland.
+  contact_url: https://example.com/contact
+  contact_email: hello@example.com
+  service_area: Cook, DuPage, Lake, Will, Kane, McHenry and Kendall counties.
+  never_say:
+    - Specific management fee quotes
+    - Recommendations of a named attorney or contractor
+  extra_instructions: >
+    If someone needs hands-on help managing a building, mention that our team does this and
+    point them to the contact page. Do not pitch on every answer.

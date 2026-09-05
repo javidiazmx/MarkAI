@@ -1,0 +1,209 @@
+"""Podcast ingestion: feed parsing, transcript matching, and the preference order."""
+
+from __future__ import annotations
+
+import builtins
+
+import httpx
+import pytest
+import respx
+
+from markai.ingest.podcast import (
+    NO_TRANSCRIPT_HINT,
+    ingest_podcast,
+    load_feed_episodes,
+    match_transcript_file,
+    resolve_transcript_plan,
+    transcribe_audio,
+)
+from markai.models import Document, IngestError, IngestFailure
+from markai.sources.manifest import PodcastEpisode, PodcastSection
+
+RSS = """<?xml version="1.0"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"
+     xmlns:podcast="https://podcastindex.org/namespace/1.0">
+  <channel>
+    <title>Straight Up Chicago Investor</title>
+    <item>
+      <title>Deposits, interest, and the RLTO</title>
+      <link>https://example.com/episodes/145</link>
+      <itunes:episode>145</itunes:episode>
+      <itunes:duration>00:55:00</itunes:duration>
+      <pubDate>Thu, 04 Mar 2021 10:00:00 +0000</pubDate>
+      <enclosure url="https://audio.example.com/145.mp3" type="audio/mpeg" length="1000"/>
+      <podcast:transcript url="https://example.com/145.srt" type="application/srt"/>
+    </item>
+    <item>
+      <title>Winter heat rules</title>
+      <link>https://example.com/episodes/198</link>
+      <itunes:episode>198</itunes:episode>
+      <itunes:duration>3300</itunes:duration>
+      <pubDate>Wed, 02 Nov 2022 10:00:00 +0000</pubDate>
+      <enclosure url="https://audio.example.com/198.mp3" type="audio/mpeg" length="1000"/>
+    </item>
+  </channel>
+</rss>
+"""
+
+
+@respx.mock(assert_all_called=False)
+def test_feed_parsing_maps_every_field(respx_mock):
+    respx_mock.get("https://feeds.example.com/suci").mock(
+        return_value=httpx.Response(200, text=RSS, headers={"content-type": "application/rss+xml"})
+    )
+    with httpx.Client() as client:
+        episodes = load_feed_episodes("https://feeds.example.com/suci", [], None, client)
+
+    assert len(episodes) == 2
+    first = episodes[0]
+    assert first.episode == "145"
+    assert first.episode_url == "https://example.com/episodes/145"
+    assert first.audio_url == "https://audio.example.com/145.mp3"
+    assert first.transcript_url == "https://example.com/145.srt"
+    assert first.published_at == "2021-03-04"
+    assert first.duration_seconds == 3300.0
+    assert episodes[1].duration_seconds == 3300.0
+
+
+@respx.mock(assert_all_called=False)
+def test_include_titles_filters_by_text_or_episode_number(respx_mock):
+    respx_mock.get("https://feeds.example.com/suci").mock(
+        return_value=httpx.Response(200, text=RSS)
+    )
+    with httpx.Client() as client:
+        by_text = load_feed_episodes("https://feeds.example.com/suci", ["winter"], None, client)
+        by_number = load_feed_episodes("https://feeds.example.com/suci", ["145"], None, client)
+    assert [e.episode for e in by_text] == ["198"]
+    assert [e.episode for e in by_number] == ["145"]
+
+
+@respx.mock(assert_all_called=False)
+def test_max_episodes_limits_the_feed(respx_mock):
+    respx_mock.get("https://feeds.example.com/suci").mock(
+        return_value=httpx.Response(200, text=RSS)
+    )
+    with httpx.Client() as client:
+        episodes = load_feed_episodes("https://feeds.example.com/suci", [], 1, client)
+    assert len(episodes) == 1
+
+
+@respx.mock(assert_all_called=False)
+def test_an_unreachable_feed_is_a_helpful_error(respx_mock):
+    respx_mock.get("https://feeds.example.com/suci").mock(return_value=httpx.Response(500))
+    with httpx.Client() as client, pytest.raises(IngestError) as excinfo:
+        load_feed_episodes("https://feeds.example.com/suci", [], None, client)
+    assert excinfo.value.hint
+
+
+def test_transcript_matched_by_episode_number(tmp_path):
+    (tmp_path / "SUCI Ep 212 - Mixed Use.srt").write_text("x", encoding="utf-8")
+    (tmp_path / "2120.srt").write_text("x", encoding="utf-8")
+    episode = PodcastEpisode(title="Mixed use", episode="212")
+    match = match_transcript_file(episode, tmp_path, tmp_path)
+    assert match is not None and "212 -" in match.name
+
+
+def test_transcript_matched_by_title_words(tmp_path):
+    (tmp_path / "winter-heat-rules-for-landlords.txt").write_text("x", encoding="utf-8")
+    episode = PodcastEpisode(title="Winter heat rules")
+    assert match_transcript_file(episode, tmp_path, tmp_path) is not None
+
+
+def test_unrelated_filename_does_not_match(tmp_path):
+    (tmp_path / "completely-different-topic.txt").write_text("x", encoding="utf-8")
+    episode = PodcastEpisode(title="Winter heat rules")
+    assert match_transcript_file(episode, tmp_path, tmp_path) is None
+
+
+def test_explicit_transcript_file_wins(tmp_path):
+    explicit = tmp_path / "chosen.srt"
+    explicit.write_text("x", encoding="utf-8")
+    (tmp_path / "212.srt").write_text("x", encoding="utf-8")
+    episode = PodcastEpisode(episode="212", transcript_file=str(explicit))
+    assert match_transcript_file(episode, tmp_path, tmp_path) == explicit
+
+
+def test_transcribe_audio_without_the_extra_explains_the_options(tmp_path, monkeypatch):
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "faster_whisper":
+            raise ImportError("no module named faster_whisper")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    with pytest.raises(IngestError) as excinfo:
+        transcribe_audio(tmp_path / "a.mp3", "small")
+    assert excinfo.value.hint == NO_TRANSCRIPT_HINT
+    assert "markai[transcribe]" in excinfo.value.hint
+
+
+def test_transcript_file_is_preferred_over_audio(settings):
+    settings.ensure_dirs()
+    (settings.podcast_transcripts_dir / "145.txt").write_text(
+        "Deposit interest is owed every year.", encoding="utf-8"
+    )
+    section = PodcastSection(
+        show_name="SUCI",
+        episodes=[
+            PodcastEpisode(
+                title="Deposits",
+                episode="145",
+                audio_url="https://audio.example.com/145.mp3",
+                episode_url="https://example.com/episodes/145",
+            )
+        ],
+    )
+    with httpx.Client() as client:
+        results = list(
+            ingest_podcast(section, settings, settings.raw_dir / "podcast", client=client)
+        )
+    documents = [r for r in results if isinstance(r, Document)]
+    assert len(documents) == 1
+    assert "Deposit interest" in documents[0].text
+    assert documents[0].metadata["transcript_method"] == "transcript_file"
+    assert documents[0].link == "https://example.com/episodes/145"
+
+
+def test_no_transcript_and_no_audio_reports_the_options(settings):
+    settings.ensure_dirs()
+    section = PodcastSection(episodes=[PodcastEpisode(title="Orphan episode", episode="999")])
+    with httpx.Client() as client:
+        results = list(
+            ingest_podcast(section, settings, settings.raw_dir / "podcast", client=client)
+        )
+    failures = [r for r in results if isinstance(r, IngestFailure)]
+    assert len(failures) == 1
+    assert failures[0].hint == NO_TRANSCRIPT_HINT
+
+
+def test_transcription_can_be_declined(settings):
+    settings.ensure_dirs()
+    section = PodcastSection(
+        episodes=[PodcastEpisode(title="Audio only", audio_url="https://audio.example.com/1.mp3")]
+    )
+    with httpx.Client() as client:
+        results = list(
+            ingest_podcast(
+                section,
+                settings,
+                settings.raw_dir / "podcast",
+                client=client,
+                allow_transcription=False,
+            )
+        )
+    assert all(isinstance(r, IngestFailure) for r in results)
+
+
+def test_plan_reports_the_method_per_episode(settings):
+    settings.ensure_dirs()
+    (settings.podcast_transcripts_dir / "145.txt").write_text("x", encoding="utf-8")
+    section = PodcastSection(
+        episodes=[
+            PodcastEpisode(title="Deposits", episode="145"),
+            PodcastEpisode(title="Audio only", audio_url="https://audio.example.com/1.mp3"),
+            PodcastEpisode(title="Nothing at all"),
+        ]
+    )
+    methods = [method for _episode, method in resolve_transcript_plan(section, settings)]
+    assert methods == ["transcript_file", "audio_transcribe", "unavailable"]
