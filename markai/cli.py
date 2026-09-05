@@ -413,6 +413,30 @@ def ingest(
 
 
 @app.command()
+def embed() -> None:
+    """Add semantic search to material already ingested, without re-downloading it."""
+    from markai.ingest.pipeline import _backfill_embeddings
+    from markai.knowledge.embeddings import build_embedder
+
+    settings = _settings()
+    embedder = build_embedder(settings)
+    if embedder is None:
+        _fail(
+            "No Voyage API key, so there is nothing to embed.",
+            "Add VOYAGE_API_KEY to .env, then run this again.",
+        )
+    store = _store(settings)
+    count = _backfill_embeddings(
+        store, embedder, settings, lambda message: console.print(f"[dim]{escape(message)}[/dim]")
+    )
+    if count:
+        console.print(f"[green]✓[/green] Embedded {count} passages with {embedder.name}.")
+    else:
+        console.print("Everything already has embeddings. Nothing to do.")
+    store.close()
+
+
+@app.command()
 def status() -> None:
     """Show what Mark knows and how he is configured."""
     from markai.advisor.guardrails import IDENTITY_NOTICE

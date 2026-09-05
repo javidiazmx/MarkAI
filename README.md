@@ -59,6 +59,7 @@ Then:
 | `mark ingest --force` | Re-ingests everything, and re-reads YouTube channels for new uploads |
 | `mark ingest --prune` | Deletes stored sources no longer listed in the manifest |
 | `mark status` | What Mark knows, which model, whether the key is set |
+| `mark embed` | Adds semantic search to material already ingested, no re-download |
 | `mark gaps` | Questions Mark could not answer, so you know what to add |
 | `mark search "deposits"` | Searches the knowledge base directly, without calling Claude |
 | `mark ask "..."` | One question, one answer, with sources |
@@ -97,6 +98,9 @@ Everything lives in `.env`. Only the first line is required.
 Relative paths resolve against the project folder, so `mark` works from any directory.
 
 ## How Mark behaves
+
+**Adding a Voyage key later is free.** Ingest first, add the key whenever you like: the next
+`mark ingest`, or `mark embed`, embeds the passages already on disk. Nothing is downloaded twice.
 
 **YouTube channels.** List a whole channel under `youtube.channels` and Mark works out the
 video list itself, caching it so re-runs are instant. `mark ingest --force` re-reads the

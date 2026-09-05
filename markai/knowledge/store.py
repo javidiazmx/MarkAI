@@ -274,6 +274,32 @@ class KnowledgeStore:
             ).fetchall()
         return [self._row_to_chunk(r) for r in rows]
 
+    def chunks_missing_embeddings(self, model: str) -> list[Chunk]:
+        """Stored chunks that have no embedding for ``model`` yet.
+
+        The text is already on disk, so embeddings can be backfilled after the fact instead
+        of re-downloading every source just to add semantic search.
+        """
+        rows = self._conn.execute(
+            "SELECT * FROM chunks WHERE embedding IS NULL OR embedding_model IS NOT ?"
+            " ORDER BY doc_id, idx",
+            (model,),
+        ).fetchall()
+        return [self._row_to_chunk(row) for row in rows]
+
+    def set_embeddings(self, embeddings: dict[str, list[float]], embedding_model: str) -> None:
+        """Attach embeddings to chunks that already exist."""
+        if not embeddings:
+            return
+        payload = [
+            (np.asarray(vector, dtype=np.float32).tobytes(), embedding_model, chunk_id)
+            for chunk_id, vector in embeddings.items()
+        ]
+        with self._conn:
+            self._conn.executemany(
+                "UPDATE chunks SET embedding = ?, embedding_model = ? WHERE id = ?", payload
+            )
+
     def embeddings_matrix(self, model: str | None = None) -> tuple[list[str], np.ndarray] | None:
         """All stored embeddings (optionally for one model) as ``(chunk_ids, float32 matrix)``."""
         sql = "SELECT id, embedding FROM chunks WHERE embedding IS NOT NULL"

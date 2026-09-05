@@ -228,3 +228,29 @@ def test_the_plan_says_how_many_videos_the_cap_holds_back(settings, tmp_path):
     manifest.youtube.max_videos_per_channel = None
     uncapped = plan_ingest(manifest, settings, only={SourceKind.YOUTUBE})
     assert uncapped.youtube_videos == 30
+
+
+@respx.mock(assert_all_called=False)
+def test_a_later_run_with_a_key_embeds_what_is_already_stored(respx_mock, settings):
+    """The whole point: no re-downloading just to turn on semantic search."""
+    _mock_web(respx_mock)
+    settings.ensure_dirs()
+    store = KnowledgeStore(settings.db_path)
+
+    with httpx.Client() as client:
+        first = run_ingest(
+            _manifest(), store, None, settings, client=client, api=FakeTranscriptApi()
+        )
+        assert first.embedded == 0
+        assert store.stats().embedded_chunks == 0
+
+        # Same manifest, nothing changed upstream, but now there is an embedder.
+        second = run_ingest(
+            _manifest(), store, FakeEmbedder(), settings, client=client, api=FakeTranscriptApi()
+        )
+
+    assert len(second.skipped) == 2, "sources must not be re-fetched"
+    assert second.added == []
+    assert second.embedded > 0
+    assert store.stats().embedded_chunks == second.embedded
+    store.close()

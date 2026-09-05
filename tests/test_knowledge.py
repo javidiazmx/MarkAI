@@ -272,3 +272,50 @@ def test_a_single_source_store_still_answers(settings, empty_store, toy_document
     irrelevant = retriever.retrieve("zzzqqq wubble frobnicate")
     assert irrelevant.chunks == []
     assert irrelevant.coverage == "none"
+
+
+def test_embeddings_can_be_backfilled_without_re_ingesting(settings, toy_documents):
+    """Adding a Voyage key later must not mean re-downloading every source."""
+    settings.ensure_dirs()
+    store = KnowledgeStore(settings.db_path)
+    doc = toy_documents[0]
+    chunks = chunk_document(doc, target_words=40)
+    store.upsert_document(doc, chunks)  # ingested with no embedder configured
+
+    embedder = FakeEmbedder()
+    pending = store.chunks_missing_embeddings(embedder.name)
+    assert len(pending) == len(chunks)
+    assert store.embeddings_matrix(embedder.name) is None
+
+    store.set_embeddings(
+        {
+            c.id: v
+            for c, v in zip(
+                pending, embedder.embed_documents([c.text for c in pending]), strict=True
+            )
+        },
+        embedder.name,
+    )
+
+    assert store.chunks_missing_embeddings(embedder.name) == []
+    matrix = store.embeddings_matrix(embedder.name)
+    assert matrix is not None and len(matrix[0]) == len(chunks)
+    assert store.stats().embedded_chunks == len(chunks)
+    store.close()
+
+
+def test_switching_embedding_model_marks_everything_as_pending(settings, toy_documents):
+    settings.ensure_dirs()
+    store = KnowledgeStore(settings.db_path)
+    doc = toy_documents[0]
+    chunks = chunk_document(doc, target_words=40)
+    embedder = FakeEmbedder()
+    store.upsert_document(
+        doc,
+        chunks,
+        embedder.embed_documents([c.text for c in chunks]),
+        embedding_model=embedder.name,
+    )
+    assert store.chunks_missing_embeddings(embedder.name) == []
+    assert len(store.chunks_missing_embeddings("voyage-3.5")) == len(chunks)
+    store.close()

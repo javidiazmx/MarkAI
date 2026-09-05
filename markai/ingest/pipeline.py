@@ -91,6 +91,7 @@ class IngestReport:
     """What an ingest run actually did."""
 
     added: list[str] = field(default_factory=list)
+    embedded: int = 0
     updated: list[str] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
     pruned: list[str] = field(default_factory=list)
@@ -126,6 +127,8 @@ class IngestReport:
         ):
             preview = escape("\n".join(items[:5])) + ("\n…" if len(items) > 5 else "")
             table.add_row(label, str(len(items)), preview)
+        if self.embedded:
+            table.add_row("Embedded", str(self.embedded), "chunks given semantic search")
         if self.failures:
             preview = escape(
                 "\n".join(
@@ -233,6 +236,7 @@ def run_ingest(
                 )
 
         _handle_orphans(store, only, seen_ids, prune, report, log)
+        report.embedded = _backfill_embeddings(store, embedder, settings, log)
     finally:
         if owns_client:
             client.close()
@@ -331,6 +335,39 @@ def _store_document(
 
     store.upsert_document(document, chunks, embeddings, embedding_model=model_name)
     (report.updated if existing is not None else report.added).append(label)
+
+
+def _backfill_embeddings(
+    store: Any,
+    embedder: Any | None,
+    settings: Settings,
+    log: Callable[[str], None] | None,
+) -> int:
+    """Embed stored chunks that have none yet, so adding a key later costs no downloads."""
+    if embedder is None:
+        return 0
+    try:
+        pending = store.chunks_missing_embeddings(embedder.name)
+    except Exception as exc:
+        logger.debug("could not look for chunks missing embeddings: %s", exc)
+        return 0
+    if not pending:
+        return 0
+
+    if log:
+        log(f"Embedding {len(pending)} stored passages with {embedder.name}")
+    done = 0
+    batch_size = max(settings.embedding_batch_size, 1)
+    for start in range(0, len(pending), batch_size):
+        batch = pending[start : start + batch_size]
+        try:
+            vectors = embedder.embed_documents([c.text for c in batch])
+        except Exception as exc:
+            logger.warning("embedding batch failed, leaving those chunks for next time: %s", exc)
+            break
+        store.set_embeddings({c.id: v for c, v in zip(batch, vectors, strict=False)}, embedder.name)
+        done += len(batch)
+    return done
 
 
 def _handle_orphans(
