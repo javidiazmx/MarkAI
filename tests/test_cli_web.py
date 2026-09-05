@@ -360,3 +360,26 @@ def test_probe_exits_non_zero_when_the_fetch_fails(respx_mock, tmp_path, monkeyp
     result = runner.invoke(app, ["sources", "probe", "https://gone.test/x"])
     assert result.exit_code == 1
     assert "404" in result.stdout
+
+
+FEED = """<?xml version="1.0"?><rss version="2.0"><channel>
+<title>Straight Up Chicago Investor</title>
+<link>https://www.realshow.test/</link>
+<item><title>Ep 212</title><link>https://www.realshow.test/212</link></item>
+<item><title>Ep 211</title><link>https://www.realshow.test/211</link></item>
+</channel></rss>"""
+
+
+@respx.mock(assert_all_called=False)
+def test_probe_reads_a_feed_and_names_the_show_website(respx_mock, tmp_path, monkeypatch):
+    """The feed is the authority on where the show's site lives - better than guessing."""
+    monkeypatch.setenv("MARKAI_DATA_DIR", str(tmp_path / "data"))
+    respx_mock.get("https://feeds.test/robots.txt").mock(return_value=httpx.Response(404))
+    respx_mock.get("https://feeds.test/rss").mock(
+        return_value=httpx.Response(200, text=FEED, headers={"content-type": "application/rss+xml"})
+    )
+    result = runner.invoke(app, ["sources", "probe", "https://feeds.test/rss"])
+    assert result.exit_code == 0
+    assert "RSS feed" in result.stdout
+    assert "realshow.test" in result.stdout
+    assert "Straight Up Chicago Investor" in result.stdout

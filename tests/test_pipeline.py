@@ -285,3 +285,47 @@ def test_the_details_file_holds_every_failure(tmp_path):
     assert "https://x.test/199" in body, "every failure, not a preview"
     assert "raise the limit" in body
     assert "A (https://a)" in body
+
+
+@respx.mock(assert_all_called=False)
+def test_the_same_page_under_two_domains_is_only_stored_once(respx_mock, settings):
+    """An alias domain served an identical copy of a site we already had."""
+    body = httpx.Response(200, text=PAGE, headers={"content-type": "text/html"})
+    for host in ("example.com", "alias.test"):
+        respx_mock.get(f"https://{host}/robots.txt").mock(return_value=httpx.Response(404))
+        respx_mock.get(f"https://{host}/deposits").mock(return_value=body)
+    settings.ensure_dirs()
+    store = KnowledgeStore(settings.db_path)
+
+    manifest = SourceManifest(
+        websites=[
+            WebsiteSource(url="https://example.com/deposits"),
+            WebsiteSource(url="https://alias.test/deposits"),
+        ]
+    )
+    with httpx.Client() as client:
+        report = run_ingest(
+            manifest, store, None, settings, only={SourceKind.WEBSITE}, client=client
+        )
+
+    assert len(report.added) == 1
+    assert len(report.duplicates) == 1
+    assert "alias.test" in report.duplicates[0]
+    assert "example.com" in report.duplicates[0], "it should say which copy was kept"
+    assert store.stats().documents_by_kind["website"] == 1
+    store.close()
+
+
+@respx.mock(assert_all_called=False)
+def test_a_forced_re_ingest_does_not_call_a_page_its_own_duplicate(respx_mock, settings):
+    _mock_web(respx_mock)
+    settings.ensure_dirs()
+    store = KnowledgeStore(settings.db_path)
+    with httpx.Client() as client:
+        run_ingest(_manifest(), store, None, settings, only={SourceKind.WEBSITE}, client=client)
+        again = run_ingest(
+            _manifest(), store, None, settings, only={SourceKind.WEBSITE}, force=True, client=client
+        )
+    assert again.duplicates == []
+    assert len(again.updated) == 1
+    store.close()

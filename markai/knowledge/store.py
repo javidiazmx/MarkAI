@@ -228,6 +228,22 @@ class KnowledgeStore:
             ).fetchone()
         return row["content_hash"] if row else None
 
+    def locator_with_hash(self, content_hash: str, other_than: str) -> str | None:
+        """The locator of a *different* document holding exactly this text, if one exists.
+
+        Two domains serving the same site is common (an alias, a staging host, a vanity
+        domain). Storing both copies doubles every passage and lets one page crowd real
+        variety out of the top-k.
+        """
+        if not content_hash:
+            return None
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT locator FROM documents WHERE content_hash = ? AND id != ? LIMIT 1",
+                (content_hash, other_than),
+            ).fetchone()
+        return row["locator"] if row else None
+
     def list_documents(self, kind: SourceKind | None = None) -> list[Document]:
         sql = "SELECT * FROM documents"
         params: tuple = ()

@@ -94,6 +94,7 @@ class IngestReport:
     embedded: int = 0
     updated: list[str] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
+    duplicates: list[str] = field(default_factory=list)
     pruned: list[str] = field(default_factory=list)
     failures: list[IngestFailure] = field(default_factory=list)
     started_at: str = ""
@@ -105,6 +106,7 @@ class IngestReport:
             "added": len(self.added),
             "updated": len(self.updated),
             "skipped": len(self.skipped),
+            "duplicates": len(self.duplicates),
             "pruned": len(self.pruned),
             "failures": [
                 {"kind": f.kind.value, "locator": f.locator, "reason": f.reason}
@@ -123,6 +125,7 @@ class IngestReport:
             ("Added", self.added),
             ("Updated", self.updated),
             ("Unchanged", self.skipped),
+            ("Duplicate", self.duplicates),
             ("Removed", self.pruned),
         ):
             preview = escape("\n".join(items[:5])) + ("\n…" if len(items) > 5 else "")
@@ -357,6 +360,13 @@ def _store_document(
 
     if existing == content_hash and not force:
         report.skipped.append(label)
+        return
+
+    twin = store.locator_with_hash(content_hash, document.id)
+    if twin is not None:
+        # Same bytes already stored under another address. Keeping both would put two
+        # identical passages in every search result.
+        report.duplicates.append(f"{label} - same text as {twin}")
         return
 
     chunks = chunk_document(

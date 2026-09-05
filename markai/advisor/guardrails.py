@@ -7,6 +7,7 @@ guarantees the legal disclaimer and the fair-housing refusal actually appear.
 from __future__ import annotations
 
 import re
+import unicodedata
 
 LEGAL_DISCLAIMER = (
     "I'm not a lawyer, and this isn't legal advice. You should consult with an Illinois "
@@ -79,6 +80,65 @@ _LEGAL_TERMS = (
     "small claims",
     "liability",
     "legally",
+    # Spanish. The owner and many Chicagoland landlords ask in Spanish, and a question
+    # that never matched a term here never got the disclaimer. Stems, because Spanish
+    # conjugates: "desaloj" covers desalojo, desalojar, desalojando, desalojarlo.
+    # _norm folds accents, so these are written unaccented on purpose.
+    "desaloj",
+    "desahuci",
+    "deshauci",
+    "evicci",
+    "arrendamiento",
+    "arrendatario",
+    "arrendador",
+    "subarr",
+    "contrato de renta",
+    "contrato de alquiler",
+    "deposito de seguridad",
+    "deposito de garantia",
+    "interes del deposito",
+    "intereses del deposito",
+    "fianza",
+    "ordenanza",
+    "estatuto",
+    "leyes",
+    "ley de",
+    "la ley",
+    "legal",
+    "abogad",
+    "corte",
+    "tribunal",
+    "juzgado",
+    "demanda",
+    "orden judicial",
+    "proceso judicial",
+    "notificacion de desalojo",
+    "aviso de desalojo",
+    "aviso de 5 dias",
+    "aviso de cinco dias",
+    "notificacion de 5 dias",
+    "derechos del inquilin",
+    "derechos de los inquilin",
+    "vivienda justa",
+    "clase protegida",
+    "discrimin",
+    "seccion 8",
+    "vale de vivienda",
+    "vales de vivienda",
+    "fuente de ingreso",
+    "habitabilidad",
+    "codigo de construccion",
+    "violacion de codigo",
+    "cargo por retraso",
+    "multa por retraso",
+    "recargo por mora",
+    "pago tardio",
+    "renta atrasada",
+    "renta impagada",
+    "control de renta",
+    "reclamos menores",
+    "cerradura",
+    "responsabilidad legal",
 )
 
 _CHICAGOLAND = (
@@ -132,6 +192,15 @@ _CHICAGOLAND = (
     "woodlawn",
     "garfield park",
     "little village",
+    # Spanish names for the same places.
+    "la villita",
+    "condado de cook",
+    "condado de dupage",
+    "condado de lake",
+    "condado de will",
+    "condado de kane",
+    "condado de mchenry",
+    "condado de kendall",
 )
 
 # Illinois places that are outside Chicagoland.
@@ -245,7 +314,11 @@ _OUT_OF_STATE_CITIES = (
 # "Indiana Ave" is a Chicago street; only a state *context* counts as out of scope.
 _STATE_CONTEXT = re.compile(
     r"\b(?:in|from|to|out\s+in|over\s+in|move[d]?\s+to|my|our|a|another|buying\s+in|"
-    r"property\s+in|rental\s+in|unit\s+in|invest(?:ing)?\s+in)\s+"
+    r"property\s+in|rental\s+in|unit\s+in|invest(?:ing)?\s+in|"
+    # Spanish. Without these, "Soy landlord en Texas" read as in-scope.
+    r"en|de|desde|hacia|mi|mis|otro|otra|"
+    r"propiedad\s+en|rento\s+en|renta\s+en|unidad\s+en|edificio\s+en|casa\s+en|"
+    r"invertir\s+en|invirtiendo\s+en|comprar\s+en|comprando\s+en|mudarme\s+a)\s+"
     r"(" + "|".join(re.escape(s) for s in _STATES) + r")\b",
     re.IGNORECASE,
 )
@@ -319,6 +392,58 @@ _PROTECTED = (
     "criminal record",
     "felon",
     "ex-offender",
+    # Spanish equivalents of everything above.
+    "raza",
+    "negro",
+    "negra",
+    "hispano",
+    "hispana",
+    "latina",
+    "mexicano",
+    "asiatico",
+    "religion",
+    "musulman",
+    "judio",
+    "cristiano",
+    "origen nacional",
+    "inmigrante",
+    "indocumentado",
+    "extranjero",
+    "acento",
+    "sexo",
+    "genero",
+    "transgenero",
+    "homosexual",
+    "orientacion sexual",
+    "identidad de genero",
+    "estado familiar",
+    "familias con ninos",
+    "con ninos",
+    "con hijos",
+    "madre soltera",
+    "embarazada",
+    "discapacidad",
+    "discapacitado",
+    "minusvalido",
+    "silla de ruedas",
+    "animal de servicio",
+    "animal de apoyo emocional",
+    "enfermedad mental",
+    "seccion 8",
+    "vale de vivienda",
+    "vales de vivienda",
+    "vales",
+    "cupon de vivienda",
+    "subsidio",
+    "fuente de ingreso",
+    "edad",
+    "anciano",
+    "adulto mayor",
+    "estado civil",
+    "veterano",
+    "antecedentes penales",
+    "antecedentes criminales",
+    "expediente criminal",
 )
 
 _EXCLUSION_VERBS = (
@@ -381,6 +506,41 @@ _SELF_HELP = (
     "without an eviction",
     "force them out myself",
     "make them leave myself",
+    # Spanish. Self-help eviction is the same crime in either language.
+    "cambiar la cerradura",
+    "cambiar las cerraduras",
+    "cambiar cerradura",
+    "cambiarle la cerradura",
+    "cambio la cerradura",
+    "cambiar la chapa",
+    "cortar la luz",
+    "cortar el agua",
+    "cortar la calefaccion",
+    "cortar los servicios",
+    "quitar la luz",
+    "quitar el agua",
+    "apagar la calefaccion",
+    "suspender los servicios",
+    "cortarle los servicios",
+    "quitar la puerta",
+    "sacar la puerta",
+    "sacar sus cosas",
+    "tirar sus cosas",
+    "botar sus cosas",
+    "sacar sus pertenencias",
+    "tirar sus pertenencias",
+    "sin orden judicial",
+    "sin ir a la corte",
+    "sin ir al tribunal",
+    "sin proceso de desalojo",
+    "sin desalojo formal",
+    "sin pasar por la corte",
+    "sacarlo yo mismo",
+    "sacarla yo mismo",
+    "sacarlos yo mismo",
+    "obligarlo a irse",
+    "obligarla a irse",
+    "obligarlos a irse",
 )
 
 _FOLLOW_UP_CUES = (
@@ -409,7 +569,15 @@ def normalize_quotes(text: str) -> str:
 
 
 def _norm(text: str) -> str:
-    return re.sub(r"\s+", " ", normalize_quotes(text)).strip().lower()
+    """Lowercase, collapse whitespace, and fold accents.
+
+    Folding matters more than it looks: the word regex below is ASCII, so an unfolded
+    "seccion" written "secci\u00f3n" tokenises as ["secci", "n"] and every phrase match
+    around it silently fails. Owners and tenants type Spanish both ways.
+    """
+    flat = unicodedata.normalize("NFD", normalize_quotes(text))
+    flat = "".join(ch for ch in flat if not unicodedata.combining(ch))
+    return re.sub(r"\s+", " ", flat).strip().lower()
 
 
 def is_legal_topic(text: str) -> bool:
@@ -458,15 +626,30 @@ def is_high_risk_request(text: str) -> bool:
         if not term_words:
             continue
         for i in range(len(words) - len(term_words) + 1):
-            if words[i : i + len(term_words)] != term_words:
+            if not _same_words(words[i : i + len(term_words)], term_words):
                 continue
             window = " ".join(words[max(0, i - 12) : i + len(term_words) + 12])
             if any(_verb_in(window, verb) for verb in _EXCLUSION_VERBS):
                 return True
             if _SPLIT_VERBS.search(window):
                 return True
+            if _EXCLUSION_STEMS.search(window):
+                return True
     return False
 
+
+# Spanish conjugates, so whole-word matching against an infinitive list misses almost
+# everything a real question contains: "evito", "evitaria", "rechazo", "no le rento".
+# Stems with \w* catch the whole paradigm.
+_EXCLUSION_STEMS = re.compile(
+    r"\b(?:evit|rechaz|descart|excluy|exclui|filtr|impid|impedir|prohib|"
+    r"nieg|negarl|negar|desanim|discrimin|vet)\w*"
+    r"|\bno\s+(?:\w+\s+){0,4}?(?:rent|alquil|arrend|acept)\w*"
+    r"|\b(?:solo|unicamente)\s+(?:\w+\s+){0,3}?(?:rent|alquil|arrend)\w*"
+    r"|\b(?:rent|alquil|arrend)\w*\s+(?:\w+\s+){0,3}?(?:solo|unicamente)\s+a\b"
+    r"|\bdeshacer(?:me|nos|se)\b|\blibrar(?:me|nos|se)\b|\bsacar(?:me|los|las|lo|la)?\b"
+    r"|\bmantener\s+(?:\w+\s+){0,4}?fuera\b"
+)
 
 # Particle verbs split around their object: "keep Section 8 tenants out".
 _SPLIT_VERBS = re.compile(
@@ -474,6 +657,17 @@ _SPLIT_VERBS = re.compile(
     r"|\bturn\s+(?:\w+\s+){0,5}?(?:away|down)\b"
     r"|\brent\s+(?:\w+\s+){0,5}?only\s+to\b"
 )
+
+
+def _same_words(found: list[str], term: list[str]) -> bool:
+    """Word-for-word match, tolerating a plural. "inmigrantes" has to match "inmigrante"
+    or every protected class written in the plural walks straight past the check."""
+    if len(found) != len(term):
+        return False
+    return all(
+        word == want or word in (want + "s", want + "es")
+        for word, want in zip(found, term, strict=True)
+    )
 
 
 def _verb_in(window: str, verb: str) -> bool:

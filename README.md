@@ -129,6 +129,12 @@ That is enforced in code, not just asked for in the prompt.
 tenant without going through the courts, Mark declines that part and redirects to lawful,
 uniform criteria and the court process. Also enforced in code.
 
+**Spanish.** Ask in Spanish and Mark answers in Spanish. The guardrails read both languages:
+the disclaimer, the fair-housing refusal and the geography notes fire on "¿cómo desalojo a un
+inquilino?" exactly as they do on the English question. Accents are folded before matching, so
+spelling a word with or without them makes no difference. The three fixed strings stay in their
+owner-approved English wording whatever language the answer is in.
+
 **Geography.** Outside Illinois, Mark says it is outside his area. Illinois but outside
 Chicagoland, he notes the limitation and shares what his sources cover.
 

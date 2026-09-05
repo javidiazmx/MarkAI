@@ -381,11 +381,16 @@ def sources_probe(
             raise typer.Exit(1) from None
 
         is_pdf = fetched.pdf is not None
+        is_feed = not is_pdf and fetched.html.lstrip()[:600].lower().find("<rss") != -1
         rows.append(("final url", escape(fetched.final_url)))
-        rows.append(("format", "PDF" if is_pdf else "HTML"))
+        rows.append(("format", "PDF" if is_pdf else "RSS feed" if is_feed else "HTML"))
         rows.append(("size", f"{len(fetched.pdf or fetched.html.encode()):,} bytes"))
         if fetched.truncated:
             rows.append(("truncated", "yes - hit MARKAI_MAX_PAGE_BYTES"))
+        if is_feed:
+            _describe_feed(fetched.html, rows)
+            _print_probe(url, rows)
+            return
         try:
             if is_pdf:
                 title, text = extract_pdf_text(fetched.pdf or b"", fetched.final_url)
@@ -409,6 +414,20 @@ def sources_probe(
     if show and text:
         console.print()
         console.print(escape("\n".join(text.splitlines()[:40])))
+
+
+def _describe_feed(xml: str, rows: list[tuple[str, str]]) -> None:
+    """A show's own feed is the authority on where its website lives."""
+    import feedparser
+
+    parsed = feedparser.parse(xml)
+    feed = parsed.feed
+    rows.append(("show", escape(str(feed.get("title", "") or "?"))))
+    site = str(feed.get("link", "") or "")
+    rows.append(("website", escape(site) if site else "[yellow]the feed names none[/yellow]"))
+    rows.append(("episodes", str(len(parsed.entries))))
+    for entry in parsed.entries[:3]:
+        rows.append(("  episode page", escape(str(entry.get("link", "") or "?"))))
 
 
 def _print_probe(url: str, rows: list[tuple[str, str]]) -> None:
