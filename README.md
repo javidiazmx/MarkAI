@@ -52,6 +52,7 @@ Then:
 | `mark doctor` | Checks the key, the manifest, the data folder and the knowledge base |
 | `mark sources validate` | Confirms `sources.yaml` parses, and warns about tokens in URLs |
 | `mark sources validate --check-urls` | Also confirms every listed domain resolves, before you spend an hour ingesting |
+| `mark sources probe URL` | Fetches one URL and says exactly what came back, and why it did or did not read |
 | `mark sources list` | Lists what is currently in the knowledge base |
 | `mark sources match` | Shows which transcript file each podcast episode resolved to |
 | `mark ingest` | Fetches every source and builds the knowledge base |
@@ -131,6 +132,11 @@ uniform criteria and the court process. Also enforced in code.
 **Geography.** Outside Illinois, Mark says it is outside his area. Illinois but outside
 Chicagoland, he notes the limitation and shares what his sources cover.
 
+**PDFs.** A PDF linked from a listed site is read like any other page; a lot of housing
+material (the RLTO summary, EPA lead-paint pamphlets, HUD forms) is published that way. Scanned
+PDFs have no selectable text, so Mark says it needs OCR rather than storing a blank page. Images,
+archives and stylesheets are never followed.
+
 **Untrusted sources.** Text pulled from web pages and transcripts is escaped and labelled as
 reference material. If a page contains something shaped like an instruction, Mark treats it as
 data, not as an order.
@@ -184,7 +190,8 @@ keyword search.
 | "ANTHROPIC_API_KEY is not set" | Run `mark init`, or add the key to `.env` |
 | Ingest wants to transcribe for hours | Run `mark ingest --dry-run` to see the estimate. Send transcripts or list the YouTube versions instead |
 | Answers say "not covered" too often | Check `mark status` for the chunk count, then `mark gaps` to see what is missing |
-| A page came back empty | It is probably rendered by JavaScript. Paste the text into a `.txt` file and reference it |
+| A page came back empty | Run `mark sources probe <url>`. It says whether the page is JavaScript-rendered, blocked, or fine |
+| A whole site ingested nothing | `mark sources probe` its homepage first, then `mark sources validate --check-urls` |
 | Lots of failures and no idea why | Every run writes `data/last-ingest.txt` with each page and its reason |
 
 ## Project layout

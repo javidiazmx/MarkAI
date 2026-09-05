@@ -11,6 +11,7 @@ from markai.ingest.websites import (
     canonical_url,
     discover_links,
     extract_main_text,
+    extract_pdf_text,
     fetch_page,
     ingest_websites,
 )
@@ -69,14 +70,14 @@ def test_discover_links_honours_exclude_patterns():
 
 
 @respx.mock(assert_all_called=False)
-def test_fetch_page_rejects_non_html(respx_mock):
-    respx_mock.get("https://example.com/a.pdf").mock(
+def test_fetch_page_rejects_what_it_cannot_read(respx_mock):
+    respx_mock.get("https://example.com/a.jpg").mock(
         return_value=httpx.Response(
-            200, content=b"%PDF", headers={"content-type": "application/pdf"}
+            200, content=b"\xff\xd8\xff", headers={"content-type": "image/jpeg"}
         )
     )
     with httpx.Client() as client, pytest.raises(IngestError):
-        fetch_page("https://example.com/a.pdf", client)
+        fetch_page("https://example.com/a.jpg", client)
 
 
 @respx.mock(assert_all_called=False)
@@ -292,7 +293,7 @@ def test_discover_links_skips_downloads_not_pages():
     html = (
         "".join(
             f'<a href="/x{i}{suffix}">x</a>'
-            for i, suffix in enumerate([".jpg", ".png", ".pdf", ".zip", ".docx", ".css", ".woff2"])
+            for i, suffix in enumerate([".jpg", ".png", ".zip", ".docx", ".css", ".woff2"])
         )
         + '<a href="/real-article">a</a><a href="/blog/2024/deposits">b</a>'
     )
@@ -319,3 +320,135 @@ def test_a_pdf_listed_by_hand_is_still_attempted(respx_mock, tmp_path, settings)
     with httpx.Client() as client:
         results = list(ingest_websites([source], tmp_path, client, settings))
     assert len(results) == 1
+
+
+# --- PDFs ----------------------------------------------------------------------------------
+
+
+def _tiny_pdf(line: str, title: str | None = "RLTO Summary") -> bytes:
+    """A real, minimal PDF, so these tests exercise pypdf rather than a stand-in."""
+    content = f"BT /F1 12 Tf 72 720 Td ({line}) Tj ET".encode()
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+        b"/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
+        b"<< /Length %d >>\nstream\n" % len(content) + content + b"\nendstream",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ]
+    if title:
+        objects.append(f"<< /Title ({title}) >>".encode())
+    out = bytearray(b"%PDF-1.4\n")
+    offsets = []
+    for number, body in enumerate(objects, start=1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n" % number + body + b"\nendobj\n"
+    start_xref = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objects) + 1)
+    for offset in offsets:
+        out += b"%010d 00000 n \n" % offset
+    info_entry = b" /Info %d 0 R" % len(objects) if title else b""
+    out += b"trailer\n<< /Size %d /Root 1 0 R%s >>\nstartxref\n%d\n%%%%EOF\n" % (
+        len(objects) + 1,
+        info_entry,
+        start_xref,
+    )
+    return bytes(out)
+
+
+def test_extract_pdf_text_reads_the_words_and_the_title():
+    title, text = extract_pdf_text(_tiny_pdf("Deposits earn interest."), "https://x.test/a.pdf")
+    assert "Deposits earn interest." in text
+    assert title == "RLTO Summary"
+
+
+def test_a_pdf_without_a_title_is_named_from_its_filename():
+    pdf = _tiny_pdf("Lead paint disclosure rules.", title=None)
+    title, _ = extract_pdf_text(pdf, "https://epa.gov/lead-paint_pamphlet.pdf")
+    assert title == "lead paint pamphlet"
+
+
+def test_a_scanned_pdf_says_it_needs_ocr():
+    """No selectable text means page images. Saying "empty" would send the owner hunting."""
+    blank = _tiny_pdf(" ")
+    with pytest.raises(IngestError) as excinfo:
+        extract_pdf_text(blank, "https://x.test/scan.pdf")
+    assert "OCR" in (excinfo.value.hint or "")
+
+
+def test_a_damaged_pdf_fails_without_taking_the_run_down():
+    with pytest.raises(IngestError):
+        extract_pdf_text(b"%PDF-1.4\nnot really a pdf", "https://x.test/broken.pdf")
+
+
+@respx.mock(assert_all_called=False)
+def test_a_pdf_is_ingested_like_any_other_page(respx_mock, tmp_path, settings):
+    respx_mock.get("https://chicago.gov/robots.txt").mock(return_value=httpx.Response(404))
+    respx_mock.get("https://chicago.gov/rlto.pdf").mock(
+        return_value=httpx.Response(
+            200,
+            content=_tiny_pdf("A tenant may withhold rent under the ordinance."),
+            headers={"content-type": "application/pdf"},
+        )
+    )
+    source = WebsiteSource(url="https://chicago.gov/rlto.pdf")
+    with httpx.Client() as client:
+        results = list(ingest_websites([source], tmp_path, client, settings))
+
+    documents = [r for r in results if isinstance(r, Document)]
+    assert len(documents) == 1
+    assert "withhold rent under the ordinance" in documents[0].text
+    assert documents[0].metadata["format"] == "pdf"
+    assert documents[0].content_hash
+
+
+@respx.mock(assert_all_called=False)
+def test_a_pdf_mislabelled_by_the_server_is_still_read(respx_mock):
+    """Plenty of county servers send application/octet-stream. %PDF- is the real signal."""
+    respx_mock.get("https://county.test/form.pdf").mock(
+        return_value=httpx.Response(
+            200,
+            content=_tiny_pdf("Eviction filing fee schedule."),
+            headers={"content-type": "text/plain"},
+        )
+    )
+    with httpx.Client() as client:
+        fetched = fetch_page("https://county.test/form.pdf", client)
+    assert fetched.pdf is not None
+    assert "Eviction filing fee schedule." in extract_pdf_text(fetched.pdf, "u")[1]
+
+
+@respx.mock(assert_all_called=False)
+def test_a_crawl_now_follows_pdf_links(respx_mock, tmp_path, settings):
+    settings = settings.model_copy(update={"crawl_delay_seconds": 0.0})
+    respx_mock.get("https://chicago.gov/robots.txt").mock(return_value=httpx.Response(404))
+    respx_mock.get("https://chicago.gov/housing").mock(
+        return_value=httpx.Response(
+            200,
+            text="<html><body><h1>Housing</h1><p>Read the summary.</p>"
+            '<a href="/rlto.pdf">RLTO</a><a href="/logo.png">logo</a></body></html>',
+            headers={"content-type": "text/html"},
+        )
+    )
+    respx_mock.get("https://chicago.gov/rlto.pdf").mock(
+        return_value=httpx.Response(
+            200,
+            content=_tiny_pdf("Security deposit interest is set each year."),
+            headers={"content-type": "application/pdf"},
+        )
+    )
+    logo = respx_mock.get("https://chicago.gov/logo.png").mock(return_value=httpx.Response(200))
+
+    source = WebsiteSource(url="https://chicago.gov/housing", crawl=True, max_pages=10)
+    with httpx.Client() as client:
+        documents = [
+            r
+            for r in ingest_websites([source], tmp_path, client, settings)
+            if isinstance(r, Document)
+        ]
+
+    assert {d.locator for d in documents} == {
+        "https://chicago.gov/housing",
+        "https://chicago.gov/rlto.pdf",
+    }
+    assert logo.call_count == 0, "images are still skipped"

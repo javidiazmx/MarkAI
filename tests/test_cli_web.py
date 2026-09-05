@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 
+import httpx
 import pytest
+import respx
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
@@ -307,3 +309,54 @@ def test_validate_stays_offline_unless_asked(tmp_path, monkeypatch):
 
     monkeypatch.setattr(socket, "getaddrinfo", boom)
     assert runner.invoke(app, ["sources", "validate"]).exit_code == 0
+
+
+# --- sources probe ----------------------------------------------------------------------
+
+
+@respx.mock(assert_all_called=False)
+def test_probe_reports_a_page_that_reads_fine(respx_mock, tmp_path, monkeypatch):
+    monkeypatch.setenv("MARKAI_DATA_DIR", str(tmp_path / "data"))
+    respx_mock.get("https://site.test/robots.txt").mock(return_value=httpx.Response(404))
+    respx_mock.get("https://site.test/blog").mock(
+        return_value=httpx.Response(
+            200,
+            text="<html><head><title>Blog</title></head><body><h1>Deposits</h1>"
+            "<p>Interest is owed every year on a held deposit.</p>"
+            "<p>Keep it in a separate Illinois account.</p>"
+            '<a href="/next">next</a></body></html>',
+            headers={"content-type": "text/html"},
+        )
+    )
+    result = runner.invoke(app, ["sources", "probe", "https://site.test/blog"])
+    assert result.exit_code == 0
+    assert "words" in result.stdout
+    assert "1 on the same host" in result.stdout
+
+
+@respx.mock(assert_all_called=False)
+def test_probe_names_a_javascript_page_instead_of_saying_nothing(respx_mock, tmp_path, monkeypatch):
+    """The whole reason the command exists: a site that ingests to zero and never says why."""
+    monkeypatch.setenv("MARKAI_DATA_DIR", str(tmp_path / "data"))
+    respx_mock.get("https://spa.test/robots.txt").mock(return_value=httpx.Response(404))
+    respx_mock.get("https://spa.test/").mock(
+        return_value=httpx.Response(
+            200,
+            text='<html><head><title>App</title></head><body><div id="root"></div>'
+            '<script src="/bundle.js"></script></body></html>',
+            headers={"content-type": "text/html"},
+        )
+    )
+    result = runner.invoke(app, ["sources", "probe", "https://spa.test/"])
+    assert result.exit_code == 0
+    assert "JavaScript" in result.stdout
+
+
+@respx.mock(assert_all_called=False)
+def test_probe_exits_non_zero_when_the_fetch_fails(respx_mock, tmp_path, monkeypatch):
+    monkeypatch.setenv("MARKAI_DATA_DIR", str(tmp_path / "data"))
+    respx_mock.get("https://gone.test/robots.txt").mock(return_value=httpx.Response(404))
+    respx_mock.get("https://gone.test/x").mock(return_value=httpx.Response(404))
+    result = runner.invoke(app, ["sources", "probe", "https://gone.test/x"])
+    assert result.exit_code == 1
+    assert "404" in result.stdout

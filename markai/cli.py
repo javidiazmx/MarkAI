@@ -342,6 +342,84 @@ def sources_validate(
         _check_reachable(targets)
 
 
+@sources_app.command("probe")
+def sources_probe(
+    url: str = typer.Argument(..., help="One URL to fetch and report on."),
+    show: bool = typer.Option(False, "--show", help="Print the first 40 lines of the text."),
+) -> None:
+    """Fetch one URL and say exactly what came back.
+
+    Answers "why did this site bring nothing?" in one request instead of a whole crawl.
+    """
+    import httpx
+
+    from markai.ingest.websites import (
+        USER_AGENT,
+        RobotsCache,
+        canonical_url,
+        discover_links,
+        extract_main_text,
+        extract_pdf_text,
+        fetch_page,
+    )
+    from markai.models import IngestError
+
+    settings = _settings()
+    rows: list[tuple[str, str]] = []
+    with httpx.Client(
+        follow_redirects=True, timeout=30.0, headers={"User-Agent": USER_AGENT}
+    ) as client:
+        allowed = RobotsCache(client).can_fetch(url)
+        rows.append(("robots.txt", "allows it" if allowed else "[red]disallows it[/red]"))
+        try:
+            fetched = fetch_page(url, client, max_bytes=settings.max_page_bytes)
+        except IngestError as exc:
+            rows.append(("fetch", f"[red]{escape(str(exc))}[/red]"))
+            if exc.hint:
+                rows.append(("hint", escape(exc.hint)))
+            _print_probe(url, rows)
+            raise typer.Exit(1) from None
+
+        is_pdf = fetched.pdf is not None
+        rows.append(("final url", escape(fetched.final_url)))
+        rows.append(("format", "PDF" if is_pdf else "HTML"))
+        rows.append(("size", f"{len(fetched.pdf or fetched.html.encode()):,} bytes"))
+        if fetched.truncated:
+            rows.append(("truncated", "yes - hit MARKAI_MAX_PAGE_BYTES"))
+        try:
+            if is_pdf:
+                title, text = extract_pdf_text(fetched.pdf or b"", fetched.final_url)
+            else:
+                title, text = extract_main_text(fetched.html, fetched.final_url)
+        except IngestError as exc:
+            rows.append(("extract", f"[red]{escape(str(exc))}[/red]"))
+            _print_probe(url, rows)
+            raise typer.Exit(1) from None
+
+        rows.append(("title", escape(title[:70])))
+        words = len(text.split())
+        rows.append(
+            ("text", f"{words:,} words" if words else "[red]none - probably JavaScript[/red]")
+        )
+        links = discover_links(fetched.html, fetched.final_url, [], []) if not is_pdf else []
+        rows.append(("links to crawl", f"{len(links)} on the same host"))
+        rows.append(("stored as", escape(canonical_url(fetched.final_url))))
+
+    _print_probe(url, rows)
+    if show and text:
+        console.print()
+        console.print(escape("\n".join(text.splitlines()[:40])))
+
+
+def _print_probe(url: str, rows: list[tuple[str, str]]) -> None:
+    table = Table(title=f"Probe: {escape(url)}", show_header=False)
+    table.add_column("", style="bold")
+    table.add_column("")
+    for name, value in rows:
+        table.add_row(name, value)
+    console.print(table)
+
+
 @sources_app.command("list")
 def sources_list() -> None:
     """List what is currently in the knowledge base."""

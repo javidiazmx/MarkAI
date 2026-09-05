@@ -7,6 +7,7 @@ Every request goes through an injected ``httpx.Client`` so tests can intercept t
 from __future__ import annotations
 
 import hashlib
+import io
 import logging
 import re
 import time
@@ -48,7 +49,6 @@ _NOT_A_PAGE = frozenset(
     .doc .docx .xls .xlsx .ppt .pptx .odt .ods .rtf
     .css .js .json .xml .rss .atom .txt .csv
     .woff .woff2 .ttf .otf .eot
-    .pdf
     """.split()
 )
 
@@ -112,11 +112,16 @@ def _decode_body(body: bytes, response: httpx.Response) -> str:
 
 
 class PageFetch(NamedTuple):
-    """One fetched page. ``truncated`` means it hit ``max_bytes`` and we kept the head."""
+    """One fetched page. ``truncated`` means it hit ``max_bytes`` and we kept the head.
+
+    ``pdf`` holds the raw bytes when the response was a PDF, and ``html`` is empty in that
+    case: the two are read by different extractors.
+    """
 
     final_url: str
     html: str
     truncated: bool = False
+    pdf: bytes | None = None
 
 
 def fetch_page(url: str, client: httpx.Client, max_bytes: int = 25_000_000) -> PageFetch:
@@ -152,13 +157,16 @@ def fetch_page(url: str, client: httpx.Client, max_bytes: int = 25_000_000) -> P
             if not (200 <= status < 300):
                 raise IngestError(f"HTTP {status} for {url}")
             content_type = response.headers.get("content-type", "").lower()
-            if content_type and not any(
-                marker in content_type for marker in ("html", "xml", "text/plain")
+            is_pdf = "pdf" in content_type
+            if (
+                content_type
+                and not is_pdf
+                and not any(marker in content_type for marker in ("html", "xml", "text/plain"))
             ):
                 raise IngestError(
-                    f"Not an HTML page ({content_type.split(';')[0].strip()}): {url}",
-                    hint="Mark only reads web pages. For PDFs, paste the text into a .txt "
-                    "transcript file.",
+                    f"Not a readable page ({content_type.split(';')[0].strip()}): {url}",
+                    hint="Mark reads web pages and PDFs. Anything else has to be pasted "
+                    "into a .txt file.",
                 )
             chunks: list[bytes] = []
             total = 0
@@ -178,6 +186,10 @@ def fetch_page(url: str, client: httpx.Client, max_bytes: int = 25_000_000) -> P
         ) from exc
     if not body.strip():
         raise IngestError(f"Empty response from {url}", hint="The page returned no content.")
+    # Some servers label a PDF text/plain or application/octet-stream; the magic number is
+    # the only thing that never lies.
+    if is_pdf or body[:5] == b"%PDF-":
+        return PageFetch(final_url, "", truncated, body)
     return PageFetch(final_url, _decode_body(body, response), truncated)
 
 
@@ -238,6 +250,53 @@ def extract_main_text(html: str, url: str) -> tuple[str, str]:
     if not title:
         title = url
     return title, text
+
+
+def extract_pdf_text(data: bytes, url: str) -> tuple[str, str]:
+    """Return ``(title, text)`` for a PDF. Pages are separated by blank lines so the
+    chunker sees paragraph boundaries the same way it does for HTML.
+
+    Raises ``IngestError`` for a PDF that holds no extractable text, which in practice
+    means a scan: the bytes are page images and reading them would need OCR.
+    """
+    import pypdf
+
+    try:
+        reader = pypdf.PdfReader(io.BytesIO(data))
+        if reader.is_encrypted:
+            # An empty user password is common for print-restricted documents.
+            try:
+                reader.decrypt("")
+            except Exception as exc:
+                raise IngestError(
+                    f"PDF is password protected: {url}",
+                    hint="Save an unlocked copy, or paste the text into a .txt file.",
+                ) from exc
+        pages = [(page.extract_text() or "").strip() for page in reader.pages]
+        raw_title = (reader.metadata or {}).get("/Title") if reader.metadata else None
+    except IngestError:
+        raise
+    except Exception as exc:
+        raise IngestError(
+            f"Could not read the PDF at {url}: {type(exc).__name__}: {exc}",
+            hint="The file may be damaged. Open it yourself to check.",
+        ) from exc
+
+    text = "\n\n".join(page for page in pages if page)
+    if not text.strip():
+        raise IngestError(
+            f"PDF has no selectable text: {url}",
+            hint=(
+                "It is almost certainly a scan. Run it through OCR, or paste the text "
+                "into a .txt file."
+            ),
+        )
+    title = _WS_RE.sub(" ", str(raw_title)).strip() if raw_title else ""
+    if not title:
+        # Fall back to the filename: "RLTO-Summary-2024.pdf" reads better than a bare URL.
+        stem = urlsplit(url).path.rsplit("/", 1)[-1]
+        title = stem.removesuffix(".pdf").replace("-", " ").replace("_", " ").strip() or url
+    return title, _WS_RE.sub(" ", text).strip()
 
 
 def _is_a_file_not_a_page(path: str) -> bool:
@@ -426,9 +485,21 @@ def ingest_websites(
                 final_url, html = fetched.final_url, fetched.html
                 final_canon = canonical_url(final_url)
                 visited.add(final_canon)
+                is_pdf = fetched.pdf is not None
                 _cache_html(cache_dir, final_canon, html)
                 try:
-                    title, text = extract_main_text(html, final_url)
+                    if is_pdf:
+                        title, text = extract_pdf_text(fetched.pdf or b"", final_url)
+                    else:
+                        title, text = extract_main_text(html, final_url)
+                except IngestError as exc:
+                    yield IngestFailure(
+                        kind=SourceKind.WEBSITE,
+                        locator=final_canon,
+                        reason=str(exc),
+                        hint=exc.hint,
+                    )
+                    continue
                 except Exception as exc:
                     yield IngestFailure(
                         kind=SourceKind.WEBSITE,
@@ -464,6 +535,7 @@ def ingest_websites(
                             "fetched_at": datetime.now(UTC).isoformat(timespec="seconds"),
                             "notes": source.notes,
                             "truncated": fetched.truncated,
+                            "format": "pdf" if is_pdf else "html",
                         },
                     )
                     document.ensure_hash()
