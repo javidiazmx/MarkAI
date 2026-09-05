@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from rich.markup import escape
 from rich.table import Table
 
 from markai.config import Settings
@@ -105,12 +106,14 @@ class IngestReport:
             ("Unchanged", self.skipped),
             ("Removed", self.pruned),
         ):
-            preview = "\n".join(items[:5]) + ("\n…" if len(items) > 5 else "")
+            preview = escape("\n".join(items[:5])) + ("\n…" if len(items) > 5 else "")
             table.add_row(label, str(len(items)), preview)
         if self.failures:
-            preview = "\n".join(
-                f"{f.locator}: {f.reason}" + (f"\n  → {f.hint}" if f.hint else "")
-                for f in self.failures[:5]
+            preview = escape(
+                "\n".join(
+                    f"{f.locator}: {f.reason}" + (f"\n  → {f.hint}" if f.hint else "")
+                    for f in self.failures[:5]
+                )
             )
             table.add_row("Failed", str(len(self.failures)), preview)
         return table
