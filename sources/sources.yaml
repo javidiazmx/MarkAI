@@ -31,7 +31,7 @@ websites:
     exclude_patterns: ["/wp-admin", "/wp-login", "/feed", "/cart", "/checkout", "/my-account"]
     notes: Sitio completo, blog incluido. 500 es el maximo que acepta max_pages.
 
-  - url: https://www.straightupchicagoinvestorpodcast.com
+  - url: https://www.straightupchicagoinvestor.com
     title: Straight Up Chicago Investor (sitio del podcast)
     crawl: true
     max_pages: 500

@@ -51,6 +51,7 @@ Then:
 | `mark init` | Writes `.env` and a starter `sources.yaml`, creates the data folders |
 | `mark doctor` | Checks the key, the manifest, the data folder and the knowledge base |
 | `mark sources validate` | Confirms `sources.yaml` parses, and warns about tokens in URLs |
+| `mark sources validate --check-urls` | Also confirms every listed domain resolves, before you spend an hour ingesting |
 | `mark sources list` | Lists what is currently in the knowledge base |
 | `mark sources match` | Shows which transcript file each podcast episode resolved to |
 | `mark ingest` | Fetches every source and builds the knowledge base |

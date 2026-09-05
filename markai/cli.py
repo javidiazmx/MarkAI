@@ -289,8 +289,38 @@ def _probe_api(settings: Any) -> str:
 # --------------------------------------------------------------------------------------
 
 
+def _check_reachable(urls: list[tuple[str, str]]) -> None:
+    """Say which listed sites actually answer. A typo'd domain is cheap to find here."""
+    import socket
+    from urllib.parse import urlsplit
+
+    table = Table(title="Reachability", show_header=True, header_style="bold")
+    table.add_column("Where")
+    table.add_column("Host")
+    table.add_column("Result")
+    problems = 0
+    for label, url in urls:
+        host = urlsplit(url).hostname or ""
+        try:
+            socket.getaddrinfo(host, None)
+        except OSError:
+            problems += 1
+            table.add_row(label, escape(host), "[red]does not resolve[/red] - check for a typo")
+            continue
+        table.add_row(label, escape(host), "resolves")
+    console.print(table)
+    if problems:
+        console.print(
+            f"[yellow]{problems} host(s) do not resolve. Those entries will fetch nothing.[/yellow]"
+        )
+
+
 @sources_app.command("validate")
-def sources_validate() -> None:
+def sources_validate(
+    check_urls: bool = typer.Option(
+        False, "--check-urls", help="Also confirm every listed domain resolves."
+    ),
+) -> None:
     """Check that sources.yaml parses and report what it contains."""
     settings = _settings()
     manifest = _manifest(settings)
@@ -301,7 +331,15 @@ def sources_validate() -> None:
     if manifest.is_empty():
         console.print("[yellow]No sources listed yet. Mark has nothing to learn from.[/yellow]")
     for warning in manifest.warnings():
-        console.print(f"[yellow]![/yellow] {warning}")
+        console.print(f"[yellow]![/yellow] {escape(warning)}")
+
+    if check_urls:
+        targets = [(f"websites[{i}]", w.url) for i, w in enumerate(manifest.websites)]
+        targets += [(f"youtube.channels[{i}]", c) for i, c in enumerate(manifest.youtube.channels)]
+        if manifest.podcast.rss:
+            targets.append(("podcast.rss", manifest.podcast.rss))
+        console.print()
+        _check_reachable(targets)
 
 
 @sources_app.command("list")

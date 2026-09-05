@@ -257,3 +257,53 @@ def test_a_missing_env_file_is_reported_not_raised(tmp_path):
     from markai.cli import _env_line_state
 
     assert "no .env file" in _env_line_state(tmp_path / "nope", "VOYAGE_API_KEY")
+
+
+def test_check_urls_flags_a_domain_that_does_not_exist(tmp_path, monkeypatch, capsys):
+    """A typo'd domain costs an hour of ingest; it should cost five seconds here."""
+    import socket
+
+    from markai.cli import _check_reachable
+
+    real = socket.getaddrinfo
+
+    def fake(host, *args, **kwargs):
+        if host == "www.typodomain.com":
+            raise OSError("Name or service not known")
+        return real("localhost", None)
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake)
+    _check_reachable(
+        [("websites[0]", "https://www.good.com/a"), ("websites[1]", "https://www.typodomain.com")]
+    )
+    out = capsys.readouterr().out
+    assert "does not resolve" in out
+    assert "1 host(s) do not resolve" in out
+
+
+def test_check_urls_is_quiet_when_everything_resolves(tmp_path, monkeypatch, capsys):
+    import socket
+
+    from markai.cli import _check_reachable
+
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: [("ok",)])
+    _check_reachable([("websites[0]", "https://www.good.com/a")])
+    out = capsys.readouterr().out
+    assert "resolves" in out
+    assert "do not resolve" not in out
+
+
+def test_validate_stays_offline_unless_asked(tmp_path, monkeypatch):
+    """`sources validate` must not touch the network by default."""
+    import socket
+
+    manifest = tmp_path / "sources.yaml"
+    manifest.write_text("websites:\n  - url: https://example.com/a\n", encoding="utf-8")
+    monkeypatch.setenv("MARKAI_SOURCES_FILE", str(manifest))
+    monkeypatch.setenv("MARKAI_DATA_DIR", str(tmp_path / "data"))
+
+    def boom(*args, **kwargs):
+        raise AssertionError("validate must not resolve hostnames without --check-urls")
+
+    monkeypatch.setattr(socket, "getaddrinfo", boom)
+    assert runner.invoke(app, ["sources", "validate"]).exit_code == 0
