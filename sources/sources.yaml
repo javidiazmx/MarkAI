@@ -173,11 +173,12 @@ youtube:
   channels:
     - https://www.youtube.com/@straightupchicagoinvestor
     - https://www.youtube.com/@MarkAinleyGCRealty
-  # Los dos canales juntos tienen ~2346 videos, con muchos shorts. Se descartan los shorts
-  # PRIMERO y luego se aplica el tope, asi que estos son 100 episodios reales por canal, no
-  # 100 videos de los cuales la mitad serian shorts. Sube el numero (o ponlo en null) cuando
-  # confirmemos que las respuestas salen bien.
-  max_videos_per_channel: 100
+  # TODOS los videos largos de ambos canales. Los shorts se descartan primero.
+  # Son miles de peticiones a YouTube, y va a bloquear la IP en algun punto: el ingest se
+  # detiene solo cuando eso pasa y te avisa. Lo ya descargado queda en cache, asi que basta
+  # con volver a correr `mark ingest` mas tarde y sigue donde se quedo. Puede tomar varias
+  # sesiones hasta completar el catalogo.
+  max_videos_per_channel: null
   skip_shorts: true          # los shorts no aportan y ensucian las busquedas
   max_short_seconds: 180     # cualquier video de 3 min o menos cuenta como short
   channel_name: Straight Up Chicago Investor
@@ -199,10 +200,12 @@ youtube:
 #   - the filename matches at least 80% of the words in the episode title.
 # Run `mark sources match` to see exactly what matched before you ingest.
 # ---------------------------------------------------------------------------------------
-# NOTA: los episodios de este podcast ya estan en YouTube con subtitulos gratis, asi que
-# transcribir el audio en local seria repetir el mismo contenido gastando ~20 horas de CPU.
-# El feed se queda configurado por si algun dia el host publica transcripciones, pero corre
-# el ingest con --no-transcribe.
+# COBERTURA COMPLETA DEL PODCAST: viene por YouTube, no por aqui.
+# Cada episodio esta publicado en el canal, con subtitulos que YouTube regala. Transcribir
+# el audio en local daria el mismo texto a razon de ~1 hora de CPU por hora de audio: para
+# el catalogo completo serian semanas de computadora para duplicar lo que ya tienes gratis.
+# El feed se queda configurado para aportar numero de episodio, fecha y liga a las notas,
+# y por si algun dia Libsyn publica transcripciones. Corre el ingest con --no-transcribe.
 podcast:
   show_name: Straight Up Chicago Investor
   rss: https://feeds.libsyn.com/262421/rss

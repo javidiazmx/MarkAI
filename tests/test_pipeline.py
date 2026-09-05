@@ -205,3 +205,26 @@ def test_plan_reports_a_missing_urls_file(settings):
     manifest.youtube.urls_file = "sources/no-existe.txt"
     plan = plan_ingest(manifest, settings)
     assert plan.youtube_error is not None
+
+
+def test_the_plan_says_how_many_videos_the_cap_holds_back(settings, tmp_path):
+    """A capped count alone hides how much of the channel is being left out."""
+    from markai.ingest.youtube import expand_channel
+
+    settings.ensure_dirs()
+    listing = [{"id": f"vid{i:08d}", "title": f"Ep {i}", "duration": 1800} for i in range(30)]
+    expand_channel(
+        "https://www.youtube.com/@x", settings.youtube_cache_dir, lister=lambda u, limit: listing
+    )
+
+    manifest = SourceManifest(
+        youtube=YouTubeSection(channels=["https://www.youtube.com/@x"], max_videos_per_channel=10)
+    )
+    plan = plan_ingest(manifest, settings, only={SourceKind.YOUTUBE})
+    assert plan.youtube_videos == 10
+    assert plan.youtube_available == 30
+    assert "30 available" in str(plan.summary_table().columns[2]._cells)
+
+    manifest.youtube.max_videos_per_channel = None
+    uncapped = plan_ingest(manifest, settings, only={SourceKind.YOUTUBE})
+    assert uncapped.youtube_videos == 30

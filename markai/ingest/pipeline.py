@@ -38,6 +38,7 @@ class IngestPlan:
     youtube_videos: int = 0
     podcast_by_method: dict[str, int] = field(default_factory=dict)
     transcription_minutes: float = 0.0
+    youtube_available: int = 0
     podcast_error: str | None = None
     youtube_error: str | None = None
 
@@ -50,7 +51,14 @@ class IngestPlan:
         table.add_column("Count", justify="right")
         table.add_column("Notes")
         table.add_row("Websites", str(self.web_pages), "pages or crawl seeds")
-        table.add_row("YouTube", str(self.youtube_videos), "videos (captions)")
+        held_back = max(self.youtube_available - self.youtube_videos, 0)
+        youtube_note = "videos (captions)"
+        if held_back:
+            youtube_note = (
+                f"videos (captions) - capped; {self.youtube_available} available, "
+                f"{held_back} held back by max_videos_per_channel"
+            )
+        table.add_row("YouTube", str(self.youtube_videos), youtube_note)
         labels = {
             "transcript_file": "transcript already on disk",
             "transcript_url": "transcript linked in the feed",
@@ -149,22 +157,26 @@ def plan_ingest(
             except Exception as exc:
                 logger.debug("could not read urls_file for the plan: %s", exc)
                 plan.youtube_error = str(exc)
+        available = count
         for channel in manifest.youtube.channels:
             # Uses the cached listing when there is one, so --dry-run stays cheap on re-runs.
             try:
-                count += len(
-                    expand_channel(
-                        channel,
-                        settings.youtube_cache_dir,
-                        limit=manifest.youtube.max_videos_per_channel,
-                        skip_shorts=manifest.youtube.skip_shorts,
-                        max_short_seconds=manifest.youtube.max_short_seconds,
-                    )
+                everything = expand_channel(
+                    channel,
+                    settings.youtube_cache_dir,
+                    limit=None,
+                    skip_shorts=manifest.youtube.skip_shorts,
+                    max_short_seconds=manifest.youtube.max_short_seconds,
                 )
             except Exception as exc:
                 logger.debug("could not list channel %s: %s", channel, exc)
                 plan.youtube_error = str(exc)
+                continue
+            available += len(everything)
+            per_channel = manifest.youtube.max_videos_per_channel
+            count += min(len(everything), per_channel) if per_channel else len(everything)
         plan.youtube_videos = count
+        plan.youtube_available = available
 
     if _wanted(SourceKind.PODCAST, only) and (manifest.podcast.rss or manifest.podcast.episodes):
         try:
