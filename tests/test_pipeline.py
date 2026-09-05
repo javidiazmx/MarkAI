@@ -532,3 +532,27 @@ def test_the_pacer_waits_on_tokens_even_when_requests_are_spare(monkeypatch):
     pacer = pipeline._Pacer(requests_per_minute=0, tokens_per_minute=10_000)
     pacer.wait_for(9_000)
     assert pacer.wait_for(9_000) > 0, "the token budget binds before the request budget"
+
+
+def test_a_storage_failure_late_in_a_long_run_is_reported_not_raised(settings, monkeypatch):
+    """Three hours in is the wrong moment to end on a traceback."""
+    from markai.ingest.pipeline import _backfill_embeddings
+
+    settings = settings.model_copy(update={"embedding_batch_size": 2})
+    store = _store_with_chunks(settings)
+    calls = {"n": 0}
+    real = store.set_embeddings
+
+    def flaky(pairs, model):
+        calls["n"] += 1
+        if calls["n"] == 3:
+            raise RuntimeError("database is locked")
+        return real(pairs, model)
+
+    monkeypatch.setattr(store, "set_embeddings", flaky)
+    result = _backfill_embeddings(store, FakeEmbedder(), settings, None)
+
+    assert result.done == 4, "the batches that landed are kept"
+    assert result.remaining > 0
+    assert "database is locked" in (result.error or "")
+    store.close()

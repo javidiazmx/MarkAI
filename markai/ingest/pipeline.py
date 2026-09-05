@@ -577,7 +577,15 @@ def _backfill_embeddings(
         if vectors is None:
             continue  # the free tier was just adopted: retry this range, smaller and paced
 
-        store.set_embeddings({c.id: v for c, v in zip(batch, vectors, strict=True)}, embedder.name)
+        try:
+            pairs = {c.id: v for c, v in zip(batch, vectors, strict=True)}
+            store.set_embeddings(pairs, embedder.name)
+        except Exception as exc:
+            # Three hours in is the wrong moment to end on a traceback. Keep what is stored
+            # and report it, so the next run picks up from here.
+            logger.warning("could not store a batch after %s passages: %s", result.done, exc)
+            result.error = f"Could not store the embeddings: {exc}"
+            return result
         index += len(batch)
         result.done += len(batch)
         result.remaining = len(pending) - result.done
