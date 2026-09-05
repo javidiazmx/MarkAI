@@ -18,6 +18,7 @@ from typing import Any
 
 import httpx
 
+from markai.config import Settings
 from markai.ingest.transcripts import parse_transcript_file, segments_to_text, slugify
 from markai.ingest.websites import make_client
 from markai.models import Document, IngestError, IngestFailure, Segment, SourceKind
@@ -357,6 +358,65 @@ def _merge_episodes(
         ):
             add(entry)
     return episodes
+
+
+def build_transcript_api(settings: Settings) -> Any:
+    """A caption client set up the way ``settings`` asks.
+
+    Once YouTube blocks an address, pacing is beside the point: every request from it fails.
+    The two ways out are a different address (a proxy) or a signed-in identity (cookies
+    exported from a browser). Both are optional; with neither, this is the plain client.
+    """
+    import youtube_transcript_api as yta
+    from youtube_transcript_api.proxies import GenericProxyConfig, WebshareProxyConfig
+
+    proxy_config = None
+    if settings.webshare_username and settings.webshare_secret():
+        proxy_config = WebshareProxyConfig(
+            proxy_username=settings.webshare_username,
+            proxy_password=settings.webshare_secret() or "",
+        )
+    elif settings.youtube_proxy():
+        url = settings.youtube_proxy()
+        proxy_config = GenericProxyConfig(http_url=url, https_url=url)
+
+    http_client = None
+    if settings.youtube_cookies_file:
+        http_client = _session_with_cookies(settings.youtube_cookies_file, settings.project_root)
+
+    # Log the method, never the secret.
+    logger.info("youtube caption client: %s", settings.youtube_unblock_method())
+    if http_client is not None:
+        return yta.YouTubeTranscriptApi(proxy_config=proxy_config, http_client=http_client)
+    return yta.YouTubeTranscriptApi(proxy_config=proxy_config)
+
+
+def _session_with_cookies(path: Path, project_root: Path) -> Any:
+    """A requests session carrying cookies exported from a signed-in browser."""
+    import http.cookiejar
+
+    import requests
+
+    cookie_path = Path(path)
+    if not cookie_path.is_absolute():
+        cookie_path = project_root / cookie_path
+    if not cookie_path.exists():
+        raise IngestError(
+            f"Cookie file not found: {cookie_path}",
+            hint="Export cookies.txt from a signed-in browser, or clear "
+            "MARKAI_YOUTUBE_COOKIES_FILE.",
+        )
+    jar = http.cookiejar.MozillaCookieJar(str(cookie_path))
+    try:
+        jar.load(ignore_discard=True, ignore_expires=True)
+    except Exception as exc:
+        raise IngestError(
+            f"Could not read {cookie_path.name}: {exc}",
+            hint="It must be a Netscape-format cookies.txt, not a JSON export.",
+        ) from exc
+    session = requests.Session()
+    session.cookies = jar  # type: ignore[assignment]
+    return session
 
 
 def _segments_with_backoff(

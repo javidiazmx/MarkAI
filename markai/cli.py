@@ -221,6 +221,14 @@ def doctor(
             f"off (keyword search only)\n[dim]{_env_line_state(env_path, 'VOYAGE_API_KEY')}[/dim]",
         )
 
+    unblock = settings.youtube_unblock_method()
+    table.add_row(
+        "YouTube access",
+        "direct (if it blocks you, set a proxy or cookies)"
+        if unblock == "none"
+        else f"via {unblock}",  # the method, never the secret
+    )
+
     from markai.sources.manifest import load_manifest
 
     try:

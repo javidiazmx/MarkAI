@@ -452,3 +452,63 @@ def test_the_full_listing_is_fetched_so_filtering_is_honest(tmp_path):
 
     expand_channel("https://www.youtube.com/@x", tmp_path, limit=2, lister=lister)
     assert seen_limits == [None]
+
+
+# --- getting past an IP block ----------------------------------------------------------
+
+
+def test_no_proxy_configured_builds_a_plain_client(settings):
+    from markai.ingest.youtube import build_transcript_api
+
+    assert settings.youtube_unblock_method() == "none"
+    assert build_transcript_api(settings) is not None
+
+
+def test_a_proxy_url_reaches_the_caption_client(settings):
+    """Politeness does nothing once the address is blocked; a different address does."""
+    from markai.ingest.youtube import build_transcript_api
+
+    configured = settings.model_copy(update={"youtube_proxy_url": "http://user:pw@proxy.test:8080"})
+    assert configured.youtube_unblock_method() == "proxy"
+    assert build_transcript_api(configured) is not None
+
+
+def test_webshare_credentials_win_over_a_plain_proxy(settings):
+    configured = settings.model_copy(
+        update={
+            "youtube_proxy_url": "http://proxy.test:8080",
+            "webshare_username": "u",
+            "webshare_password": "pw",
+        }
+    )
+    assert configured.youtube_unblock_method() == "webshare proxy"
+
+
+def test_cookies_are_loaded_from_a_netscape_file(settings, tmp_path):
+    from markai.ingest.youtube import build_transcript_api
+
+    cookies = tmp_path / "cookies.txt"
+    cookies.write_text(
+        "# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t2147483647\tPREF\tf1=50000000\n",
+        encoding="utf-8",
+    )
+    configured = settings.model_copy(update={"youtube_cookies_file": cookies})
+    assert configured.youtube_unblock_method() == "cookies"
+    assert build_transcript_api(configured) is not None
+
+
+def test_a_missing_cookie_file_says_so_once(settings, tmp_path):
+    """One clear failure beats the same message repeated 1,142 times."""
+    from markai.ingest.youtube import build_transcript_api
+
+    configured = settings.model_copy(update={"youtube_cookies_file": tmp_path / "nope.txt"})
+    with pytest.raises(IngestError) as excinfo:
+        build_transcript_api(configured)
+    assert "nope.txt" in str(excinfo.value)
+
+
+def test_the_proxy_secret_never_reaches_the_status_line(settings):
+    """doctor prints the method. The URL can carry a username and password."""
+    configured = settings.model_copy(update={"youtube_proxy_url": "http://user:s3cret@p.test"})
+    assert "s3cret" not in configured.youtube_unblock_method()
+    assert "user" not in configured.youtube_unblock_method()

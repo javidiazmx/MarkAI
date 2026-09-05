@@ -20,9 +20,14 @@ from rich.table import Table
 from markai.config import Settings
 from markai.ingest.podcast import ingest_podcast, resolve_transcript_plan
 from markai.ingest.websites import ingest_websites, make_client
-from markai.ingest.youtube import expand_channel, ingest_youtube, read_urls_file
+from markai.ingest.youtube import (
+    build_transcript_api,
+    expand_channel,
+    ingest_youtube,
+    read_urls_file,
+)
 from markai.knowledge.chunking import chunk_document
-from markai.models import Document, IngestFailure, SourceKind
+from markai.models import Document, IngestError, IngestFailure, SourceKind
 from markai.sources.manifest import SourceManifest
 
 logger = logging.getLogger(__name__)
@@ -309,13 +314,23 @@ def _iter_sources(
         )
 
     if _wanted(SourceKind.YOUTUBE, only) and manifest.youtube.has_sources():
+        # Built once per run so a proxy or cookie jar is set up a single time, and so a bad
+        # cookie file is one clear failure rather than one per video.
+        captions = api
+        if captions is None:
+            try:
+                captions = build_transcript_api(settings)
+            except IngestError as exc:
+                yield IngestFailure(SourceKind.YOUTUBE, "youtube", str(exc), exc.hint)
+                return
+
         yield from _guarded(
             SourceKind.YOUTUBE,
             lambda: ingest_youtube(
                 manifest.youtube,
                 settings.youtube_cache_dir,
                 client=client,
-                api=api,
+                api=captions,
                 languages=settings.youtube_languages,
                 project_root=settings.project_root,
                 refresh_channels=force,

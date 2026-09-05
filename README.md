@@ -90,6 +90,10 @@ Everything lives in `.env`. Only the first line is required.
 | `MARKAI_YOUTUBE_LANGUAGES` | `en,en-US` | Caption languages to try, in order |
 | `MARKAI_CRAWL_DELAY_SECONDS` | `0.5` | Politeness delay between page fetches |
 | `MARKAI_YOUTUBE_DELAY_SECONDS` | `2.0` | Pause between caption requests; raise it if YouTube keeps blocking |
+| `MARKAI_YOUTUBE_PROXY_URL` | none | Send caption requests through a proxy, for when YouTube has blocked your address |
+| `MARKAI_WEBSHARE_USERNAME` | none | Webshare rotating-proxy user; takes precedence over the plain proxy |
+| `MARKAI_WEBSHARE_PASSWORD` | none | Webshare password |
+| `MARKAI_YOUTUBE_COOKIES_FILE` | none | `cookies.txt` exported from a signed-in browser |
 | `MARKAI_MAX_PAGE_BYTES` | `25000000` | How much of a page to read; bigger pages are truncated |
 | `MARKAI_TRANSCRIBE_MODEL` | `small` | Whisper model size for podcast audio |
 | `MARKAI_WEB_HOST` | `127.0.0.1` | Where the web UI binds |
@@ -109,6 +113,17 @@ Relative paths resolve against the project folder, so `mark` works from any dire
 **YouTube channels.** List a whole channel under `youtube.channels` and Mark works out the
 video list itself, caching it so re-runs are instant. `mark ingest --force` re-reads the
 channel and picks up anything you have published since.
+
+**When YouTube blocks you.** Pacing stops you being blocked; it does nothing once you already
+are, because every request from that address fails. There are two ways out, both optional:
+
+- **Cookies**, free. Export `cookies.txt` from a browser signed in to YouTube and point
+  `MARKAI_YOUTUBE_COOKIES_FILE` at it. Requests then carry a real identity rather than an
+  anonymous one. Treat the file as a password: it is a live session.
+- **A proxy**, paid. `MARKAI_YOUTUBE_PROXY_URL` for any http proxy, or a Webshare username and
+  password for their rotating pool, which is what the caption library recommends.
+
+`mark doctor` shows which is in use and never prints the credentials.
 
 A large channel takes several sessions. Requests are paced by `MARKAI_YOUTUBE_DELAY_SECONDS`,
 and a block is waited out — 30s, then 60s, 120s, 300s — before the video is retried, because

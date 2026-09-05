@@ -98,6 +98,20 @@ class Settings(BaseSettings):
 
     # --- Ingestion -------------------------------------------------------------------------
     crawl_delay_seconds: float = Field(default=0.5, ge=0)
+    # --- Getting past a YouTube IP block ------------------------------------------------
+    # Politeness stops you being blocked; it does nothing once you already are. These give
+    # the caption requests a different address or a signed-in identity. All optional.
+    youtube_proxy_url: SecretStr | None = Field(
+        default=None,
+        description="An http(s) proxy for caption requests. May contain credentials.",
+    )
+    webshare_username: str | None = Field(default=None)
+    webshare_password: SecretStr | None = Field(default=None)
+    youtube_cookies_file: Path | None = Field(
+        default=None,
+        description="Netscape cookies.txt exported from a signed-in browser.",
+    )
+
     youtube_delay_seconds: float = Field(
         default=2.0,
         ge=0,
@@ -165,6 +179,22 @@ class Settings(BaseSettings):
 
     def access_code(self) -> str | None:
         return self._reveal(self.web_access_code)
+
+    def youtube_proxy(self) -> str | None:
+        return self._reveal(self.youtube_proxy_url)
+
+    def webshare_secret(self) -> str | None:
+        return self._reveal(self.webshare_password)
+
+    def youtube_unblock_method(self) -> str:
+        """Which way out of an IP block is configured. Names the method, never the secret."""
+        if self.webshare_username and self.webshare_password:
+            return "webshare proxy"
+        if self.youtube_proxy_url:
+            return "proxy"
+        if self.youtube_cookies_file:
+            return "cookies"
+        return "none"
 
     def request_max_tokens(self) -> int:
         """max_tokens actually sent: xhigh/max effort needs headroom for thinking."""
