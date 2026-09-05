@@ -186,3 +186,22 @@ def test_only_limits_which_kinds_run(respx_mock, settings):
     assert len(report.added) == 1
     assert store.stats().documents_by_kind["youtube"] == 0
     store.close()
+
+
+@respx.mock(assert_all_called=False)
+def test_plan_reports_an_unreachable_feed_instead_of_zero(respx_mock, settings):
+    respx_mock.get("https://feeds.example.com/suci").mock(return_value=httpx.Response(403))
+    manifest = _manifest()
+    manifest.podcast = PodcastSection(rss="https://feeds.example.com/suci")
+    with httpx.Client() as client:
+        plan = plan_ingest(manifest, settings, client=client)
+    assert plan.podcast_error is not None
+    assert "403" in plan.podcast_error
+    assert plan.podcast_by_method == {}
+
+
+def test_plan_reports_a_missing_urls_file(settings):
+    manifest = _manifest()
+    manifest.youtube.urls_file = "sources/no-existe.txt"
+    plan = plan_ingest(manifest, settings)
+    assert plan.youtube_error is not None

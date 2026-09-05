@@ -229,8 +229,14 @@ def _merge_episodes(
 def resolve_transcript_plan(
     section: PodcastSection, settings: Settings, client: httpx.Client | None = None
 ) -> list[tuple[PodcastEpisode, str]]:
-    """Decide how each episode would be transcribed, without downloading audio."""
-    episodes, _failure = _merge_episodes(section, client)
+    """Decide how each episode would be transcribed, without downloading audio.
+
+    Raises ``IngestError`` when the feed cannot be read: an empty plan and an unreachable
+    feed mean very different things to whoever is about to run an ingest.
+    """
+    episodes, failure = _merge_episodes(section, client)
+    if failure and not episodes:
+        raise IngestError(failure.reason, hint=failure.hint)
     plan: list[tuple[PodcastEpisode, str]] = []
     for episode in episodes:
         if match_transcript_file(episode, settings.podcast_transcripts_dir, settings.project_root):

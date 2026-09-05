@@ -207,3 +207,26 @@ def test_plan_reports_the_method_per_episode(settings):
     )
     methods = [method for _episode, method in resolve_transcript_plan(section, settings)]
     assert methods == ["transcript_file", "audio_transcribe", "unavailable"]
+
+
+@respx.mock(assert_all_called=False)
+def test_plan_raises_when_the_feed_cannot_be_read(respx_mock, settings):
+    """An unreachable feed must not look like an empty podcast."""
+    respx_mock.get("https://feeds.example.com/suci").mock(return_value=httpx.Response(403))
+    section = PodcastSection(rss="https://feeds.example.com/suci")
+    with httpx.Client() as client, pytest.raises(IngestError):
+        resolve_transcript_plan(section, settings, client)
+
+
+@respx.mock(assert_all_called=False)
+def test_a_bad_feed_does_not_hide_episodes_listed_by_hand(respx_mock, settings):
+    respx_mock.get("https://feeds.example.com/suci").mock(return_value=httpx.Response(500))
+    settings.ensure_dirs()
+    (settings.podcast_transcripts_dir / "145.txt").write_text("x", encoding="utf-8")
+    section = PodcastSection(
+        rss="https://feeds.example.com/suci",
+        episodes=[PodcastEpisode(title="Deposits", episode="145")],
+    )
+    with httpx.Client() as client:
+        plan = resolve_transcript_plan(section, settings, client)
+    assert [method for _e, method in plan] == ["transcript_file"]

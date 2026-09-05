@@ -308,7 +308,12 @@ def sources_match() -> None:
     if not (manifest.podcast.rss or manifest.podcast.episodes):
         console.print("No podcast configured in sources.yaml.")
         return
-    plan = resolve_transcript_plan(manifest.podcast, settings)
+    from markai.models import IngestError
+
+    try:
+        plan = resolve_transcript_plan(manifest.podcast, settings)
+    except IngestError as exc:
+        _fail(f"Could not read the podcast feed: {exc}", exc.hint)
     table = Table(title="Podcast transcript matching", show_header=True, header_style="bold")
     table.add_column("Episode")
     table.add_column("Title")

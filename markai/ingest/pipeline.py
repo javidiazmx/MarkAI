@@ -38,6 +38,8 @@ class IngestPlan:
     youtube_videos: int = 0
     podcast_by_method: dict[str, int] = field(default_factory=dict)
     transcription_minutes: float = 0.0
+    podcast_error: str | None = None
+    youtube_error: str | None = None
 
     def needs_transcription(self) -> bool:
         return self.podcast_by_method.get("audio_transcribe", 0) > 0
@@ -63,8 +65,16 @@ class IngestPlan:
                     hours = self.transcription_minutes / 60.0
                     note = f"{label} (~{hours:.1f} h of audio, roughly the same in wall clock)"
                 table.add_row("Podcast", str(count), note)
-        if not self.podcast_by_method:
+        if self.podcast_error:
+            table.add_row(
+                "Podcast", "?", f"[red]could not read the feed[/red]\n{self.podcast_error}"
+            )
+        elif not self.podcast_by_method:
             table.add_row("Podcast", "0", "nothing configured")
+        if self.youtube_error:
+            table.add_row(
+                "YouTube", "?", f"[red]could not read the URL list[/red]\n{self.youtube_error}"
+            )
         return table
 
 
@@ -138,6 +148,7 @@ def plan_ingest(
                 count += len(read_urls_file(settings.project_root / manifest.youtube.urls_file))
             except Exception as exc:
                 logger.debug("could not read urls_file for the plan: %s", exc)
+                plan.youtube_error = str(exc)
         plan.youtube_videos = count
 
     if _wanted(SourceKind.PODCAST, only) and (manifest.podcast.rss or manifest.podcast.episodes):
@@ -145,6 +156,7 @@ def plan_ingest(
             resolved = resolve_transcript_plan(manifest.podcast, settings, client)
         except Exception as exc:
             logger.debug("podcast plan failed: %s", exc)
+            plan.podcast_error = str(exc)
             resolved = []
         for episode, method in resolved:
             plan.podcast_by_method[method] = plan.podcast_by_method.get(method, 0) + 1

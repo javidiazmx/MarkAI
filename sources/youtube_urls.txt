@@ -1,0 +1,5 @@
+# Lista de videos de YouTube, una URL por linea.
+# Lineas vacias y las que empiezan con # se ignoran.
+# Opcional: agrega " | Titulo del episodio" despues de la URL.
+#
+# Todavia vacio: falta exportar la lista de videos del canal.

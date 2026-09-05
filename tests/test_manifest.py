@@ -16,8 +16,9 @@ from markai.sources.manifest import (
 )
 from markai.sources.template import SOURCES_TEMPLATE
 
-SHIPPED_TEMPLATE = PROJECT_ROOT / "sources" / "sources.yaml"
+SHIPPED_TEMPLATE = PROJECT_ROOT / "sources" / "sources.template.yaml"
 SHIPPED_EXAMPLE = PROJECT_ROOT / "sources" / "sources.example.yaml"
+LIVE_MANIFEST = PROJECT_ROOT / "sources" / "sources.yaml"
 
 
 def test_shipped_template_is_valid_and_empty():
@@ -36,6 +37,19 @@ def test_shipped_example_validates_and_is_populated():
     assert counts["tools"] == 2
     assert manifest.podcast.rss
     assert manifest.business.name
+
+
+def test_the_live_manifest_is_valid():
+    """sources.yaml holds the owner's real sources; it must always parse."""
+    manifest = load_manifest(LIVE_MANIFEST)
+    assert manifest.warnings() == []
+    for site in manifest.websites:
+        assert site.url.startswith("https://"), site.url
+    for episode in manifest.youtube.episodes:
+        assert "/@" not in episode.url, (
+            f"{episode.url} is a channel, not a video. Channels go in channel_url; "
+            "individual video URLs go in episodes or urls_file."
+        )
 
 
 def test_template_module_matches_the_shipped_file():

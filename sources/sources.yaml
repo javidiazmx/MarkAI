@@ -3,84 +3,176 @@
 # Three kinds of material: websites, YouTube episodes, and your podcast.
 # Nothing else is used. If it is not listed here, Mark does not know it.
 #
+# FORMATO: cada sitio es un bloque que empieza con "  - url:". Los demas campos van
+# indentados con 4 espacios. Nunca uses Tab, solo espacios: YAML rechaza los tabs.
+#
 # Private feed URL with a token in it? Copy this file to sources/sources.local.yaml
 # and edit that instead. Mark prefers the local file and git ignores it.
 
 # ---------------------------------------------------------------------------------------
 # WEBSITES
+#
+# crawl: true  = lee esa pagina y sigue los enlaces del mismo sitio, hasta max_pages.
+# crawl: false = lee solo esa pagina.
+#
+# OJO con los sitios de gobierno: son enormes (chicago.gov e ilga.gov tienen decenas de
+# miles de paginas). Un crawl desde la portada agarra menus, notas de prensa y programas
+# que no tienen que ver con arrendamiento, y eso ENSUCIA las respuestas de Mark. Los
+# max_pages de abajo son un punto de partida conservador. Despues del primer ingest
+# revisa con `mark sources list` que trajo, y cambia la url por la seccion exacta que
+# si sirve (por ejemplo la pagina del RLTO en vez de todo chicago.gov).
 # ---------------------------------------------------------------------------------------
-websites: [https://gcrealtyinc.com   (WHOLE WEBSITE)
-           https://gcrealtyinc.com   (All blog content from the first to last page)
-	   https://www.cookcountyil.gov/ (whole website - County ordinances, landlord and tenant regulations, housing programs, property taxes, building regulations, government updates, and new county laws)
+websites:
+  # --- Tu propio sitio: lo mas valioso, y aqui si vale la pena ir a fondo ---------------
+  - url: https://gcrealtyinc.com
+    title: GC Realty & Development
+    crawl: true
+    max_pages: 200
+    exclude_patterns: ["/wp-", "/tag/", "/author/", "/page/", "/feed", "/cart", "/checkout"]
+    notes: Sitio propio, incluye todo el blog.
 
-https://www.dupagecounty.gov/ (whole website - County ordinances, zoning, housing matters, property taxes, permits, assessments, development regulations, and government updates)
+  # --- Condados de Chicagoland ---------------------------------------------------------
+  - url: https://www.cookcountyil.gov/
+    title: Cook County
+    crawl: true
+    max_pages: 60
+    exclude_patterns: ["/news", "/event", "/calendar", "/search", "/es/"]
 
-https://www.kanecountyil.gov/ (whole website - County ordinances, zoning, housing matters, building regulations, property taxes, assessments, permits, and government updates)
+  - url: https://www.dupagecounty.gov/
+    title: DuPage County
+    crawl: true
+    max_pages: 40
+    exclude_patterns: ["/news", "/event", "/calendar", "/search"]
 
-https://www.kendallcountyil.gov/ (whole website - County ordinances, planning, zoning, housing matters, building regulations, property taxes, assessments, and government updates)
+  - url: https://www.kanecountyil.gov/
+    title: Kane County
+    crawl: true
+    max_pages: 40
+    exclude_patterns: ["/news", "/event", "/calendar", "/search"]
 
-https://www.lakecountyil.gov/ (whole website - County ordinances, housing matters, property taxes, zoning, permits, building regulations, assessments, and government updates)
+  - url: https://www.kendallcountyil.gov/
+    title: Kendall County
+    crawl: true
+    max_pages: 40
+    exclude_patterns: ["/news", "/event", "/calendar", "/search"]
 
-https://www.mchenrycountyil.gov/ (whole website - County ordinances, zoning, planning, property taxes, assessments, building regulations, housing matters, and government updates)
+  - url: https://www.lakecountyil.gov/
+    title: Lake County
+    crawl: true
+    max_pages: 40
+    exclude_patterns: ["/news", "/event", "/calendar", "/search"]
 
-https://www.willcounty.gov/ (whole website - County ordinances, property taxes, zoning, development, building requirements, assessments, permits, housing matters, and government updates)
+  - url: https://www.mchenrycountyil.gov/
+    title: McHenry County
+    crawl: true
+    max_pages: 40
+    exclude_patterns: ["/news", "/event", "/calendar", "/search"]
 
-https://www.ilga.gov/ (whole website - Illinois landlord and tenant laws, new legislation, proposed laws, passed bills, Public Acts, housing laws, eviction laws, property laws, real estate laws, housing taxes, and legislative changes)
+  - url: https://www.willcounty.gov/
+    title: Will County
+    crawl: true
+    max_pages: 40
+    exclude_patterns: ["/news", "/event", "/calendar", "/search"]
 
-https://dhr.illinois.gov/ (whole website - Fair housing laws, housing discrimination, source-of-income protections, protected classes, reasonable accommodations, landlord compliance, required disclosures, and housing complaints)
+  # --- Estado de Illinois --------------------------------------------------------------
+  - url: https://www.ilga.gov/
+    title: Illinois General Assembly
+    crawl: true
+    max_pages: 40
+    exclude_patterns: ["/senate", "/house", "/commission", "/legislation/votes", "/search"]
+    notes: Sitio gigantesco. Considera apuntar directo al capitulo 765 ILCS.
 
-https://illinoisattorneygeneral.gov/ (whole website - Landlord and tenant issues, rental housing, consumer protection, housing fraud, leases, homeownership, foreclosure, discrimination, and legal guidance)
+  - url: https://dhr.illinois.gov/
+    title: Illinois Department of Human Rights
+    crawl: true
+    max_pages: 40
+    exclude_patterns: ["/news", "/event", "/search"]
 
-https://www.illinoiscourts.gov/ (whole website - Eviction laws, court procedures, landlord and tenant disputes, eviction forms, notices, judgments, appeals, and Illinois court rules)
+  - url: https://illinoisattorneygeneral.gov/
+    title: Illinois Attorney General
+    crawl: true
+    max_pages: 40
+    exclude_patterns: ["/news", "/press", "/event", "/search"]
 
-https://tax.illinois.gov/ (whole website - Property taxes, real estate taxes, transfer taxes, exemptions, assessments, tax laws, tax changes, and regulations affecting Illinois property owners)
+  - url: https://www.illinoiscourts.gov/
+    title: Illinois Courts
+    crawl: true
+    max_pages: 40
+    exclude_patterns: ["/news", "/event", "/search", "/opinions"]
 
-https://www.ihda.org/ (whole website - Affordable housing, rental housing, housing assistance, property owners, property managers, housing programs, compliance requirements, and affordable housing tax programs)
+  - url: https://tax.illinois.gov/
+    title: Illinois Department of Revenue
+    crawl: true
+    max_pages: 40
+    exclude_patterns: ["/news", "/event", "/search"]
 
-https://www.chicago.gov/ (whole website - Chicago landlord and tenant laws, housing regulations, building codes, inspections, rental rules, permits, zoning, taxes, affordable housing, property regulations, and city government updates)
+  - url: https://www.ihda.org/
+    title: Illinois Housing Development Authority
+    crawl: true
+    max_pages: 40
+    exclude_patterns: ["/news", "/event", "/search"]
 
-https://www.chicityclerk.com/ (whole website - Chicago Municipal Code, City Council ordinances, newly approved laws, landlord and tenant regulations, housing laws, building regulations, and legislative changes)
+  - url: https://www.cmap.illinois.gov/
+    title: Chicago Metropolitan Agency for Planning
+    crawl: true
+    max_pages: 30
+    exclude_patterns: ["/news", "/event", "/search"]
 
-https://www.hud.gov/ (whole website - Federal housing laws, Fair Housing Act, Section 8, Housing Choice Vouchers, subsidized housing, landlord requirements, tenant protections, inspections, and federal housing programs)
+  # --- Ciudad de Chicago ---------------------------------------------------------------
+  - url: https://www.chicago.gov/
+    title: City of Chicago
+    crawl: true
+    max_pages: 60
+    exclude_patterns: ["/news", "/event", "/press", "/search", "/es/"]
+    notes: Enorme. Lo ideal seria apuntar a la seccion del RLTO y de building code.
 
-https://www.justice.gov/ (whole website - Federal housing enforcement, Fair Housing Act cases, housing discrimination, disability accommodations, civil rights enforcement, and federal legal actions)
+  - url: https://www.chicityclerk.com/
+    title: Chicago City Clerk
+    crawl: true
+    max_pages: 40
+    exclude_patterns: ["/news", "/event", "/search"]
 
-https://www.epa.gov/ (whole website - Lead-based paint requirements, landlord disclosures, environmental housing requirements, renovation rules, lead hazards, and regulations affecting rental properties)
+  # --- Federal -------------------------------------------------------------------------
+  - url: https://www.hud.gov/
+    title: HUD
+    crawl: true
+    max_pages: 50
+    exclude_patterns: ["/press", "/news", "/event", "/search", "/espanol"]
 
-https://www.cmap.illinois.gov/ (whole website - Chicagoland housing data, Cook, DuPage, Kane, Kendall, Lake, McHenry and Will counties, housing supply, affordability, population, development, land use, and regional trends)	]
+  - url: https://www.justice.gov/
+    title: US Department of Justice
+    crawl: true
+    max_pages: 30
+    exclude_patterns: ["/news", "/press", "/opa", "/event", "/search", "/es/"]
+    notes: Solo interesa la parte de fair housing. Considera acotar la url.
 
-  # - url: https://example.com/blog/chicago-security-deposits
-  #   title: Security deposit rules            # optional; the page title is used otherwise
-  #   crawl: false                             # true follows links on the same site
-  #   max_pages: 25                            # only used when crawl is true
-  #   include_patterns: []                     # only crawl URLs matching these (regex)
-  #   exclude_patterns: ["/tag/", "/author/"]  # never crawl URLs matching these (regex)
-  #   ignore_robots: false                     # set true only for a site you own
-  #   notes: ""
+  - url: https://www.epa.gov/
+    title: EPA
+    crawl: true
+    max_pages: 30
+    exclude_patterns: ["/news", "/press", "/event", "/search", "/espanol"]
+    notes: Solo interesa lead-based paint. Considera acotar la url.
 
 # ---------------------------------------------------------------------------------------
 # YOUTUBE
-# Mark reads the captions. Videos with captions turned off need a transcript_file.
+# Mark lee los subtitulos que YouTube ya tiene, asi que no necesita API key.
+#
+# IMPORTANTE: aqui van URLs de VIDEOS individuales, no de canales. Una URL de canal
+# (youtube.com/@loquesea) no se puede usar directamente. Pon la lista de videos en
+# sources/youtube_urls.txt, una URL por linea, y apunta urls_file a ese archivo.
 # ---------------------------------------------------------------------------------------
 youtube:
-  channel_url: null           # informational only, e.g. https://www.youtube.com/@yourchannel
-  channel_name: null          # shown in citations, e.g. Straight Up Chicago Investor
-  urls_file: null             # e.g. sources/youtube_urls.txt — one URL per line, easiest for bulk
-  episodes: [https://www.youtube.com/@straightupchicagoinvestor (All Videos In the Channel)
-	     https://www.youtube.com/@MarkAinleyGCRealty   (All Videos In the Channel)
-]
-    # - url: https://www.youtube.com/watch?v=dQw4w9WgXcQ
-    #   title: Screening tenants without getting sued
-    #   episode: "212"
-    #   published_at: "2023-04-18"      # YouTube does not expose this; fill it in if it matters
-    #   transcript_file: null           # path relative to this project, if captions are off
+  channel_url: https://www.youtube.com/@straightupchicagoinvestor
+  channel_name: Straight Up Chicago Investor
+  urls_file: sources/youtube_urls.txt
+  episodes: []
 
 # ---------------------------------------------------------------------------------------
 # PODCAST
 # Order of preference for each episode, cheapest first:
 #   1. A transcript file you drop in data/raw/podcast/transcripts/ (.srt .vtt .txt .json)
 #   2. A <podcast:transcript> link in your RSS feed (some hosts add this automatically)
-#   3. Local transcription of the audio — slow, roughly one hour of compute per hour of audio,
+#   3. Local transcription of the audio - slow, roughly one hour of compute per hour of audio,
 #      and it needs:  pip install "markai[transcribe]"
 # Easiest of all: if the episode is also on YouTube, list it under youtube above instead.
 #
@@ -91,25 +183,16 @@ youtube:
 # Run `mark sources match` to see exactly what matched before you ingest.
 # ---------------------------------------------------------------------------------------
 podcast:
-  show_name: null             # e.g. Straight Up Chicago Investor
-  rss: https://feeds.libsyn.com/262421/rss                # your feed URL, from your podcast host's dashboard
+  show_name: Straight Up Chicago Investor
+  rss: https://feeds.libsyn.com/262421/rss
   include_titles: []          # only these episodes; matches part of a title, or an episode number
   max_episodes: 25            # start small; raise it once the first run looks right
   episodes: []
-    # - title: Deposits, interest, and the RLTO
-    #   episode: "145"
-    #   episode_url: https://example.com/episodes/145   # used for the citation link
-    #   audio_url: https://example.com/audio/145.mp3
-    #   audio_file: null                                 # or a local file you dropped in
-    #   transcript_file: data/raw/podcast/transcripts/145.srt
-    #   transcript_url: null
-    #   published_at: "2021-03-04"
-    #   duration_seconds: 3300
 
 # ---------------------------------------------------------------------------------------
 # TOOLS Mark can recommend when they fit the question.
 # ---------------------------------------------------------------------------------------
-tools: [https://www.gcrealtyinc.com/roi-calculator]
+tools: []
   # - name: Rental property ROI calculator
   #   description: Cash flow, cap rate and cash-on-cash for a Chicago two-flat or three-flat.
   #   url: https://example.com/roi-calculator
@@ -119,12 +202,12 @@ tools: [https://www.gcrealtyinc.com/roi-calculator]
 # YOUR BUSINESS. This is added to Mark's instructions, so keep it short and factual.
 # ---------------------------------------------------------------------------------------
 business:
-  name: null                  # e.g. GC Realty & Development
-  services: null              # one line: what you do for landlords
-  contact_url: null           # where to send someone who needs hands-on help
+  name: GC Realty & Development
+  services: null              # una linea: que hacen para los landlords
+  contact_url: https://gcrealtyinc.com
   contact_email: null
-  service_area: null          # your definition of Chicagoland, e.g. "Cook, DuPage, Lake, Will"
-  never_say: []               # things Mark must never promise or quote
-    # - Specific management fee quotes
-    # - Recommendations of a named attorney
-  extra_instructions: null    # anything else Mark should always keep in mind
+  service_area: Cook, DuPage, Lake, Will, Kane, McHenry y Kendall
+  never_say: []               # cosas que Mark nunca debe prometer ni cotizar
+    # - Cotizaciones especificas de management fee
+    # - Recomendar un abogado por nombre
+  extra_instructions: null    # cualquier otra cosa que Mark deba tener presente
