@@ -173,11 +173,13 @@ youtube:
   channels:
     - https://www.youtube.com/@straightupchicagoinvestor
     - https://www.youtube.com/@MarkAinleyGCRealty
-  # Los dos canales juntos tienen ~2346 videos. YouTube bloquea la IP mucho antes de llegar
-  # ahi, y buena parte son shorts y clips cortos que no aportan. Empezamos con los 100 mas
-  # recientes de cada canal para revisar calidad; subelo despues (o ponlo en null) cuando
+  # Los dos canales juntos tienen ~2346 videos, con muchos shorts. Se descartan los shorts
+  # PRIMERO y luego se aplica el tope, asi que estos son 100 episodios reales por canal, no
+  # 100 videos de los cuales la mitad serian shorts. Sube el numero (o ponlo en null) cuando
   # confirmemos que las respuestas salen bien.
   max_videos_per_channel: 100
+  skip_shorts: true          # los shorts no aportan y ensucian las busquedas
+  max_short_seconds: 180     # cualquier video de 3 min o menos cuenta como short
   channel_name: Straight Up Chicago Investor
   urls_file: sources/youtube_urls.txt   # opcional, para videos sueltos de otros canales
   episodes: []                          # opcional, para nombrar un video a mano

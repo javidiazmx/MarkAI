@@ -164,6 +164,20 @@ def _channel_slug(url: str) -> str:
     return slugify(url.split("youtube.com/", 1)[-1]) or "channel"
 
 
+def _is_short(entry: dict[str, Any], max_short_seconds: int) -> bool:
+    """True for a YouTube Short: the /shorts/ URL form, or a very brief video."""
+    url = str(entry.get("url") or entry.get("webpage_url") or "")
+    if "/shorts/" in url:
+        return True
+    duration = entry.get("duration")
+    if duration is None:
+        return False  # never drop something we could not measure
+    try:
+        return float(duration) <= max_short_seconds
+    except (TypeError, ValueError):
+        return False
+
+
 def _list_channel_videos(url: str, limit: int | None) -> list[dict[str, Any]]:
     """Ask yt-dlp for a channel's video list. No media is downloaded."""
     try:
@@ -187,8 +201,6 @@ def _list_channel_videos(url: str, limit: int | None) -> list[dict[str, Any]]:
         "skip_download": True,
         "ignoreerrors": True,
     }
-    if limit:
-        options["playlistend"] = int(limit)
 
     try:
         with YoutubeDL(options) as ydl:
@@ -213,28 +225,47 @@ def _list_channel_videos(url: str, limit: int | None) -> list[dict[str, Any]]:
     return entries
 
 
+CHANNEL_CACHE_VERSION = 2
+
+
 def expand_channel(
     url: str,
     cache_dir: Path,
     limit: int | None = None,
     refresh: bool = False,
+    skip_shorts: bool = True,
+    max_short_seconds: int = 180,
     lister: Callable[[str, int | None], list[dict[str, Any]]] | None = None,
 ) -> list[YouTubeEpisode]:
-    """Every video on a channel, as episodes. Cached so re-runs are instant."""
+    """Every video on a channel, as episodes, newest first.
+
+    The raw listing is cached rather than the filtered result, so changing ``skip_shorts``
+    or the limit takes effect without re-reading the channel. Shorts are dropped before the
+    limit is applied, otherwise a channel full of them would yield only a handful of videos.
+    """
     cache_dir = Path(cache_dir)
     cache_dir.mkdir(parents=True, exist_ok=True)
     cache_path = cache_dir / f"channel-{_channel_slug(url)}.json"
 
+    entries: list[dict[str, Any]] | None = None
     if cache_path.exists() and not refresh:
         try:
             cached = json.loads(cache_path.read_text(encoding="utf-8"))
-            return [YouTubeEpisode(**item) for item in cached]
+            if isinstance(cached, dict) and cached.get("version") == CHANNEL_CACHE_VERSION:
+                entries = cached.get("entries") or []
         except Exception as exc:
             logger.debug("ignoring bad channel cache %s: %s", cache_path, exc)
 
-    entries = (lister or _list_channel_videos)(url, limit)
+    if entries is None:
+        entries = (lister or _list_channel_videos)(url, None)
+        cache_path.write_text(
+            json.dumps({"version": CHANNEL_CACHE_VERSION, "entries": entries}, indent=1),
+            encoding="utf-8",
+        )
+
     episodes: list[YouTubeEpisode] = []
     seen: set[str] = set()
+    shorts = 0
     for entry in entries:
         # yt-dlp yields None for videos it could not read (private, removed, geo-blocked).
         if not isinstance(entry, dict):
@@ -242,14 +273,15 @@ def expand_channel(
         video_id = entry.get("id")
         if not video_id or not _ID_RE.match(str(video_id)) or video_id in seen:
             continue
+        if skip_shorts and _is_short(entry, max_short_seconds):
+            shorts += 1
+            continue
         seen.add(video_id)
         episodes.append(YouTubeEpisode(url=watch_url(video_id), title=(entry.get("title") or None)))
+        if limit and len(episodes) >= limit:
+            break
 
-    cache_path.write_text(
-        json.dumps([e.model_dump(exclude_none=True) for e in episodes], indent=1),
-        encoding="utf-8",
-    )
-    logger.info("channel %s: %d videos", url, len(episodes))
+    logger.info("channel %s: %d videos kept, %d shorts skipped", url, len(episodes), shorts)
     return episodes
 
 
@@ -308,6 +340,8 @@ def _merge_episodes(
             cache_dir if cache_dir is not None else project_root,
             limit=section.max_videos_per_channel,
             refresh=refresh,
+            skip_shorts=section.skip_shorts,
+            max_short_seconds=section.max_short_seconds,
             lister=lister,
         ):
             add(entry)

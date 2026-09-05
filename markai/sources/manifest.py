@@ -59,6 +59,8 @@ class YouTubeSection(BaseModel):
 
     channels: list[str] = Field(default_factory=list)
     max_videos_per_channel: int | None = Field(default=None, ge=1)
+    skip_shorts: bool = True
+    max_short_seconds: int = Field(default=180, ge=0)
     channel_url: str | None = None
     channel_name: str | None = None
     urls_file: str | None = None

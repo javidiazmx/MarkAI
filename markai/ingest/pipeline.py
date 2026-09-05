@@ -157,6 +157,8 @@ def plan_ingest(
                         channel,
                         settings.youtube_cache_dir,
                         limit=manifest.youtube.max_videos_per_channel,
+                        skip_shorts=manifest.youtube.skip_shorts,
+                        max_short_seconds=manifest.youtube.max_short_seconds,
                     )
                 )
             except Exception as exc:

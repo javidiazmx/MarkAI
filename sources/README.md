@@ -21,6 +21,13 @@ episodes, easiest first:
 - **A whole channel**: add its URL under `youtube.channels`. Mark works out the video list
   itself and caches it, so later runs are instant. `mark ingest --force` re-reads the channel
   and picks up new uploads. Set `max_videos_per_channel` to try a handful first.
+
+  Shorts are skipped by default (`skip_shorts: true`): they carry almost no transcript and
+  they crowd out real episodes in search. A video counts as a Short if its URL is the
+  `/shorts/` form or it runs `max_short_seconds` or less, 3 minutes by default. Shorts are
+  removed **before** `max_videos_per_channel` applies, so a limit of 100 gives you 100 real
+  episodes. Changing either setting takes effect on the next run without re-reading the
+  channel, because the raw listing is what gets cached.
 - **A few episodes**: add them under `youtube.episodes`, where you can also set a title and
   episode number by hand. Hand-written entries win over the same video found on a channel.
 - **A list in a file**: put one URL per line in a text file (see `youtube_urls.example.txt`)

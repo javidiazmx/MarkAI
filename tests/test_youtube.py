@@ -361,3 +361,90 @@ def test_a_video_without_captions_does_not_trip_the_breaker(tmp_path, settings):
         )
     assert len(results) == 12, "every video should be attempted"
     assert all(isinstance(r, IngestFailure) for r in results)
+
+
+# --- shorts -------------------------------------------------------------------------------
+
+SHORTS_AND_EPISODES = [
+    {"id": "shortAAAAAA", "title": "Short 1", "duration": 45},
+    {"id": "longAAAAAAA", "title": "Episode 400", "duration": 3600},
+    {"id": "shortBBBBBB", "title": "Short 2", "url": "https://www.youtube.com/shorts/shortBBBBBB"},
+    {"id": "longBBBBBBB", "title": "Episode 399", "duration": 2700},
+    {"id": "shortCCCCCC", "title": "Short 3", "duration": 30},
+    {"id": "longCCCCCCC", "title": "Episode 398", "duration": 1800},
+]
+
+
+def test_shorts_are_dropped_by_duration_and_by_url(tmp_path):
+    from markai.ingest.youtube import expand_channel
+
+    episodes = expand_channel(
+        "https://www.youtube.com/@x", tmp_path, lister=lambda u, limit: SHORTS_AND_EPISODES
+    )
+    assert [e.title for e in episodes] == ["Episode 400", "Episode 399", "Episode 398"]
+
+
+def test_a_video_with_no_duration_is_kept(tmp_path):
+    from markai.ingest.youtube import expand_channel
+
+    episodes = expand_channel(
+        "https://www.youtube.com/@x",
+        tmp_path,
+        lister=lambda u, limit: [{"id": "unknownDDDD", "title": "No duration given"}],
+    )
+    assert [e.title for e in episodes] == ["No duration given"]
+
+
+def test_the_limit_applies_after_shorts_are_removed(tmp_path):
+    """Limiting first would return 1 real video out of a listing that is half shorts."""
+    from markai.ingest.youtube import expand_channel
+
+    episodes = expand_channel(
+        "https://www.youtube.com/@x",
+        tmp_path,
+        limit=2,
+        lister=lambda u, limit: SHORTS_AND_EPISODES,
+    )
+    assert [e.title for e in episodes] == ["Episode 400", "Episode 399"]
+
+
+def test_shorts_can_be_kept_on_request(tmp_path):
+    from markai.ingest.youtube import expand_channel
+
+    episodes = expand_channel(
+        "https://www.youtube.com/@x",
+        tmp_path,
+        skip_shorts=False,
+        lister=lambda u, limit: SHORTS_AND_EPISODES,
+    )
+    assert len(episodes) == 6
+
+
+def test_changing_the_filter_does_not_re_read_the_channel(tmp_path):
+    """The raw listing is cached, so settings can change without another YouTube call."""
+    from markai.ingest.youtube import expand_channel
+
+    calls = []
+
+    def lister(url, limit):
+        calls.append(url)
+        return SHORTS_AND_EPISODES
+
+    assert len(expand_channel("https://www.youtube.com/@x", tmp_path, lister=lister)) == 3
+    kept = expand_channel("https://www.youtube.com/@x", tmp_path, skip_shorts=False)
+    assert len(kept) == 6
+    assert len(calls) == 1
+
+
+def test_the_full_listing_is_fetched_so_filtering_is_honest(tmp_path):
+    """yt-dlp must not be asked to truncate: we cannot filter what we never received."""
+    from markai.ingest.youtube import expand_channel
+
+    seen_limits = []
+
+    def lister(url, limit):
+        seen_limits.append(limit)
+        return SHORTS_AND_EPISODES
+
+    expand_channel("https://www.youtube.com/@x", tmp_path, limit=2, lister=lister)
+    assert seen_limits == [None]
