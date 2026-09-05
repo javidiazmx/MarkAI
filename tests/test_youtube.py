@@ -326,3 +326,38 @@ def test_ingest_reads_videos_from_a_channel(respx_mock, tmp_path, settings):
     assert len(documents) == 1
     assert documents[0].locator == watch_url(VIDEO)
     assert documents[0].channel == "SUCI"
+
+
+def test_the_run_stops_once_youtube_starts_blocking(tmp_path, settings):
+    """2,000 identical block failures help nobody: stop and say to retry later."""
+    from markai.ingest.youtube import MAX_CONSECUTIVE_BLOCKS
+
+    section = YouTubeSection(episodes=[YouTubeEpisode(url=f"vid{i:08d}") for i in range(40)])
+    api = FakeTranscriptApi(error=yta.IpBlocked("vid00000000"))
+    with httpx.Client() as client:
+        results = list(
+            ingest_youtube(
+                section, tmp_path, client=client, api=api, project_root=settings.project_root
+            )
+        )
+
+    assert len(results) == MAX_CONSECUTIVE_BLOCKS
+    assert len(api.calls) == MAX_CONSECUTIVE_BLOCKS, "must stop calling YouTube once blocked"
+    last = results[-1]
+    assert isinstance(last, IngestFailure)
+    assert "in a row" in last.reason
+    assert "cached" in last.hint
+
+
+def test_a_video_without_captions_does_not_trip_the_breaker(tmp_path, settings):
+    """Missing captions are normal and must not look like rate limiting."""
+    section = YouTubeSection(episodes=[YouTubeEpisode(url=f"vid{i:08d}") for i in range(12)])
+    api = FakeTranscriptApi(error=yta.TranscriptsDisabled("vid00000000"))
+    with httpx.Client() as client:
+        results = list(
+            ingest_youtube(
+                section, tmp_path, client=client, api=api, project_root=settings.project_root
+            )
+        )
+    assert len(results) == 12, "every video should be attempted"
+    assert all(isinstance(r, IngestFailure) for r in results)

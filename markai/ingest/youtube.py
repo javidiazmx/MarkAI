@@ -34,6 +34,13 @@ _URL_PATTERNS = (
     re.compile(r"/v/([A-Za-z0-9_-]{11})"),
 )
 
+MAX_CONSECUTIVE_BLOCKS = 5
+
+
+class RateLimitedError(IngestError):
+    """YouTube refused the request. Every following video will be refused too."""
+
+
 _NO_CAPTIONS_HINT = (
     "Captions are off for this video. Add a transcript_file for it in sources.yaml, or add "
     "the episode audio/transcript under the podcast section instead."
@@ -122,7 +129,7 @@ def fetch_transcript_segments(
     except (yta.TranscriptsDisabled, yta.NoTranscriptFound) as exc:
         raise IngestError(f"No captions available for {video_id}.", hint=_NO_CAPTIONS_HINT) from exc
     except (yta.RequestBlocked, yta.IpBlocked) as exc:
-        raise IngestError(
+        raise RateLimitedError(
             f"YouTube blocked the caption request for {video_id}.", hint=_BLOCKED_HINT
         ) from exc
     except yta.VideoUnavailable as exc:
@@ -336,7 +343,8 @@ def ingest_youtube(
         if log and section.channels:
             log(f"YouTube: {len(episodes)} videos across {len(section.channels)} channel(s)")
 
-        for entry in episodes:
+        blocked_in_a_row = 0
+        for index, entry in enumerate(episodes, start=1):
             try:
                 video_id = extract_video_id(entry.url)
             except IngestError as exc:
@@ -348,7 +356,23 @@ def ingest_youtube(
 
             try:
                 segments = _segments_for(entry, video_id, cache_dir, api, languages, project_root)
+                blocked_in_a_row = 0
+            except RateLimitedError as exc:
+                blocked_in_a_row += 1
+                if blocked_in_a_row >= MAX_CONSECUTIVE_BLOCKS:
+                    yield IngestFailure(
+                        SourceKind.YOUTUBE,
+                        watch_url(video_id),
+                        f"YouTube blocked {blocked_in_a_row} caption requests in a row, so the "
+                        f"remaining {len(episodes) - index} videos were skipped.",
+                        "Wait an hour and run `mark ingest` again. Everything already downloaded "
+                        "is cached, so it picks up where it stopped.",
+                    )
+                    return
+                yield IngestFailure(SourceKind.YOUTUBE, watch_url(video_id), str(exc), exc.hint)
+                continue
             except IngestError as exc:
+                blocked_in_a_row = 0
                 yield IngestFailure(SourceKind.YOUTUBE, watch_url(video_id), str(exc), exc.hint)
                 continue
             except Exception as exc:  # never let one video stop the run

@@ -173,7 +173,11 @@ youtube:
   channels:
     - https://www.youtube.com/@straightupchicagoinvestor
     - https://www.youtube.com/@MarkAinleyGCRealty
-  max_videos_per_channel: null   # null = todos. Pon un numero para probar con pocos primero.
+  # Los dos canales juntos tienen ~2346 videos. YouTube bloquea la IP mucho antes de llegar
+  # ahi, y buena parte son shorts y clips cortos que no aportan. Empezamos con los 100 mas
+  # recientes de cada canal para revisar calidad; subelo despues (o ponlo en null) cuando
+  # confirmemos que las respuestas salen bien.
+  max_videos_per_channel: 100
   channel_name: Straight Up Chicago Investor
   urls_file: sources/youtube_urls.txt   # opcional, para videos sueltos de otros canales
   episodes: []                          # opcional, para nombrar un video a mano
@@ -193,6 +197,10 @@ youtube:
 #   - the filename matches at least 80% of the words in the episode title.
 # Run `mark sources match` to see exactly what matched before you ingest.
 # ---------------------------------------------------------------------------------------
+# NOTA: los episodios de este podcast ya estan en YouTube con subtitulos gratis, asi que
+# transcribir el audio en local seria repetir el mismo contenido gastando ~20 horas de CPU.
+# El feed se queda configurado por si algun dia el host publica transcripciones, pero corre
+# el ingest con --no-transcribe.
 podcast:
   show_name: Straight Up Chicago Investor
   rss: https://feeds.libsyn.com/262421/rss

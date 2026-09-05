@@ -345,6 +345,9 @@ def ingest(
     ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show the plan and stop."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip the transcription confirmation."),
+    no_transcribe: bool = typer.Option(
+        False, "--no-transcribe", help="Never transcribe audio; use transcripts only."
+    ),
 ) -> None:
     """Fetch every source in sources.yaml and build the knowledge base."""
     from markai.ingest.pipeline import plan_ingest, run_ingest
@@ -371,7 +374,15 @@ def ingest(
 
     if dry_run:
         return
-    if plan.needs_transcription() and not yes:
+    if no_transcribe:
+        allow = False
+        if plan.needs_transcription():
+            console.print(
+                f"[dim]Skipping transcription for "
+                f"{plan.podcast_by_method.get('audio_transcribe', 0)} episodes (--no-transcribe)."
+                "[/dim]"
+            )
+    elif plan.needs_transcription() and not yes:
         hours = plan.transcription_minutes / 60.0
         console.print(
             f"[yellow]{plan.podcast_by_method.get('audio_transcribe', 0)} episodes have no "
