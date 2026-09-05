@@ -375,6 +375,72 @@ def _merge_episodes(
     return episodes
 
 
+# Tried in this order when nothing is configured. Firefox first because Chrome on Windows
+# encrypts its cookie store in a way yt-dlp usually cannot read; a browser that is not
+# installed fails instantly, so the whole sweep costs little.
+BROWSERS_TO_TRY = ("firefox", "edge", "chrome", "brave", "vivaldi", "opera", "chromium")
+
+
+class CaptionFallback:
+    """The second caption route, which works out its own way in rather than being told.
+
+    The owner should not have to install an extension, export a cookie file, or even name
+    their browser. So on the first block this tries yt-dlp anonymously, then cookies from
+    each browser in turn, and remembers whichever worked for the rest of the run. It also
+    remembers when nothing worked, so the answer costs one sweep and not one per video.
+    """
+
+    def __init__(
+        self,
+        client: httpx.Client,
+        languages: Sequence[str],
+        configured_browser: str | None = None,
+        log: Callable[[str], None] | None = None,
+    ) -> None:
+        self._client = client
+        self._languages = list(languages) or ["en"]
+        self._log = log
+        self._configured = configured_browser
+        self._resolved = False
+        self._browser: str | None = configured_browser
+        self.attempts: list[str] = []
+
+    def __call__(self, video_id: str) -> list[Segment]:
+        if self._resolved or self._configured:
+            return self._fetch(video_id, self._browser)
+        return self._resolve(video_id)
+
+    def _fetch(self, video_id: str, browser: str | None) -> list[Segment]:
+        return captions_via_ytdlp(video_id, self._languages, self._client, browser)
+
+    def _resolve(self, video_id: str) -> list[Segment]:
+        """Find a way in, once. Raises the last block if there is none."""
+        last: IngestError = RateLimitedError(
+            f"YouTube blocked every route for {video_id}.", hint=_BLOCKED_HINT
+        )
+        for browser in (None, *BROWSERS_TO_TRY):
+            label = "yt-dlp" if browser is None else f"{browser} cookies"
+            try:
+                segments = self._fetch(video_id, browser)
+            except NoCaptionsError:
+                self._resolved, self._browser = True, browser
+                raise
+            except IngestError as exc:
+                self.attempts.append(label)
+                logger.debug("caption route %s did not work: %s", label, exc)
+                last = exc
+                continue
+            self._resolved, self._browser = True, browser
+            if self._log and browser:
+                self._log(f"Captions are coming through {label}.")
+            return segments
+
+        self._resolved, self._browser = True, None
+        if self._log:
+            self._log(f"No caption route worked. Tried: {', '.join(self.attempts)}.")
+        raise last
+
+
 def captions_via_ytdlp(
     video_id: str,
     languages: Sequence[str],
@@ -599,8 +665,7 @@ def ingest_youtube(
     owns_client = client is None
     client = client or make_client()
 
-    def fallback(video_id: str) -> list[Segment]:
-        return captions_via_ytdlp(video_id, languages or ["en"], client, cookies_from_browser)
+    fallback = CaptionFallback(client, languages or ["en"], cookies_from_browser, log)
 
     try:
         try:
@@ -640,10 +705,16 @@ def ingest_youtube(
                         SourceKind.YOUTUBE,
                         watch_url(video_id),
                         f"YouTube kept blocking after {blocked_in_a_row} rounds of waiting, so "
-                        f"the remaining {len(episodes) - index} videos were skipped.",
-                        "Wait an hour and run `mark ingest` again. Everything already downloaded "
-                        "is cached, so it picks up where it stopped. Raising "
-                        "MARKAI_YOUTUBE_DELAY_SECONDS makes a block less likely next time.",
+                        f"the remaining {len(episodes) - index} videos were skipped."
+                        + (
+                            f" Routes tried: {', '.join(fallback.attempts)}."
+                            if fallback.attempts
+                            else ""
+                        ),
+                        "This machine's address is blocked, and waiting has not lifted it. "
+                        "Everything already downloaded is cached, so a later run resumes. If "
+                        "every route above failed, the address needs to change: try a phone "
+                        "hotspot, another network, or set MARKAI_YOUTUBE_PROXY_URL.",
                     )
                     return
                 yield IngestFailure(SourceKind.YOUTUBE, watch_url(video_id), str(exc), exc.hint)

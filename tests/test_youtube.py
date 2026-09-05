@@ -10,6 +10,7 @@ import respx
 import youtube_transcript_api as yta
 
 from markai.ingest.youtube import (
+    RateLimitedError,
     extract_video_id,
     fetch_transcript_segments,
     fetch_video_title,
@@ -628,3 +629,79 @@ def test_no_captions_on_either_route_skips_the_backoff(tmp_path, settings, monke
     assert waited == [], "no waiting for something that will never arrive"
     assert len(results) == 1 and isinstance(results[0], IngestFailure)
     assert "No captions" in results[0].reason
+
+
+# --- finding a way in without being told -------------------------------------------------
+
+
+def test_the_fallback_tries_each_browser_and_remembers_the_one_that_works():
+    """The owner should not have to know which browser they use, let alone export from it."""
+    from markai.ingest.youtube import CaptionFallback
+
+    tried: list[str | None] = []
+
+    def extractor(url, options):
+        browser = options.get("cookiesfrombrowser")
+        tried.append(browser[0] if browser else None)
+        if browser and browser[0] == "edge":
+            return _info()
+        raise RateLimitedError("blocked")
+
+    with httpx.Client() as client, respx.mock:
+        respx.get("https://caption.test/en.vtt").mock(return_value=httpx.Response(200, text=VTT))
+        with pytest.MonkeyPatch.context() as mp:
+            import markai.ingest.youtube as yt
+
+            mp.setattr(yt, "_ytdlp_extract", extractor)
+            fetch = CaptionFallback(client, ["en"])
+            assert len(fetch("vid1")) == 2
+            assert tried == [None, "firefox", "edge"], "anonymous first, then browsers in order"
+
+            tried.clear()
+            assert len(fetch("vid2")) == 2
+            assert tried == ["edge"], "the working route is remembered, not rediscovered"
+
+
+def test_the_sweep_runs_once_even_when_nothing_works():
+    """Seven dead browsers per video, 1,142 times, would be its own kind of failure."""
+    from markai.ingest.youtube import BROWSERS_TO_TRY, CaptionFallback
+
+    calls: list[object] = []
+
+    def extractor(url, options):
+        calls.append(options.get("cookiesfrombrowser"))
+        raise RateLimitedError("blocked")
+
+    with httpx.Client() as client, pytest.MonkeyPatch.context() as mp:
+        import markai.ingest.youtube as yt
+
+        mp.setattr(yt, "_ytdlp_extract", extractor)
+        fetch = CaptionFallback(client, ["en"])
+        with pytest.raises(RateLimitedError):
+            fetch("vid1")
+        assert len(calls) == len(BROWSERS_TO_TRY) + 1
+
+        calls.clear()
+        with pytest.raises(RateLimitedError):
+            fetch("vid2")
+        assert len(calls) == 1, "one more try, not another sweep"
+        assert fetch.attempts, "and it can say what it tried"
+
+
+def test_a_configured_browser_skips_the_sweep():
+    from markai.ingest.youtube import CaptionFallback
+
+    tried: list[object] = []
+
+    def extractor(url, options):
+        tried.append(options.get("cookiesfrombrowser"))
+        return _info()
+
+    with httpx.Client() as client, respx.mock, pytest.MonkeyPatch.context() as mp:
+        import markai.ingest.youtube as yt
+
+        mp.setattr(yt, "_ytdlp_extract", extractor)
+        respx.get("https://caption.test/en.vtt").mock(return_value=httpx.Response(200, text=VTT))
+        CaptionFallback(client, ["en"], "firefox")("vid1")
+
+    assert tried == [("firefox",)], "asked for, so not second-guessed"

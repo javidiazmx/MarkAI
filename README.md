@@ -122,19 +122,22 @@ There is a second route built in, and it needs no setup: yt-dlp, already a depen
 it lists the channels, talks to YouTube over a different client. Whenever the caption library
 is blocked, that route is tried before any waiting, and often just works.
 
-When it does not, three options, in order of effort:
+If yt-dlp is blocked as well, it then tries cookies from each installed browser in turn —
+Firefox, Edge, Chrome, Brave, Vivaldi, Opera, Chromium — and keeps whichever works for the rest
+of the run. A browser that is not installed fails instantly, so the sweep is quick, and it runs
+once per run rather than once per video. Still nothing to configure; close your browser first,
+since some of them lock their cookie store while running.
 
-- **Browser cookies**, free, nothing to install. Set `MARKAI_YOUTUBE_COOKIES_FROM_BROWSER` to
-  the name of a browser you are signed in to YouTube with — `firefox`, `edge`, `chrome`,
-  `brave`, `opera`, `vivaldi`, `safari` — and the cookies are read from it directly. Firefox is
-  the most reliable; Chrome on Windows encrypts its cookie store in a way that often refuses.
-  Close the browser first.
-- **A cookies.txt file**, if you would rather export one: `MARKAI_YOUTUBE_COOKIES_FILE`. Treat
-  it as a password, it is a live session.
-- **A proxy**, paid. `MARKAI_YOUTUBE_PROXY_URL` for any http proxy, or Webshare credentials for
-  their rotating pool, which is what the caption library recommends.
+Name one with `MARKAI_YOUTUBE_COOKIES_FROM_BROWSER` to skip the sweep, or point
+`MARKAI_YOUTUBE_COOKIES_FILE` at an exported `cookies.txt` — treat that file as a password, it
+is a live session.
 
-`mark doctor` shows which is in use and never prints the credentials.
+When every route fails, the address itself is blocked and no amount of waiting or configuration
+changes that. The failure names each route it tried. Move to another network — a phone hotspot
+is the quickest test — or set `MARKAI_YOUTUBE_PROXY_URL`, or Webshare credentials for the
+rotating pool the caption library recommends.
+
+`mark doctor` shows which route is configured and never prints the credentials.
 
 A large channel takes several sessions. Requests are paced by `MARKAI_YOUTUBE_DELAY_SECONDS`,
 and a block is waited out — 30s, then 60s, 120s, 300s — before the video is retried, because
