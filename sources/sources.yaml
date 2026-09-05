@@ -214,8 +214,9 @@ podcast:
   show_name: Straight Up Chicago Investor
   rss: https://feeds.libsyn.com/262421/rss
   include_titles: []          # only these episodes; matches part of a title, or an episode number
-  # El feed trae 480 episodios. Sin transcripcion local esto solo aporta numero de episodio,
-  # fecha y liga a las notas, que es barato y hace que las citas de Mark salgan completas.
+  # El feed trae 480 episodios. Libsyn no publica transcripciones, asi que de cada episodio
+  # se guardan las NOTAS del show: invitado, temas, marcas de tiempo y ligas. Es contenido
+  # real y ya viene en el feed. El transcript completo llega por YouTube.
   # Corre siempre con --no-transcribe.
   max_episodes: null
   episodes: []

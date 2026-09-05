@@ -10,6 +10,7 @@ import respx
 
 from markai.ingest.podcast import (
     NO_TRANSCRIPT_HINT,
+    _show_notes,
     ingest_podcast,
     load_feed_episodes,
     match_transcript_file,
@@ -230,3 +231,88 @@ def test_a_bad_feed_does_not_hide_episodes_listed_by_hand(respx_mock, settings):
     with httpx.Client() as client:
         plan = resolve_transcript_plan(section, settings, client)
     assert [method for _e, method in plan] == ["transcript_file"]
+
+
+# --- show notes ----------------------------------------------------------------------------
+#
+# A 480-episode feed produced 480 failures and stored nothing, because an episode without a
+# transcript was treated as an episode with no content. The notes were in the feed all along.
+
+
+NOTES_HTML = (
+    "<p>Mark Ainley and Tom Shallcross sit down with <b>Jared Kott</b> to talk about "
+    "scaling to 500 units on the Southeast side of Chicago.</p>"
+    "<p>Jared walks through his BRRRR criteria, the zip codes he stopped buying in, how he "
+    "underwrites a gut rehab, and what he actually pays his property manager.</p>"
+    "<ul><li>02:14 The first deal</li><li>18:40 Financing the portfolio</li></ul>"
+    "<script>tracker()</script>"
+)
+
+
+def test_show_notes_are_read_as_plain_text():
+    notes = _show_notes({"content": [{"value": NOTES_HTML}], "summary": "teaser"})
+    assert "Jared Kott" in notes
+    assert "<p>" not in notes and "tracker()" not in notes
+    assert "\n\n" in notes, "paragraph breaks survive, because the chunker splits on them"
+
+
+def test_show_notes_prefer_the_longest_description_available():
+    entry = {"summary": "Short.", "content": [{"value": NOTES_HTML}]}
+    assert len(_show_notes(entry).split()) > 40
+
+
+def test_show_notes_are_none_when_the_feed_carries_none():
+    assert _show_notes({}) is None
+
+
+@respx.mock(assert_all_called=False)
+def test_an_episode_with_no_transcript_is_stored_from_its_notes(respx_mock, settings, tmp_path):
+    feed = f"""<?xml version="1.0"?><rss xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"
+    version="2.0"><channel><title>SUCI</title>
+    <item><title>Episode 11: The Boss of the Southeast</title>
+      <itunes:episode>11</itunes:episode>
+      <link>https://suci.test/11</link>
+      <enclosure url="https://audio.test/11.mp3" type="audio/mpeg" length="1"/>
+      <description><![CDATA[{NOTES_HTML}]]></description>
+    </item></channel></rss>"""
+    respx_mock.get("https://feeds.test/rss").mock(
+        return_value=httpx.Response(200, text=feed, headers={"content-type": "application/rss+xml"})
+    )
+    settings.ensure_dirs()
+    section = PodcastSection(show_name="SUCI", rss="https://feeds.test/rss")
+
+    with httpx.Client() as client:
+        results = list(
+            ingest_podcast(section, settings, tmp_path, client=client, allow_transcription=False)
+        )
+
+    documents = [r for r in results if isinstance(r, Document)]
+    assert len(documents) == 1, "notes are content, not a failure"
+    doc = documents[0]
+    assert "Jared Kott" in doc.text
+    assert doc.episode == "11"
+    assert doc.metadata["transcript_method"] == "show_notes"
+    assert doc.segments == [], "notes have no timestamps, so no segments are invented"
+    assert doc.content_hash
+
+
+@respx.mock(assert_all_called=False)
+def test_a_one_line_teaser_is_still_a_failure(respx_mock, settings, tmp_path):
+    """Storing "Ep 12." as a document would just pollute search results."""
+    feed = """<?xml version="1.0"?><rss version="2.0"><channel><title>SUCI</title>
+    <item><title>Episode 12</title><link>https://suci.test/12</link>
+      <enclosure url="https://audio.test/12.mp3" type="audio/mpeg" length="1"/>
+      <description>A quick chat.</description>
+    </item></channel></rss>"""
+    respx_mock.get("https://feeds.test/rss").mock(
+        return_value=httpx.Response(200, text=feed, headers={"content-type": "application/rss+xml"})
+    )
+    settings.ensure_dirs()
+    section = PodcastSection(show_name="SUCI", rss="https://feeds.test/rss")
+
+    with httpx.Client() as client:
+        results = list(
+            ingest_podcast(section, settings, tmp_path, client=client, allow_transcription=False)
+        )
+    assert [r for r in results if isinstance(r, Document)] == []
+    assert len(results) == 1 and isinstance(results[0], IngestFailure)

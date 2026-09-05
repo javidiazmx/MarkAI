@@ -83,6 +83,7 @@ class PodcastEpisode(BaseModel):
     published_at: str | None = None
     duration_seconds: float | None = None
     notes: str | None = None
+    show_notes: str | None = None
 
 
 class PodcastSection(BaseModel):

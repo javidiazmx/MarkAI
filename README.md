@@ -145,6 +145,12 @@ owner-approved English wording whatever language the answer is in.
 **Geography.** Outside Illinois, Mark says it is outside his area. Illinois but outside
 Chicagoland, he notes the limitation and shares what his sources cover.
 
+**Podcast episodes without a transcript.** The feed's own show notes are stored as the
+episode's text — guests, topics, timestamps, links. That is real material and it is already in
+the feed, so a show whose host publishes no transcripts still contributes an episode-level
+record with its number, date and link. A one-line teaser is not enough to store and is reported
+as a failure instead.
+
 **PDFs.** A PDF linked from a listed site is read like any other page; a lot of housing
 material (the RLTO summary, EPA lead-paint pamphlets, HUD forms) is published that way. Scanned
 PDFs have no selectable text, so Mark says it needs OCR rather than storing a blank page. Images,

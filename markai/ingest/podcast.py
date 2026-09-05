@@ -13,6 +13,7 @@ import re
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import httpx
 
@@ -118,12 +119,51 @@ def load_feed_episodes(
                 transcript_url=transcript_url,
                 published_at=published_at,
                 duration_seconds=_parse_duration(entry.get("itunes_duration")),
+                show_notes=_show_notes(entry),
             )
         )
 
     if max_episodes:
         episodes = episodes[:max_episodes]
     return episodes
+
+
+# Below this, a description is a one-line teaser rather than something worth storing.
+MIN_SHOW_NOTES_WORDS = 40
+
+
+def _show_notes(entry: Any) -> str | None:
+    """The episode's own notes, as plain text.
+
+    Show notes are the one piece of real content a feed always carries: guests, topics,
+    timestamps, links. Ignoring them is why a 480-episode feed produced 480 failures and
+    nothing else.
+    """
+    from bs4 import BeautifulSoup
+
+    raw = ""
+    contents = entry.get("content") or []
+    if contents and isinstance(contents, list):
+        raw = str(contents[0].get("value") or "")
+    for key in ("summary", "description", "itunes_summary", "subtitle"):
+        if len(raw.strip()) < 200:
+            candidate = str(entry.get(key) or "")
+            if len(candidate) > len(raw):
+                raw = candidate
+    if not raw.strip():
+        return None
+
+    soup = BeautifulSoup(raw, "lxml")
+    for tag in soup.find_all(["script", "style"]):
+        tag.decompose()
+    for tag in soup.find_all(["br", "li"]):
+        tag.append("\n")
+    for tag in soup.find_all(["p", "div", "h1", "h2", "h3", "h4"]):
+        tag.append("\n\n")  # a real blank line, because the chunker splits on paragraphs
+    text = re.sub(r"[ \t]+", " ", soup.get_text(" "))
+    text = re.sub(r" *\n *", "\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    return text or None
 
 
 def download_file(url: str, dest_dir: Path, client: httpx.Client) -> Path:
@@ -290,10 +330,16 @@ def ingest_podcast(
                     episode, settings, transcripts_dir, audio_dir, client, allow_transcription
                 )
             except IngestError as exc:
-                yield IngestFailure(
-                    SourceKind.PODCAST, _episode_locator(episode), str(exc), exc.hint
-                )
-                continue
+                # No transcript is not the same as nothing to learn. The feed's own show
+                # notes name the guest, the topics and the links, which is real material
+                # and already downloaded.
+                notes = (episode.show_notes or "").strip()
+                if len(notes.split()) < MIN_SHOW_NOTES_WORDS:
+                    yield IngestFailure(
+                        SourceKind.PODCAST, _episode_locator(episode), str(exc), exc.hint
+                    )
+                    continue
+                segments, method = [], "show_notes"
             except Exception as exc:
                 yield IngestFailure(SourceKind.PODCAST, _episode_locator(episode), str(exc), None)
                 continue
@@ -304,7 +350,9 @@ def ingest_podcast(
                 kind=SourceKind.PODCAST,
                 title=episode.title or f"Episode {episode.episode or ''}".strip(),
                 locator=locator,
-                text=segments_to_text(segments),
+                text=(episode.show_notes or "")
+                if method == "show_notes"
+                else (segments_to_text(segments)),
                 segments=segments,
                 link=episode.episode_url or episode.audio_url,
                 published_at=episode.published_at,
