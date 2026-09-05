@@ -441,6 +441,8 @@ def ingest(
         log=lambda message: console.print(f"[dim]{escape(message)}[/dim]"),
     )
     console.print(report.summary_table())
+    details = report.write_details(settings.data_dir / "last-ingest.txt")
+    console.print(f"[dim]Full details, page by page: {details}[/dim]")
     store.close()
 
 

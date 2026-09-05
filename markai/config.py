@@ -99,7 +99,11 @@ class Settings(BaseSettings):
     # --- Ingestion -------------------------------------------------------------------------
     crawl_delay_seconds: float = Field(default=0.5, ge=0)
     http_timeout_seconds: float = Field(default=30.0, gt=0)
-    max_page_bytes: int = Field(default=5_000_000, ge=10_000)
+    max_page_bytes: int = Field(
+        default=25_000_000,
+        ge=100_000,
+        description="How much of a page to read. Bigger pages are truncated, not skipped.",
+    )
     transcribe_model: str = Field(
         default="small",
         description="faster-whisper model size (tiny/base/small/medium/large-v3).",

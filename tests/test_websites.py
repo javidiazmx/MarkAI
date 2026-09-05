@@ -196,3 +196,89 @@ def test_ignore_robots_overrides_the_block(respx_mock, tmp_path, settings):
             if isinstance(r, Document)
         ]
     assert len(documents) == 1
+
+
+# --- oversized pages ----------------------------------------------------------------------
+
+BIG_PAGE = (
+    "<html><head><title>Blog</title></head><body>"
+    "<h1>Chicago landlord blog</h1>"
+    "<p>Security deposits must earn interest every year.</p>"
+    "<p>Hold the money in a separate account in Illinois.</p>"
+    "<!--" + "padding" * 200000 + "-->"
+    "</body></html>"
+)
+
+
+@respx.mock(assert_all_called=False)
+def test_an_oversized_page_is_truncated_not_discarded(respx_mock):
+    """A page builder inlines megabytes of CSS; the article is still at the top."""
+    respx_mock.get("https://example.com/blog").mock(
+        return_value=httpx.Response(200, text=BIG_PAGE, headers={"content-type": "text/html"})
+    )
+    with httpx.Client() as client:
+        fetched = fetch_page("https://example.com/blog", client, max_bytes=2000)
+
+    assert fetched.truncated is True
+    title, text = extract_main_text(fetched.html, "https://example.com/blog")
+    assert "Security deposits must earn interest" in text
+
+
+@respx.mock(assert_all_called=False)
+def test_a_page_under_the_limit_is_not_marked_truncated(respx_mock):
+    respx_mock.get("https://example.com/deposits").mock(
+        return_value=httpx.Response(200, text=PAGE, headers={"content-type": "text/html"})
+    )
+    with httpx.Client() as client:
+        fetched = fetch_page("https://example.com/deposits", client)
+    assert fetched.truncated is False
+
+
+@respx.mock(assert_all_called=False)
+def test_an_empty_response_is_still_a_failure(respx_mock):
+    respx_mock.get("https://example.com/blank").mock(
+        return_value=httpx.Response(200, content=b"", headers={"content-type": "text/html"})
+    )
+    with httpx.Client() as client, pytest.raises(IngestError):
+        fetch_page("https://example.com/blank", client)
+
+
+@respx.mock(assert_all_called=False)
+def test_a_huge_blog_page_now_reaches_the_knowledge_base(respx_mock, tmp_path, settings):
+    settings = settings.model_copy(update={"crawl_delay_seconds": 0.0, "max_page_bytes": 2000})
+    respx_mock.get("https://example.com/robots.txt").mock(return_value=httpx.Response(404))
+    respx_mock.get("https://example.com/blog").mock(
+        return_value=httpx.Response(200, text=BIG_PAGE, headers={"content-type": "text/html"})
+    )
+    source = WebsiteSource(url="https://example.com/blog")
+    with httpx.Client() as client:
+        results = list(ingest_websites([source], tmp_path, client, settings))
+
+    documents = [r for r in results if isinstance(r, Document)]
+    assert len(documents) == 1
+    assert "Security deposits" in documents[0].text
+    assert documents[0].metadata["truncated"] is True
+
+
+@respx.mock(assert_all_called=False)
+def test_broken_pages_cannot_run_past_max_pages(respx_mock, tmp_path, settings):
+    """Failures used to be free, so a site full of them crawled without a ceiling."""
+    settings = settings.model_copy(update={"crawl_delay_seconds": 0.0})
+    respx_mock.get("https://example.com/robots.txt").mock(return_value=httpx.Response(404))
+    links = "".join(f'<a href="/p{i}">p{i}</a>' for i in range(50))
+    respx_mock.get("https://example.com/start").mock(
+        return_value=httpx.Response(
+            200,
+            text=f"<html><body><p>Start</p>{links}</body></html>",
+            headers={"content-type": "text/html"},
+        )
+    )
+    broken = respx_mock.get(url__regex=r"https://example\.com/p\d+").mock(
+        return_value=httpx.Response(500)
+    )
+
+    source = WebsiteSource(url="https://example.com/start", crawl=True, max_pages=10)
+    with httpx.Client() as client:
+        list(ingest_websites([source], tmp_path, client, settings))
+
+    assert broken.call_count <= 9, "the budget must cover attempts, not just successes"

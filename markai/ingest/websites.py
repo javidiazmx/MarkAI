@@ -14,6 +14,7 @@ from collections import deque
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import NamedTuple
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 from urllib.robotparser import RobotFileParser
 
@@ -94,11 +95,21 @@ def _decode_body(body: bytes, response: httpx.Response) -> str:
     return body.decode("utf-8", errors="replace")
 
 
-def fetch_page(url: str, client: httpx.Client, max_bytes: int = 5_000_000) -> tuple[str, str]:
-    """GET an HTML page. Returns ``(final_url, html)``.
+class PageFetch(NamedTuple):
+    """One fetched page. ``truncated`` means it hit ``max_bytes`` and we kept the head."""
 
-    Raises ``IngestError`` on a non-2xx status (401/403 carry a login hint), a non-HTML
-    content type, or a body larger than ``max_bytes``.
+    final_url: str
+    html: str
+    truncated: bool = False
+
+
+def fetch_page(url: str, client: httpx.Client, max_bytes: int = 25_000_000) -> PageFetch:
+    """GET an HTML page.
+
+    Raises ``IngestError`` on a non-2xx status (401/403 carry a login hint) or a non-HTML
+    content type. A page bigger than ``max_bytes`` is **truncated, not rejected**: page
+    builders inline megabytes of CSS and JavaScript, and the article text is near the top,
+    so keeping the head beats discarding the page.
     """
     try:
         with client.stream("GET", url) as response:
@@ -133,25 +144,25 @@ def fetch_page(url: str, client: httpx.Client, max_bytes: int = 5_000_000) -> tu
                     hint="Mark only reads web pages. For PDFs, paste the text into a .txt "
                     "transcript file.",
                 )
-            declared = response.headers.get("content-length")
-            if declared and declared.isdigit() and int(declared) > max_bytes:
-                raise IngestError(
-                    f"Page is too large ({int(declared):,} bytes > {max_bytes:,}): {url}"
-                )
             chunks: list[bytes] = []
             total = 0
+            truncated = False
             for chunk in response.iter_bytes():
-                total += len(chunk)
-                if total > max_bytes:
-                    raise IngestError(f"Page is too large (> {max_bytes:,} bytes): {url}")
                 chunks.append(chunk)
+                total += len(chunk)
+                if total >= max_bytes:
+                    truncated = True
+                    logger.info("truncating %s at %s bytes", url, f"{total:,}")
+                    break
             body = b"".join(chunks)
     except httpx.HTTPError as exc:
         raise IngestError(
             f"Could not fetch {url}: {type(exc).__name__}: {exc}",
             hint="Check the URL and your internet connection, then re-run `mark ingest`.",
         ) from exc
-    return final_url, _decode_body(body, response)
+    if not body.strip():
+        raise IngestError(f"Empty response from {url}", hint="The page returned no content.")
+    return PageFetch(final_url, _decode_body(body, response), truncated)
 
 
 def _fallback_extract(soup: BeautifulSoup) -> str:
@@ -376,14 +387,17 @@ def ingest_websites(
                         emit(f"Skipping {url} (robots.txt disallows)")
                     continue
                 pace(url)
+                # Count the attempt, not the success: a site full of broken pages must not
+                # be able to run past max_pages.
+                fetched_pages += 1
                 try:
-                    final_url, html = fetch_page(url, client, max_bytes=max_bytes)
+                    fetched = fetch_page(url, client, max_bytes=max_bytes)
                 except IngestError as exc:
                     yield IngestFailure(
                         kind=SourceKind.WEBSITE, locator=canon, reason=str(exc), hint=exc.hint
                     )
                     continue
-                fetched_pages += 1
+                final_url, html = fetched.final_url, fetched.html
                 final_canon = canonical_url(final_url)
                 visited.add(final_canon)
                 _cache_html(cache_dir, final_canon, html)
@@ -423,6 +437,7 @@ def ingest_websites(
                             "domain": urlsplit(final_url).netloc.lower(),
                             "fetched_at": datetime.now(UTC).isoformat(timespec="seconds"),
                             "notes": source.notes,
+                            "truncated": fetched.truncated,
                         },
                     )
                     document.ensure_hash()

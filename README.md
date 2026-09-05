@@ -87,6 +87,7 @@ Everything lives in `.env`. Only the first line is required.
 | `MARKAI_WEAK_RELEVANCE` | `5.0` | Below this, coverage is reported as weak |
 | `MARKAI_YOUTUBE_LANGUAGES` | `en,en-US` | Caption languages to try, in order |
 | `MARKAI_CRAWL_DELAY_SECONDS` | `0.5` | Politeness delay between page fetches |
+| `MARKAI_MAX_PAGE_BYTES` | `25000000` | How much of a page to read; bigger pages are truncated |
 | `MARKAI_TRANSCRIBE_MODEL` | `small` | Whisper model size for podcast audio |
 | `MARKAI_WEB_HOST` | `127.0.0.1` | Where the web UI binds |
 | `MARKAI_WEB_PORT` | `8000` | Web UI port |
@@ -183,6 +184,7 @@ keyword search.
 | Ingest wants to transcribe for hours | Run `mark ingest --dry-run` to see the estimate. Send transcripts or list the YouTube versions instead |
 | Answers say "not covered" too often | Check `mark status` for the chunk count, then `mark gaps` to see what is missing |
 | A page came back empty | It is probably rendered by JavaScript. Paste the text into a `.txt` file and reference it |
+| Lots of failures and no idea why | Every run writes `data/last-ingest.txt` with each page and its reason |
 
 ## Project layout
 

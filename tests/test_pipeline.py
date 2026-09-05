@@ -5,7 +5,7 @@ from __future__ import annotations
 import httpx
 import respx
 
-from markai.ingest.pipeline import plan_ingest, run_ingest
+from markai.ingest.pipeline import IngestReport, plan_ingest, run_ingest
 from markai.knowledge.chunking import chunk_document
 from markai.knowledge.store import KnowledgeStore
 from markai.models import SourceKind
@@ -254,3 +254,34 @@ def test_a_later_run_with_a_key_embeds_what_is_already_stored(respx_mock, settin
     assert second.embedded > 0
     assert store.stats().embedded_chunks == second.embedded
     store.close()
+
+
+def test_failures_are_grouped_so_the_table_stays_readable():
+    from markai.models import IngestFailure
+
+    report = IngestReport(started_at="t0", finished_at="t1")
+    report.failures = [
+        IngestFailure(SourceKind.WEBSITE, f"https://x.test/{i}", "Page is too large: url")
+        for i in range(1607)
+    ]
+    report.failures.append(
+        IngestFailure(SourceKind.WEBSITE, "https://y.test", "HTTP 404 for https://y.test")
+    )
+    grouped = report.failure_summary()
+    assert grouped[0] == ("Page is too large", 1607)
+    assert len(grouped) == 2
+
+
+def test_the_details_file_holds_every_failure(tmp_path):
+    from markai.models import IngestFailure
+
+    report = IngestReport(started_at="t0", finished_at="t1", added=["A (https://a)"])
+    report.failures = [
+        IngestFailure(SourceKind.WEBSITE, f"https://x.test/{i}", "too large", "raise the limit")
+        for i in range(200)
+    ]
+    path = report.write_details(tmp_path / "last-ingest.txt")
+    body = path.read_text(encoding="utf-8")
+    assert "https://x.test/199" in body, "every failure, not a preview"
+    assert "raise the limit" in body
+    assert "A (https://a)" in body

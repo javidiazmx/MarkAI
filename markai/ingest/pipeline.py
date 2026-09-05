@@ -127,17 +127,55 @@ class IngestReport:
         ):
             preview = escape("\n".join(items[:5])) + ("\n…" if len(items) > 5 else "")
             table.add_row(label, str(len(items)), preview)
+        if self.failures:
+            grouped = self.failure_summary()
+            preview = "\n".join(f"{count} x {reason}" for reason, count in grouped[:6])
+            if len(grouped) > 6:
+                preview += f"\n... and {len(grouped) - 6} other kinds"
+            table.add_row("Failed", str(len(self.failures)), escape(preview))
         if self.embedded:
             table.add_row("Embedded", str(self.embedded), "chunks given semantic search")
-        if self.failures:
-            preview = escape(
-                "\n".join(
-                    f"{f.locator}: {f.reason}" + (f"\n  → {f.hint}" if f.hint else "")
-                    for f in self.failures[:5]
-                )
-            )
-            table.add_row("Failed", str(len(self.failures)), preview)
         return table
+
+    def failure_summary(self) -> list[tuple[str, int]]:
+        """Failures counted by kind, commonest first. 1,600 rows help nobody; six do."""
+        counts: dict[str, int] = {}
+        for failure in self.failures:
+            # Drop the URL so the same problem on many pages collapses into one line.
+            reason = failure.reason.split(":")[0].strip() or failure.reason
+            counts[reason] = counts.get(reason, 0) + 1
+        return sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+
+    def write_details(self, path: Path) -> Path:
+        """Write every failure to a file, since the table only has room for a summary."""
+        lines = [
+            f"Ingest run {self.started_at} -> {self.finished_at}",
+            f"added {len(self.added)}, updated {len(self.updated)}, "
+            f"unchanged {len(self.skipped)}, removed {len(self.pruned)}, "
+            f"failed {len(self.failures)}",
+            "",
+        ]
+        if self.failures:
+            lines.append("FAILURES")
+            for reason, count in self.failure_summary():
+                lines.append(f"  {count:>6} x {reason}")
+            lines.append("")
+            for failure in self.failures:
+                lines.append(f"[{failure.kind.value}] {failure.locator}")
+                lines.append(f"    {failure.reason}")
+                if failure.hint:
+                    lines.append(f"    -> {failure.hint}")
+        for label, items in (
+            ("ADDED", self.added),
+            ("UPDATED", self.updated),
+            ("UNCHANGED", self.skipped),
+            ("REMOVED", self.pruned),
+        ):
+            if items:
+                lines.extend(["", label, *(f"  {item}" for item in items)])
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return path
 
 
 def plan_ingest(
