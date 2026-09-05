@@ -19,7 +19,12 @@ from typing import Any
 import httpx
 
 from markai.config import Settings
-from markai.ingest.transcripts import parse_transcript_file, segments_to_text, slugify
+from markai.ingest.transcripts import (
+    _parse_vtt,
+    parse_transcript_file,
+    segments_to_text,
+    slugify,
+)
 from markai.ingest.websites import make_client
 from markai.models import Document, IngestError, IngestFailure, Segment, SourceKind
 from markai.sources.manifest import YouTubeEpisode, YouTubeSection
@@ -51,6 +56,14 @@ _sleep: Callable[[float], None] = time.sleep
 
 class RateLimitedError(IngestError):
     """YouTube refused the request. Every following video will be refused too."""
+
+
+class NoCaptionsError(IngestError):
+    """This video has no captions - a fact about the video, not about the network.
+
+    Worth its own type: when one route is blocked and the other answers this, there is
+    nothing left to wait for, so the run moves on instead of spending the backoff ladder.
+    """
 
 
 _NO_CAPTIONS_HINT = (
@@ -139,7 +152,9 @@ def fetch_transcript_segments(
     try:
         fetched = api.fetch(video_id, languages=list(languages))
     except (yta.TranscriptsDisabled, yta.NoTranscriptFound) as exc:
-        raise IngestError(f"No captions available for {video_id}.", hint=_NO_CAPTIONS_HINT) from exc
+        raise NoCaptionsError(
+            f"No captions available for {video_id}.", hint=_NO_CAPTIONS_HINT
+        ) from exc
     except (yta.RequestBlocked, yta.IpBlocked) as exc:
         raise RateLimitedError(
             f"YouTube blocked the caption request for {video_id}.", hint=_BLOCKED_HINT
@@ -360,6 +375,111 @@ def _merge_episodes(
     return episodes
 
 
+def captions_via_ytdlp(
+    video_id: str,
+    languages: Sequence[str],
+    client: httpx.Client,
+    cookies_from_browser: str | None = None,
+    extractor: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None,
+) -> list[Segment]:
+    """Second way to get captions, for when the first one is blocked.
+
+    yt-dlp is already a dependency here (it lists the channels) and it talks to YouTube over
+    a different client than the caption library, so it often works when that one is blocked.
+    It can also read cookies straight out of an installed browser, which needs no export and
+    no extension - just the browser's name.
+
+    Raises ``RateLimitedError`` when YouTube blocks this route too, so the caller can treat
+    both routes the same way.
+    """
+    options: dict[str, Any] = {
+        "skip_download": True,
+        "writesubtitles": True,
+        "writeautomaticsub": True,
+        "quiet": True,
+        "no_warnings": True,
+        "noprogress": True,
+        "logger": _QuietLogger(),  # yt-dlp writes to stderr otherwise, once per blocked video
+    }
+    if cookies_from_browser:
+        options["cookiesfrombrowser"] = (cookies_from_browser.strip().lower(),)
+
+    info = (extractor or _ytdlp_extract)(watch_url(video_id), options)
+    tracks = {**(info.get("automatic_captions") or {}), **(info.get("subtitles") or {})}
+    if not tracks:
+        raise NoCaptionsError(f"No captions available for {video_id}.", hint=_NO_CAPTIONS_HINT)
+
+    url = _pick_caption_track(tracks, languages)
+    if url is None:
+        available = ", ".join(sorted(tracks)[:8]) or "none"
+        raise IngestError(
+            f"No captions for {video_id} in {', '.join(languages)}.",
+            hint=f"Languages this video does have: {available}.",
+        )
+
+    try:
+        response = client.get(url)
+        response.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise RateLimitedError(
+            f"YouTube blocked the caption download for {video_id}.", hint=_BLOCKED_HINT
+        ) from exc
+
+    segments = _parse_vtt(response.text)
+    if not segments:
+        raise IngestError(f"Captions for {video_id} came back empty.", hint=_NO_CAPTIONS_HINT)
+    return segments
+
+
+class _QuietLogger:
+    """yt-dlp writes straight to stderr unless it is handed a logger."""
+
+    def debug(self, message: str) -> None:
+        logger.debug("yt-dlp: %s", message)
+
+    info = debug
+    warning = debug
+
+    def error(self, message: str) -> None:
+        logger.debug("yt-dlp error: %s", message)
+
+
+def _ytdlp_extract(url: str, options: dict[str, Any]) -> dict[str, Any]:
+    import yt_dlp
+
+    try:
+        with yt_dlp.YoutubeDL(options) as ydl:
+            return ydl.extract_info(url, download=False) or {}
+    except Exception as exc:
+        message = str(exc).lower()
+        if "sign in" in message or "bot" in message or "429" in message or "blocked" in message:
+            raise RateLimitedError(
+                f"YouTube blocked yt-dlp for {url}.", hint=_BLOCKED_HINT
+            ) from exc
+        if "cookies" in message or "keyring" in message or "could not copy" in message:
+            raise IngestError(
+                f"Could not read cookies from the browser: {exc}",
+                hint=(
+                    "Close the browser completely and try again, or name a different one in "
+                    "MARKAI_YOUTUBE_COOKIES_FROM_BROWSER (firefox is the most reliable)."
+                ),
+            ) from exc
+        raise IngestError(f"yt-dlp could not read {url}: {exc}", hint=_NO_CAPTIONS_HINT) from exc
+
+
+def _pick_caption_track(tracks: dict[str, Any], languages: Sequence[str]) -> str | None:
+    """The VTT URL for the best matching language: exact match first, then a prefix like en-GB."""
+    for wanted in languages:
+        for code in (wanted, wanted.split("-")[0]):
+            for available, formats in tracks.items():
+                if available != code and not available.startswith(f"{code}-"):
+                    continue
+                for fmt in formats or []:
+                    if str(fmt.get("ext", "")).lower() == "vtt" and fmt.get("url"):
+                        return str(fmt["url"])
+    return None
+
+
 def build_transcript_api(settings: Settings) -> Any:
     """A caption client set up the way ``settings`` asks.
 
@@ -427,14 +547,27 @@ def _segments_with_backoff(
     languages: Sequence[str],
     project_root: Path,
     log: Callable[[str], None] | None,
+    fallback: Callable[[str], list[Segment]] | None = None,
 ) -> list[Segment]:
-    """Fetch captions, waiting out a temporary block instead of abandoning the run."""
+    """Fetch captions, trying the other route and waiting out a block before giving up."""
     last: RateLimitedError | None = None
     for wait in (*BACKOFF_SECONDS, None):
         try:
             return _segments_for(entry, video_id, cache_dir, api, languages, project_root)
         except RateLimitedError as exc:
             last = exc
+            # Before waiting, try the other route. yt-dlp talks to YouTube differently and
+            # is often not blocked at the same moment, so this frequently just works.
+            if fallback is not None:
+                try:
+                    segments = fallback(video_id)
+                except NoCaptionsError:
+                    raise  # a fact about the video: nothing to wait for
+                except IngestError:
+                    pass  # the other route failed too, whatever the reason: wait and retry
+                else:
+                    _cache_segments(cache_dir, video_id, segments)
+                    return segments
             if wait is None:
                 break
             if log:
@@ -455,6 +588,7 @@ def ingest_youtube(
     lister: Callable[[str, int | None], list[dict[str, Any]]] | None = None,
     log: Callable[[str], None] | None = None,
     delay_seconds: float = 0.0,
+    cookies_from_browser: str | None = None,
 ) -> Iterator[Document | IngestFailure]:
     """Yield one Document (or IngestFailure) per YouTube episode in the manifest."""
     project_root = Path(project_root or Path.cwd())
@@ -464,6 +598,10 @@ def ingest_youtube(
 
     owns_client = client is None
     client = client or make_client()
+
+    def fallback(video_id: str) -> list[Segment]:
+        return captions_via_ytdlp(video_id, languages or ["en"], client, cookies_from_browser)
+
     try:
         try:
             episodes = _merge_episodes(section, project_root, cache_dir, refresh_channels, lister)
@@ -492,7 +630,7 @@ def ingest_youtube(
 
             try:
                 segments = _segments_with_backoff(
-                    entry, video_id, cache_dir, api, languages, project_root, log
+                    entry, video_id, cache_dir, api, languages, project_root, log, fallback
                 )
                 blocked_in_a_row = 0
             except RateLimitedError as exc:
@@ -573,10 +711,15 @@ def _segments_for(
             logger.debug("ignoring bad cache %s: %s", cache_path, exc)
 
     segments = fetch_transcript_segments(video_id, api=api, languages=languages)
-    cache_path.write_text(
+    _cache_segments(cache_dir, video_id, segments)
+    return segments
+
+
+def _cache_segments(cache_dir: Path, video_id: str, segments: list[Segment]) -> None:
+    """Store captions so a re-run costs nothing, whichever route fetched them."""
+    (cache_dir / f"{video_id}.json").write_text(
         json.dumps(
             [{"text": s.text, "start": s.start, "duration": s.end - s.start} for s in segments]
         ),
         encoding="utf-8",
     )
-    return segments

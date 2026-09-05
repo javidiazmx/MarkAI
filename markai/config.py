@@ -111,6 +111,13 @@ class Settings(BaseSettings):
         default=None,
         description="Netscape cookies.txt exported from a signed-in browser.",
     )
+    youtube_cookies_from_browser: str | None = Field(
+        default=None,
+        description=(
+            "Read cookies straight out of an installed browser: firefox, edge, chrome, "
+            "brave, opera, vivaldi, safari. Nothing to export and nothing to install."
+        ),
+    )
 
     youtube_delay_seconds: float = Field(
         default=2.0,
@@ -192,8 +199,10 @@ class Settings(BaseSettings):
             return "webshare proxy"
         if self.youtube_proxy_url:
             return "proxy"
+        if self.youtube_cookies_from_browser:
+            return f"{self.youtube_cookies_from_browser} cookies"
         if self.youtube_cookies_file:
-            return "cookies"
+            return "cookies file"
         return "none"
 
     def request_max_tokens(self) -> int:

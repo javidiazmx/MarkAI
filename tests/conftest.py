@@ -44,12 +44,23 @@ HEAT_SEGMENTS = [
 
 
 @pytest.fixture(autouse=True)
-def no_real_sleeping(monkeypatch):
-    """Politeness delays and rate-limit backoff are real seconds. Never spend them here."""
+def offline(monkeypatch):
+    """No real seconds and no real network.
+
+    The delays and the backoff ladder are wall-clock time. The yt-dlp caption fallback is a
+    live call to YouTube, and it fires whenever a test simulates a block - so by default it
+    is stubbed out as "that route is blocked too". A test that wants the fallback patches
+    ``_ytdlp_extract`` itself.
+    """
     from markai.ingest import websites, youtube
 
     monkeypatch.setattr(websites, "_sleep", lambda _seconds: None)
     monkeypatch.setattr(youtube, "_sleep", lambda _seconds: None)
+
+    def blocked(url, options):
+        raise youtube.RateLimitedError(f"stubbed: no network in tests ({url})")
+
+    monkeypatch.setattr(youtube, "_ytdlp_extract", blocked)
 
 
 @pytest.fixture

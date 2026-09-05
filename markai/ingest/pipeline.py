@@ -336,6 +336,7 @@ def _iter_sources(
                 refresh_channels=force,
                 log=log,
                 delay_seconds=settings.youtube_delay_seconds,
+                cookies_from_browser=settings.youtube_cookies_from_browser,
             ),
         )
 

@@ -93,6 +93,7 @@ Everything lives in `.env`. Only the first line is required.
 | `MARKAI_YOUTUBE_PROXY_URL` | none | Send caption requests through a proxy, for when YouTube has blocked your address |
 | `MARKAI_WEBSHARE_USERNAME` | none | Webshare rotating-proxy user; takes precedence over the plain proxy |
 | `MARKAI_WEBSHARE_PASSWORD` | none | Webshare password |
+| `MARKAI_YOUTUBE_COOKIES_FROM_BROWSER` | none | Read cookies from an installed browser: `firefox`, `edge`, `chrome`… Nothing to install |
 | `MARKAI_YOUTUBE_COOKIES_FILE` | none | `cookies.txt` exported from a signed-in browser |
 | `MARKAI_MAX_PAGE_BYTES` | `25000000` | How much of a page to read; bigger pages are truncated |
 | `MARKAI_TRANSCRIBE_MODEL` | `small` | Whisper model size for podcast audio |
@@ -115,13 +116,23 @@ video list itself, caching it so re-runs are instant. `mark ingest --force` re-r
 channel and picks up anything you have published since.
 
 **When YouTube blocks you.** Pacing stops you being blocked; it does nothing once you already
-are, because every request from that address fails. There are two ways out, both optional:
+are, because every request from that address fails.
 
-- **Cookies**, free. Export `cookies.txt` from a browser signed in to YouTube and point
-  `MARKAI_YOUTUBE_COOKIES_FILE` at it. Requests then carry a real identity rather than an
-  anonymous one. Treat the file as a password: it is a live session.
-- **A proxy**, paid. `MARKAI_YOUTUBE_PROXY_URL` for any http proxy, or a Webshare username and
-  password for their rotating pool, which is what the caption library recommends.
+There is a second route built in, and it needs no setup: yt-dlp, already a dependency because
+it lists the channels, talks to YouTube over a different client. Whenever the caption library
+is blocked, that route is tried before any waiting, and often just works.
+
+When it does not, three options, in order of effort:
+
+- **Browser cookies**, free, nothing to install. Set `MARKAI_YOUTUBE_COOKIES_FROM_BROWSER` to
+  the name of a browser you are signed in to YouTube with — `firefox`, `edge`, `chrome`,
+  `brave`, `opera`, `vivaldi`, `safari` — and the cookies are read from it directly. Firefox is
+  the most reliable; Chrome on Windows encrypts its cookie store in a way that often refuses.
+  Close the browser first.
+- **A cookies.txt file**, if you would rather export one: `MARKAI_YOUTUBE_COOKIES_FILE`. Treat
+  it as a password, it is a live session.
+- **A proxy**, paid. `MARKAI_YOUTUBE_PROXY_URL` for any http proxy, or Webshare credentials for
+  their rotating pool, which is what the caption library recommends.
 
 `mark doctor` shows which is in use and never prints the credentials.
 

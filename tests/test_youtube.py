@@ -493,7 +493,7 @@ def test_cookies_are_loaded_from_a_netscape_file(settings, tmp_path):
         encoding="utf-8",
     )
     configured = settings.model_copy(update={"youtube_cookies_file": cookies})
-    assert configured.youtube_unblock_method() == "cookies"
+    assert configured.youtube_unblock_method() == "cookies file"
     assert build_transcript_api(configured) is not None
 
 
@@ -512,3 +512,119 @@ def test_the_proxy_secret_never_reaches_the_status_line(settings):
     configured = settings.model_copy(update={"youtube_proxy_url": "http://user:s3cret@p.test"})
     assert "s3cret" not in configured.youtube_unblock_method()
     assert "user" not in configured.youtube_unblock_method()
+
+
+# --- the yt-dlp caption route ----------------------------------------------------------
+#
+# yt-dlp is already a dependency (it lists the channels) and talks to YouTube over a
+# different client, so it often works at a moment when the caption library is blocked.
+
+VTT = """WEBVTT
+
+00:00:01.000 --> 00:00:04.000
+Screening starts with written criteria.
+
+00:00:04.000 --> 00:00:08.000
+Apply them to every applicant, every time.
+"""
+
+
+def _info(langs=("en",), ext="vtt"):
+    return {
+        "automatic_captions": {
+            lang: [{"ext": ext, "url": f"https://caption.test/{lang}.{ext}"}] for lang in langs
+        }
+    }
+
+
+@respx.mock(assert_all_called=False)
+def test_ytdlp_route_returns_timed_segments(respx_mock):
+    from markai.ingest.youtube import captions_via_ytdlp
+
+    respx_mock.get("https://caption.test/en.vtt").mock(return_value=httpx.Response(200, text=VTT))
+    with httpx.Client() as client:
+        segments = captions_via_ytdlp(VIDEO, ["en"], client, extractor=lambda u, o: _info())
+
+    assert len(segments) == 2
+    assert segments[0].start == 1.0 and segments[0].end == 4.0
+    assert "written criteria" in segments[0].text
+
+
+def test_naming_a_browser_asks_ytdlp_for_its_cookies():
+    """The point of this route: no export, no extension, just the browser's name."""
+    from markai.ingest.youtube import captions_via_ytdlp
+
+    seen: dict[str, object] = {}
+
+    def extractor(url, options):
+        seen.update(options)
+        return _info()
+
+    with httpx.Client() as client, respx.mock:
+        respx.get("https://caption.test/en.vtt").mock(return_value=httpx.Response(200, text=VTT))
+        captions_via_ytdlp(VIDEO, ["en"], client, "Firefox", extractor=extractor)
+
+    assert seen["cookiesfrombrowser"] == ("firefox",), "normalised, and passed as a tuple"
+
+
+def test_a_regional_caption_track_still_counts_as_english():
+    from markai.ingest.youtube import _pick_caption_track
+
+    tracks = {"en-GB": [{"ext": "vtt", "url": "https://c.test/en-GB.vtt"}]}
+    assert _pick_caption_track(tracks, ["en"]) == "https://c.test/en-GB.vtt"
+
+
+def test_a_video_with_only_other_languages_says_which_it_has():
+    from markai.ingest.youtube import captions_via_ytdlp
+
+    with httpx.Client() as client, pytest.raises(IngestError) as excinfo:
+        captions_via_ytdlp(VIDEO, ["en"], client, extractor=lambda u, o: _info(langs=("de", "fr")))
+    assert "de" in (excinfo.value.hint or "")
+
+
+def test_the_fallback_runs_when_the_first_route_is_blocked(tmp_path, settings, monkeypatch):
+    """The whole point: a block on one route is not the end of the run."""
+    import markai.ingest.youtube as yt
+
+    monkeypatch.setattr(yt, "_ytdlp_extract", lambda url, options: _info())
+    section = YouTubeSection(episodes=[YouTubeEpisode(url=VIDEO)])
+    api = FakeTranscriptApi(error=yta.IpBlocked(VIDEO))
+
+    with respx.mock:
+        respx.get("https://caption.test/en.vtt").mock(return_value=httpx.Response(200, text=VTT))
+        respx.get("https://www.youtube.com/oembed").mock(
+            return_value=httpx.Response(200, json={"title": "Screening", "author_name": "SUCI"})
+        )
+        with httpx.Client() as client:
+            results = list(
+                yt.ingest_youtube(
+                    section, tmp_path, client=client, api=api, project_root=settings.project_root
+                )
+            )
+
+    documents = [r for r in results if isinstance(r, Document)]
+    assert len(documents) == 1, "the second route rescued the video"
+    assert "written criteria" in documents[0].text
+    assert (tmp_path / f"{VIDEO}.json").exists(), "and it is cached, so a re-run is free"
+
+
+def test_no_captions_on_either_route_skips_the_backoff(tmp_path, settings, monkeypatch):
+    """No captions is an answer, not a reason to keep waiting."""
+    import markai.ingest.youtube as yt
+
+    waited: list[float] = []
+    monkeypatch.setattr(yt, "_sleep", lambda seconds: waited.append(seconds))
+    monkeypatch.setattr(yt, "_ytdlp_extract", lambda url, options: {"automatic_captions": {}})
+
+    section = YouTubeSection(episodes=[YouTubeEpisode(url=VIDEO)])
+    api = FakeTranscriptApi(error=yta.IpBlocked(VIDEO))
+    with httpx.Client() as client:
+        results = list(
+            yt.ingest_youtube(
+                section, tmp_path, client=client, api=api, project_root=settings.project_root
+            )
+        )
+
+    assert waited == [], "no waiting for something that will never arrive"
+    assert len(results) == 1 and isinstance(results[0], IngestFailure)
+    assert "No captions" in results[0].reason
