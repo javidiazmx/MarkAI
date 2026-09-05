@@ -226,3 +226,34 @@ def test_importing_the_module_needs_no_credentials(monkeypatch):
 
     importlib.reload(web_app)
     assert web_app.app is not None
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        ("", "no VOYAGE_API_KEY line"),
+        ("# VOYAGE_API_KEY=pa-x", "still starts with #"),
+        ("VOYAGE_API_KEY=", "no value after the ="),
+        ('VOYAGE_API_KEY="pa-x"', "quotes around it"),
+    ],
+)
+def test_doctor_explains_why_a_key_is_missing(tmp_path, line, expected):
+    from markai.cli import _env_line_state
+
+    env = tmp_path / ".env"
+    env.write_text(f"ANTHROPIC_API_KEY=sk-ant-x\n{line}\n", encoding="utf-8")
+    assert expected in _env_line_state(env, "VOYAGE_API_KEY")
+
+
+def test_the_diagnosis_never_reveals_the_value(tmp_path):
+    from markai.cli import _env_line_state
+
+    env = tmp_path / ".env"
+    env.write_text('VOYAGE_API_KEY="pa-supersecretvalue"\n', encoding="utf-8")
+    assert "supersecretvalue" not in _env_line_state(env, "VOYAGE_API_KEY")
+
+
+def test_a_missing_env_file_is_reported_not_raised(tmp_path):
+    from markai.cli import _env_line_state
+
+    assert "no .env file" in _env_line_state(tmp_path / "nope", "VOYAGE_API_KEY")

@@ -62,6 +62,35 @@ def _manifest(settings: Any) -> Any:
         _fail(f"sources.yaml is not valid: {exc}", _yaml_hint(exc))
 
 
+def _env_line_state(env_path: Any, name: str) -> str:
+    """Why a key is missing, without ever revealing its value."""
+    try:
+        lines = env_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return f"no .env file, so {name} is not set"
+
+    commented = False
+    for raw in lines:
+        line = raw.strip()
+        if not line or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        if key.lstrip("#").strip() != name:
+            continue
+        if line.startswith("#"):
+            commented = True
+            continue
+        value = value.strip()
+        if not value:
+            return f"{name} is in .env but has no value after the ="
+        if value[0] in "\"'" or value[-1] in "\"'":
+            return f"{name} has quotes around it; remove them"
+        return f"{name} looks set but was not loaded; check for stray spaces"
+    if commented:
+        return f"the {name} line in .env still starts with #; delete the #"
+    return f"there is no {name} line in .env"
+
+
 def _yaml_hint(exc: Exception) -> str:
     """Turn a YAML parser complaint into something an owner can act on."""
     message = str(exc)
@@ -184,10 +213,13 @@ def doctor(
     table.add_row(
         "Anthropic key", "set" if settings.anthropic_key() else "[red]not set[/red] (run mark init)"
     )
-    table.add_row(
-        "Embeddings",
-        f"on ({settings.embedding_model})" if settings.voyage_key() else "off (keyword search)",
-    )
+    if settings.voyage_key():
+        table.add_row("Embeddings", f"on ({settings.embedding_model})")
+    else:
+        table.add_row(
+            "Embeddings",
+            f"off (keyword search only)\n[dim]{_env_line_state(env_path, 'VOYAGE_API_KEY')}[/dim]",
+        )
 
     from markai.sources.manifest import load_manifest
 
