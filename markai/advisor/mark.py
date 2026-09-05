@@ -37,6 +37,7 @@ from markai.advisor.prompt_builder import (
     build_citations,
     build_system_blocks,
     build_user_message,
+    strip_all_markers,
     strip_unused_markers,
 )
 from markai.config import Settings
@@ -294,9 +295,15 @@ class MarkAdvisor:
             if text.startswith(streamed) and len(text) > len(streamed):
                 yield StreamEvent("text", text[len(streamed) :])
 
+            citations = build_citations(retrieval, text, carried)
+            if not self.settings.show_citations:
+                # The prompt already asks for none; this catches the stray one.
+                text = strip_all_markers(text)
+                citations = []
+
             response = AdvisorResponse(
                 text=text,
-                citations=build_citations(retrieval, text, carried),
+                citations=citations,
                 coverage=retrieval.coverage,
                 flags=flags,
                 usage=usage,

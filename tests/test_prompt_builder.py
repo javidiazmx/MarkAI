@@ -177,3 +177,32 @@ def test_attribute_escaping_truncates_and_flattens():
     value = escape_attr("line one\nline two " + "x" * 400)
     assert "\n" not in value
     assert len(value) <= 200
+
+
+# --- the two citation variants -------------------------------------------------------------
+
+
+def test_the_prompt_file_yields_one_variant_or_the_other(tmp_path):
+    from pathlib import Path
+
+    from markai.advisor.prompt_builder import load_system_prompt
+
+    path = Path("prompts/mark_system_prompt.md")
+    cited = load_system_prompt(path, show_citations=True)
+    plain = load_system_prompt(path, show_citations=False)
+
+    assert "Put a marker like" in cited and "Never write" not in cited
+    assert "Never write" in plain and "Put a marker like" not in plain
+    for text in (cited, plain):
+        assert "CITING:" not in text and "NOCITE:" not in text, "no comment fences leak through"
+        assert "have to come from the sources" in text, "grounding survives either way"
+
+
+def test_stripping_markers_tidies_the_punctuation():
+    from markai.advisor.prompt_builder import strip_all_markers
+
+    assert strip_all_markers("Pay interest [S1]. Keep it separate [S2].") == (
+        "Pay interest. Keep it separate."
+    )
+    assert strip_all_markers("Two in a row [S1] [S2] here.") == "Two in a row here."
+    assert strip_all_markers("Nothing to strip.") == "Nothing to strip."

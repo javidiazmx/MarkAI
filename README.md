@@ -20,7 +20,7 @@ data/markai.db                text split into passages, searchable (SQLite)
 retrieved passages
         │
         ▼  Claude             Mark's system prompt + only those passages
-a cited answer                [S1] markers become footnotes with links and timestamps
+an answer in Mark's voice     grounded in those passages, citations optional
 ```
 
 ## Quick start
@@ -86,6 +86,7 @@ Everything lives in `.env`. Only the first line is required.
 | `MARKAI_EMBEDDING_REQUESTS_PER_MINUTE` | `0` | Request budget per minute; 0 lets the run discover it |
 | `MARKAI_DATA_DIR` | `data` | Where the knowledge base and downloads live |
 | `MARKAI_SOURCES_FILE` | `sources/sources.yaml` | Which manifest to read |
+| `MARKAI_SHOW_CITATIONS` | `false` | `[S1]` markers and a source list under the answer |
 | `MARKAI_TOP_K` | `8` | Passages handed to Mark per question |
 | `MARKAI_MIN_RELEVANCE` | `2.0` | Below this, a question counts as uncovered |
 | `MARKAI_WEAK_RELEVANCE` | `5.0` | Below this, coverage is reported as weak |
@@ -163,9 +164,16 @@ have to come from the sources you supplied. When they don't cover a question Mar
 not covered in my training materials," then names the closest thing he has, or offers to run
 the numbers, or flags the gap for you. Reasoning and arithmetic are his own; local facts are not.
 
-**Citations.** Claims carry `[S1]` markers that become footnotes with the episode number, the
-publication date, a timestamp, and a link. YouTube citations link to the exact moment. When a
-source is more than about two years old and the question is about law or taxes, Mark says so.
+**Answers, not footnoted reports.** By default Mark reads across everything retrieved, works
+out what it means for the landlord asking, and says it the way it would be said on the phone —
+no `[S1]` markers, no source list. The grounding is unchanged: rules, deadlines and dollar
+amounts still have to come from the sources, and a question they don't cover still gets "That's
+not covered in my training materials." What is hidden is the working, not the requirement.
+
+Set `MARKAI_SHOW_CITATIONS=true` to get the other behaviour: `[S1]` markers that become
+footnotes with the episode number, publication date, timestamp and link, YouTube ones pointing
+at the exact moment. Useful while checking what Mark is drawing on. Either way, when a source is
+more than about two years old and the question is about law or taxes, Mark says so.
 
 **Legal questions** end with this sentence, word for word:
 

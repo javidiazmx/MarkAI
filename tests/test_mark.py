@@ -60,7 +60,8 @@ def test_system_prompt_is_identical_across_turns(settings, store):
 
 
 def test_answer_text_and_citations_come_back(settings, store):
-    advisor, _ = build_advisor(settings, store, [text_message("Screen everyone the same [S1].")])
+    cited = settings.model_copy(update={"show_citations": True})
+    advisor, _ = build_advisor(cited, store, [text_message("Screen everyone the same [S1].")])
     response = advisor.ask("How should I screen tenants?")
     assert "[S1]" in response.text
     assert [c.marker for c in response.citations] == ["S1"]
@@ -69,10 +70,50 @@ def test_answer_text_and_citations_come_back(settings, store):
 
 
 def test_invented_markers_are_stripped(settings, store):
-    advisor, _ = build_advisor(settings, store, [text_message("Real [S1] and fake [S99] source.")])
+    cited = settings.model_copy(update={"show_citations": True})
+    advisor, _ = build_advisor(cited, store, [text_message("Real [S1] and fake [S99] source.")])
     response = advisor.ask("How should I screen tenants?")
     assert "[S99]" not in response.text
     assert "[S1]" in response.text
+
+
+# --- answers in Mark's voice, not footnoted reports ------------------------------------
+
+
+def test_by_default_no_markers_and_no_source_list(settings, store):
+    """The owner wants advice the way it would be said on the phone, not a cited report."""
+    assert settings.show_citations is False
+    advisor, _ = build_advisor(
+        settings, store, [text_message("Screen everyone the same [S1], every time [S2].")]
+    )
+    response = advisor.ask("How should I screen tenants?")
+
+    assert "[S1]" not in response.text and "[S2]" not in response.text
+    assert response.citations == []
+    assert response.text == "Screen everyone the same, every time."
+
+
+def test_turning_citations_off_does_not_loosen_the_grounding(settings, store):
+    """Retrieval and coverage are untouched; only the visible working goes away.
+
+    Which half of the prompt is loaded is asserted in test_prompt_builder; this one is about
+    the advisor still doing the same retrieval work.
+    """
+    advisor, client = build_advisor(settings, store, [text_message("Deposits earn interest.")])
+    response = advisor.ask("How should I screen tenants?")
+
+    user_turn = str(client.calls[0]["messages"][-1]["content"])
+    assert "<source" in user_turn, "the passages are still retrieved and handed over"
+    assert response.coverage in ("covered", "weak")
+
+
+def test_the_prompt_stays_frozen_with_citations_off(settings, store):
+    """Two variants of a static file, still byte-identical between turns."""
+    advisor, client = build_advisor(settings, store, [text_message("One."), text_message("Two.")])
+    conversation = Conversation(session_id="t")
+    advisor.ask("How should I screen tenants?", conversation)
+    advisor.ask("And the deposit rules?", conversation)
+    assert client.calls[0]["system"] == client.calls[1]["system"]
 
 
 def test_legal_disclaimer_is_appended_and_streamed(settings, store):

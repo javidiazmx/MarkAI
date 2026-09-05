@@ -17,15 +17,29 @@ _CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 _MARKER_RE = re.compile(r"\[S(\d+)\]")
 
 
-def load_system_prompt(path: Path) -> str:
-    """Read Mark's system prompt from disk."""
+_CITING_BLOCK = re.compile(r"<!-- CITING:START -->.*?<!-- CITING:END -->\n*", re.DOTALL)
+_NOCITE_BLOCK = re.compile(r"<!-- NOCITE:START -->.*?<!-- NOCITE:END -->\n*", re.DOTALL)
+# The kept half still carries its own comment fences; they are not instructions.
+_BLOCK_MARKER = re.compile(r"<!-- (?:CITING|NOCITE):(?:START|END) -->\n*")
+
+
+def load_system_prompt(path: Path, show_citations: bool = True) -> str:
+    """Read Mark's system prompt from disk, keeping the citation half that applies.
+
+    Two variants, one file. Whichever is chosen is fixed for the life of the process, so the
+    prompt stays byte-identical between requests and the cache still holds - the thing that
+    would break it is interpolating something that changes, like a date or a session id.
+    """
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(
             f"System prompt not found at {path}. It ships with the repo at "
             "prompts/mark_system_prompt.md."
         )
-    return path.read_text(encoding="utf-8").strip()
+    text = path.read_text(encoding="utf-8")
+    drop = _NOCITE_BLOCK if show_citations else _CITING_BLOCK
+    text = drop.sub("", text)
+    return _BLOCK_MARKER.sub("", text).strip()
 
 
 def build_business_block(business: BusinessProfile | None) -> str | None:
@@ -161,6 +175,17 @@ def _citation_url(rc: RetrievedChunk) -> str | None:
         separator = "&" if "?" in url else "?"
         return f"{url}{separator}t={int(rc.chunk.start_time)}s"
     return url
+
+
+def strip_all_markers(answer_text: str) -> str:
+    """Remove every ``[S#]`` marker and the space it leaves in front of punctuation.
+
+    A backstop for when citations are turned off: the prompt already says not to write them,
+    but one slipping through would look like a bug to a landlord reading the answer.
+    """
+    text = _MARKER_RE.sub("", answer_text)
+    text = re.sub(r" +([.,;:!?)])", r"\1", text)
+    return re.sub(r"[ \t]{2,}", " ", text).strip()
 
 
 def build_citations(

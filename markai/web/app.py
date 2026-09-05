@@ -132,7 +132,7 @@ def create_app(
             settings,
             retriever,
             manifest.tools,
-            load_system_prompt(settings.system_prompt_path),
+            load_system_prompt(settings.system_prompt_path, settings.show_citations),
             business=manifest.business,
             store=current_store,
         )

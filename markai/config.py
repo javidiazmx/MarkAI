@@ -101,6 +101,15 @@ class Settings(BaseSettings):
     chunk_overlap_words: int = Field(default=60, ge=0)
     av_window_seconds: float = Field(default=120.0, gt=0)
 
+    show_citations: bool = Field(
+        default=False,
+        description=(
+            "Put [S1] markers in the answer and list the sources under it. Off by default: "
+            "the owner wants advice in Mark's voice, not a footnoted report. Grounding is "
+            "unchanged either way - only whether the working is shown."
+        ),
+    )
+
     # --- Ingestion -------------------------------------------------------------------------
     crawl_delay_seconds: float = Field(default=0.5, ge=0)
     # --- Getting past a YouTube IP block ------------------------------------------------

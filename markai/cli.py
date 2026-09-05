@@ -121,7 +121,7 @@ def _advisor(settings: Any, manifest: Any, store: Any) -> Any:
 
     retriever = Retriever(store, build_embedder(settings), settings)
     try:
-        prompt = load_system_prompt(settings.system_prompt_path)
+        prompt = load_system_prompt(settings.system_prompt_path, settings.show_citations)
     except FileNotFoundError as exc:
         _fail(str(exc))
     try:
