@@ -412,6 +412,60 @@ def _cache_html(cache_dir: Path, canonical: str, html: str) -> None:
         logger.warning("Could not cache HTML for %s: %s", canonical, exc)
 
 
+# A paragraph that shows up on this share of a site's pages is furniture, not content.
+BOILERPLATE_SHARE = 0.4
+BOILERPLATE_MIN_PAGES = 3
+# What has to be left after the furniture is removed for a page to be worth storing.
+MIN_REAL_WORDS = 40
+
+
+def _strip_shared_boilerplate(
+    documents: list[Document], log: Callable[[str], None]
+) -> tuple[list[Document], list[Document]]:
+    """Remove the paragraphs a site repeats on every page, and say which pages were only that.
+
+    A property manager's site puts the same marketing block, footer and menu on hundreds of
+    listing pages. Stored as-is, each listing is mostly that block, so a search for anything
+    at all matches all of them equally and real advice never surfaces. Returns
+    ``(kept, hollow)`` - hollow being the pages with nothing left once the furniture goes.
+    """
+    if len(documents) < BOILERPLATE_MIN_PAGES:
+        return documents, []
+
+    counts: dict[str, int] = {}
+    for document in documents:
+        for paragraph in {p.strip() for p in document.text.split("\n") if p.strip()}:
+            counts[paragraph] = counts.get(paragraph, 0) + 1
+
+    threshold = max(BOILERPLATE_MIN_PAGES, int(len(documents) * BOILERPLATE_SHARE))
+    boilerplate = {p for p, count in counts.items() if count >= threshold}
+    if not boilerplate:
+        return documents, []
+
+    kept: list[Document] = []
+    hollow: list[Document] = []
+    for document in documents:
+        lines = [p for p in document.text.split("\n") if p.strip() not in boilerplate]
+        text = "\n".join(lines).strip()
+        # Collapse the blank runs the removals left behind.
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        if len(text.split()) < MIN_REAL_WORDS:
+            hollow.append(document)
+            continue
+        document.text = text
+        document.metadata["boilerplate_removed"] = True
+        document.content_hash = ""
+        document.ensure_hash()
+        kept.append(document)
+
+    removed_words = sum(len(p.split()) for p in boilerplate)
+    log(
+        f"  Removed {len(boilerplate)} repeated blocks (~{removed_words:,} words of menus and "
+        f"footers); {len(hollow)} pages held nothing else."
+    )
+    return kept, hollow
+
+
 def ingest_websites(
     sources: list[WebsiteSource],
     cache_dir: Path,
@@ -453,6 +507,9 @@ def ingest_websites(
             visited: set[str] = {seed_canon}
             max_pages = source.max_pages if source.crawl else 1
             fetched_pages = 0
+            # Held back until the crawl finishes: what counts as this site's furniture can
+            # only be known once we have seen enough of its pages.
+            from_this_source: list[Document] = []
             while queue and fetched_pages < max_pages:
                 url = queue.popleft()
                 canon = canonical_url(url)
@@ -539,7 +596,7 @@ def ingest_websites(
                         },
                     )
                     document.ensure_hash()
-                    yield document
+                    from_this_source.append(document)
                 if source.crawl and fetched_pages < max_pages:
                     for link in discover_links(
                         html, final_url, source.include_patterns, source.exclude_patterns
@@ -547,6 +604,19 @@ def ingest_websites(
                         if link not in visited:
                             visited.add(link)
                             queue.append(link)
+
+            kept, hollow = _strip_shared_boilerplate(from_this_source, emit)
+            yield from kept
+            for document in hollow:
+                yield IngestFailure(
+                    kind=SourceKind.WEBSITE,
+                    locator=document.locator,
+                    reason="Nothing but the site's own menus and footer",
+                    hint=(
+                        "Listing and gallery pages usually look like this. Add their URL "
+                        "pattern to exclude_patterns so the crawl budget goes elsewhere."
+                    ),
+                )
     finally:
         if own_client:
             client.close()

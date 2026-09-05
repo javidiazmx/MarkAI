@@ -15,7 +15,7 @@ from markai.ingest.websites import (
     fetch_page,
     ingest_websites,
 )
-from markai.models import Document, IngestError, IngestFailure
+from markai.models import Document, IngestError, IngestFailure, SourceKind
 from markai.sources.manifest import WebsiteSource
 
 PAGE = """<html><head><title>Deposits</title></head><body>
@@ -452,3 +452,117 @@ def test_a_crawl_now_follows_pdf_links(respx_mock, tmp_path, settings):
         "https://chicago.gov/rlto.pdf",
     }
     assert logo.call_count == 0, "images are still skipped"
+
+
+# --- site furniture ------------------------------------------------------------------------
+#
+# A property manager's site repeats the same marketing block on every listing page. Stored
+# as-is, a search for "how much do I return to the tenant" matched five identical listings,
+# because the only text those pages carried was the footer.
+
+FOOTER = (
+    "<p>The GC Realty Experience is providing the right solutions, being easy to do business "
+    "with, and leaving you with a remarkable customer experience.</p>"
+    "<p>Anything less than that is not acceptable!</p>"
+    "<p>Only speak Spanish? Not a problem, we have you covered.</p>"
+)
+
+
+def _listing(address: str) -> str:
+    return (
+        f"<html><head><title>{address}</title></head><body><h1>{address}</h1>{FOOTER}</body></html>"
+    )
+
+
+ARTICLE = (
+    "<html><head><title>Deposits</title></head><body><h1>Security deposits</h1>"
+    "<p>Chicago landlords owe interest on a held deposit every single year, at the rate the "
+    "City Comptroller publishes each January without fail.</p>"
+    "<p>The deposit itself must go back within forty five days of the tenant moving out, with "
+    "an itemised statement of anything you deducted from it.</p>"
+    "<p>Keep the money in a separate federally insured account inside Illinois, never mixed "
+    "with your own operating funds, or the damages dwarf the deposit.</p>"
+    f"{FOOTER}</body></html>"
+)
+
+
+@respx.mock(assert_all_called=False)
+def test_repeated_furniture_is_stripped_and_hollow_pages_are_dropped(
+    respx_mock, tmp_path, settings
+):
+    settings = settings.model_copy(update={"crawl_delay_seconds": 0.0})
+    respx_mock.get("https://gc.test/robots.txt").mock(return_value=httpx.Response(404))
+    links = "".join(f'<a href="/listing-{i}">l{i}</a>' for i in range(4))
+    respx_mock.get("https://gc.test/deposits").mock(
+        return_value=httpx.Response(
+            200,
+            text=ARTICLE.replace("</body>", f"{links}</body>"),
+            headers={"content-type": "text/html"},
+        )
+    )
+    for i in range(4):
+        respx_mock.get(f"https://gc.test/listing-{i}").mock(
+            return_value=httpx.Response(
+                200, text=_listing(f"{100 + i} West Street"), headers={"content-type": "text/html"}
+            )
+        )
+
+    source = WebsiteSource(url="https://gc.test/deposits", crawl=True, max_pages=10)
+    with httpx.Client() as client:
+        results = list(ingest_websites([source], tmp_path, client, settings))
+
+    documents = [r for r in results if isinstance(r, Document)]
+    failures = [r for r in results if isinstance(r, IngestFailure)]
+
+    assert len(documents) == 1, "only the article survives; the listings were all footer"
+    assert "forty five days" in documents[0].text
+    assert "remarkable customer experience" not in documents[0].text, "the footer is gone"
+    assert documents[0].metadata["boilerplate_removed"] is True
+    assert len(failures) == 4
+    assert "menus and footer" in failures[0].reason
+    assert "exclude_patterns" in (failures[0].hint or "")
+
+
+@respx.mock(assert_all_called=False)
+def test_a_small_site_is_left_alone(respx_mock, tmp_path, settings):
+    """Two pages are not evidence of a pattern; stripping there would just lose content."""
+    settings = settings.model_copy(update={"crawl_delay_seconds": 0.0})
+    respx_mock.get("https://small.test/robots.txt").mock(return_value=httpx.Response(404))
+    respx_mock.get("https://small.test/a").mock(
+        return_value=httpx.Response(
+            200,
+            text=ARTICLE.replace("</body>", '<a href="/b">b</a></body>'),
+            headers={"content-type": "text/html"},
+        )
+    )
+    respx_mock.get("https://small.test/b").mock(
+        return_value=httpx.Response(200, text=ARTICLE, headers={"content-type": "text/html"})
+    )
+    source = WebsiteSource(url="https://small.test/a", crawl=True, max_pages=5)
+    with httpx.Client() as client:
+        documents = [
+            r
+            for r in ingest_websites([source], tmp_path, client, settings)
+            if isinstance(r, Document)
+        ]
+    assert len(documents) == 2
+    assert all("remarkable customer experience" in d.text for d in documents)
+
+
+def test_stripping_leaves_a_site_with_no_repetition_untouched():
+    from markai.ingest.websites import _strip_shared_boilerplate
+
+    docs = []
+    for i in range(6):
+        doc = Document(
+            id=f"d{i}",
+            kind=SourceKind.WEBSITE,
+            title=f"Page {i}",
+            locator=f"https://x.test/{i}",
+            text=f"Paragraph about topic {i}.\n\nAnother distinct thought about {i}. " * 12,
+        )
+        doc.ensure_hash()
+        docs.append(doc)
+
+    kept, hollow = _strip_shared_boilerplate(docs, lambda _m: None)
+    assert len(kept) == 6 and hollow == []
