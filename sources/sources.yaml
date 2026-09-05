@@ -31,12 +31,16 @@ websites:
     exclude_patterns: ["/wp-admin", "/wp-login", "/feed", "/cart", "/checkout", "/my-account"]
     notes: Sitio completo, blog incluido. 500 es el maximo que acepta max_pages.
 
-  - url: https://www.straightupchicagoinvestor.com
-    title: Straight Up Chicago Investor (sitio del podcast)
+  # OJO: la portada de straightupchicagoinvestor.com sirve una copia del sitio de GC Realty
+  # (mismo titulo, mismas paginas). Las notas del podcast viven bajo /podcast, y esa es la
+  # ruta que declara el propio feed RSS. Apuntamos ahi para no traer el sitio duplicado.
+  - url: https://www.straightupchicagoinvestor.com/podcast
+    title: Straight Up Chicago Investor (notas de episodios)
     crawl: true
     max_pages: 500
+    include_patterns: ["/podcast"]
     exclude_patterns: ["/wp-admin", "/wp-login", "/feed", "/cart", "/checkout"]
-    notes: Sitio completo, incluye las notas de cada episodio.
+    notes: Notas de cada episodio. La portada del dominio se omite a proposito.
 
   # --- Condados de Chicagoland ---------------------------------------------------------
   - url: https://www.cookcountyil.gov/
@@ -210,7 +214,10 @@ podcast:
   show_name: Straight Up Chicago Investor
   rss: https://feeds.libsyn.com/262421/rss
   include_titles: []          # only these episodes; matches part of a title, or an episode number
-  max_episodes: 25            # start small; raise it once the first run looks right
+  # El feed trae 480 episodios. Sin transcripcion local esto solo aporta numero de episodio,
+  # fecha y liga a las notas, que es barato y hace que las citas de Mark salgan completas.
+  # Corre siempre con --no-transcribe.
+  max_episodes: null
   episodes: []
 
 # ---------------------------------------------------------------------------------------

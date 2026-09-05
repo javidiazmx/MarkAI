@@ -43,6 +43,15 @@ HEAT_SEGMENTS = [
 ]
 
 
+@pytest.fixture(autouse=True)
+def no_real_sleeping(monkeypatch):
+    """Politeness delays and rate-limit backoff are real seconds. Never spend them here."""
+    from markai.ingest import websites, youtube
+
+    monkeypatch.setattr(websites, "_sleep", lambda _seconds: None)
+    monkeypatch.setattr(youtube, "_sleep", lambda _seconds: None)
+
+
 @pytest.fixture
 def settings(tmp_path) -> Settings:
     """Settings pointed at a temp directory, with thresholds tuned for a toy corpus."""
@@ -53,6 +62,7 @@ def settings(tmp_path) -> Settings:
         min_relevance=0.1,
         weak_relevance=0.5,
         top_k=5,
+        youtube_delay_seconds=0.0,
     )
 
 

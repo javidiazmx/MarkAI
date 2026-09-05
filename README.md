@@ -89,6 +89,7 @@ Everything lives in `.env`. Only the first line is required.
 | `MARKAI_WEAK_RELEVANCE` | `5.0` | Below this, coverage is reported as weak |
 | `MARKAI_YOUTUBE_LANGUAGES` | `en,en-US` | Caption languages to try, in order |
 | `MARKAI_CRAWL_DELAY_SECONDS` | `0.5` | Politeness delay between page fetches |
+| `MARKAI_YOUTUBE_DELAY_SECONDS` | `2.0` | Pause between caption requests; raise it if YouTube keeps blocking |
 | `MARKAI_MAX_PAGE_BYTES` | `25000000` | How much of a page to read; bigger pages are truncated |
 | `MARKAI_TRANSCRIBE_MODEL` | `small` | Whisper model size for podcast audio |
 | `MARKAI_WEB_HOST` | `127.0.0.1` | Where the web UI binds |
@@ -108,6 +109,12 @@ Relative paths resolve against the project folder, so `mark` works from any dire
 **YouTube channels.** List a whole channel under `youtube.channels` and Mark works out the
 video list itself, caching it so re-runs are instant. `mark ingest --force` re-reads the
 channel and picks up anything you have published since.
+
+A large channel takes several sessions. Requests are paced by `MARKAI_YOUTUBE_DELAY_SECONDS`,
+and a block is waited out — 30s, then 60s, 120s, 300s — before the video is retried, because
+YouTube's throttling lifts on its own. Only when a block survives that ladder twice does the
+run stop, and everything already fetched stays cached, so the next run resumes rather than
+restarts.
 
 **Only your material.** Rules, deadlines, dollar amounts, market numbers and local practice all
 have to come from the sources you supplied. When they don't cover a question Mark says "That's
@@ -192,7 +199,7 @@ keyword search.
 | Problem | What to do |
 |---|---|
 | "No captions available" for a video | Captions are off. Add a `transcript_file` for that episode, or use the podcast audio |
-| "YouTube is rate-limiting this machine" | Wait an hour and re-run, or supply transcript files |
+| "YouTube is rate-limiting this machine" | Wait an hour and re-run; already-fetched videos are cached. Raise `MARKAI_YOUTUBE_DELAY_SECONDS` to make it less likely |
 | "ANTHROPIC_API_KEY is not set" | Run `mark init`, or add the key to `.env` |
 | Ingest wants to transcribe for hours | Run `mark ingest --dry-run` to see the estimate. Send transcripts or list the YouTube versions instead |
 | Answers say "not covered" too often | Check `mark status` for the chunk count, then `mark gaps` to see what is missing |

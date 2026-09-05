@@ -98,6 +98,14 @@ class Settings(BaseSettings):
 
     # --- Ingestion -------------------------------------------------------------------------
     crawl_delay_seconds: float = Field(default=0.5, ge=0)
+    youtube_delay_seconds: float = Field(
+        default=2.0,
+        ge=0,
+        description=(
+            "Pause between caption requests. Without one YouTube blocks the machine "
+            "after a few dozen videos, which turns a large channel into many sessions."
+        ),
+    )
     http_timeout_seconds: float = Field(default=30.0, gt=0)
     max_page_bytes: int = Field(
         default=25_000_000,

@@ -330,7 +330,9 @@ def test_ingest_reads_videos_from_a_channel(respx_mock, tmp_path, settings):
 
 def test_the_run_stops_once_youtube_starts_blocking(tmp_path, settings):
     """2,000 identical block failures help nobody: stop and say to retry later."""
-    from markai.ingest.youtube import MAX_CONSECUTIVE_BLOCKS
+    from markai.ingest.youtube import BACKOFF_SECONDS, MAX_CONSECUTIVE_BLOCKS
+
+    attempts_per_round = len(BACKOFF_SECONDS) + 1
 
     section = YouTubeSection(episodes=[YouTubeEpisode(url=f"vid{i:08d}") for i in range(40)])
     api = FakeTranscriptApi(error=yta.IpBlocked("vid00000000"))
@@ -342,10 +344,12 @@ def test_the_run_stops_once_youtube_starts_blocking(tmp_path, settings):
         )
 
     assert len(results) == MAX_CONSECUTIVE_BLOCKS
-    assert len(api.calls) == MAX_CONSECUTIVE_BLOCKS, "must stop calling YouTube once blocked"
+    assert len(api.calls) == MAX_CONSECUTIVE_BLOCKS * attempts_per_round, (
+        "each round waits out the backoff ladder, then the run stops"
+    )
     last = results[-1]
     assert isinstance(last, IngestFailure)
-    assert "in a row" in last.reason
+    assert "rounds of waiting" in last.reason
     assert "cached" in last.hint
 
 

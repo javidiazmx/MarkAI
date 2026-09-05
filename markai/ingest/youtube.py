@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from collections.abc import Callable, Iterator, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -34,7 +35,17 @@ _URL_PATTERNS = (
     re.compile(r"/v/([A-Za-z0-9_-]{11})"),
 )
 
-MAX_CONSECUTIVE_BLOCKS = 5
+# Each block below now costs a full backoff ladder, so two in a row is already ~17 minutes
+# of waiting. Stopping then is kinder than pretending the block will lift.
+MAX_CONSECUTIVE_BLOCKS = 2
+
+# How long to wait out a block before trying the same video again. YouTube throttles by IP
+# and lifts it after a while; abandoning the run on the first block cost a whole session for
+# 47 videos out of 1142.
+BACKOFF_SECONDS = (30.0, 60.0, 120.0, 300.0)
+
+# Indirection so tests never actually sleep.
+_sleep: Callable[[float], None] = time.sleep
 
 
 class RateLimitedError(IngestError):
@@ -348,6 +359,31 @@ def _merge_episodes(
     return episodes
 
 
+def _segments_with_backoff(
+    entry: YouTubeEpisode,
+    video_id: str,
+    cache_dir: Path,
+    api: Any | None,
+    languages: Sequence[str],
+    project_root: Path,
+    log: Callable[[str], None] | None,
+) -> list[Segment]:
+    """Fetch captions, waiting out a temporary block instead of abandoning the run."""
+    last: RateLimitedError | None = None
+    for wait in (*BACKOFF_SECONDS, None):
+        try:
+            return _segments_for(entry, video_id, cache_dir, api, languages, project_root)
+        except RateLimitedError as exc:
+            last = exc
+            if wait is None:
+                break
+            if log:
+                log(f"YouTube is throttling. Waiting {wait:.0f}s, then retrying {video_id}.")
+            _sleep(wait)
+    assert last is not None
+    raise last
+
+
 def ingest_youtube(
     section: YouTubeSection,
     cache_dir: Path,
@@ -358,6 +394,7 @@ def ingest_youtube(
     refresh_channels: bool = False,
     lister: Callable[[str, int | None], list[dict[str, Any]]] | None = None,
     log: Callable[[str], None] | None = None,
+    delay_seconds: float = 0.0,
 ) -> Iterator[Document | IngestFailure]:
     """Yield one Document (or IngestFailure) per YouTube episode in the manifest."""
     project_root = Path(project_root or Path.cwd())
@@ -388,8 +425,15 @@ def ingest_youtube(
             if log:
                 log(f"YouTube: {entry.title or video_id}")
 
+            if delay_seconds and index > 1:
+                # Politeness, and self-interest: hammering the caption endpoint is what got
+                # the machine blocked after 47 videos out of 1142.
+                _sleep(delay_seconds)
+
             try:
-                segments = _segments_for(entry, video_id, cache_dir, api, languages, project_root)
+                segments = _segments_with_backoff(
+                    entry, video_id, cache_dir, api, languages, project_root, log
+                )
                 blocked_in_a_row = 0
             except RateLimitedError as exc:
                 blocked_in_a_row += 1
@@ -397,10 +441,11 @@ def ingest_youtube(
                     yield IngestFailure(
                         SourceKind.YOUTUBE,
                         watch_url(video_id),
-                        f"YouTube blocked {blocked_in_a_row} caption requests in a row, so the "
-                        f"remaining {len(episodes) - index} videos were skipped.",
+                        f"YouTube kept blocking after {blocked_in_a_row} rounds of waiting, so "
+                        f"the remaining {len(episodes) - index} videos were skipped.",
                         "Wait an hour and run `mark ingest` again. Everything already downloaded "
-                        "is cached, so it picks up where it stopped.",
+                        "is cached, so it picks up where it stopped. Raising "
+                        "MARKAI_YOUTUBE_DELAY_SECONDS makes a block less likely next time.",
                     )
                     return
                 yield IngestFailure(SourceKind.YOUTUBE, watch_url(video_id), str(exc), exc.hint)

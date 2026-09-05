@@ -320,6 +320,7 @@ def _iter_sources(
                 project_root=settings.project_root,
                 refresh_channels=force,
                 log=log,
+                delay_seconds=settings.youtube_delay_seconds,
             ),
         )
 
