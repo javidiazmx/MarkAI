@@ -589,6 +589,11 @@ def ingest(
     store.close()
 
 
+def _looks_like_a_rate_limit_message(text: str) -> bool:
+    low = text.lower()
+    return any(m in low for m in ("rate limit", "429", "too many requests", " rpm", " tpm"))
+
+
 @app.command()
 def embed() -> None:
     """Add semantic search to material already ingested, without re-downloading it."""
@@ -603,14 +608,28 @@ def embed() -> None:
             "Add VOYAGE_API_KEY to .env, then run this again.",
         )
     store = _store(settings)
-    count = _backfill_embeddings(
+    result = _backfill_embeddings(
         store, embedder, settings, lambda message: console.print(f"[dim]{escape(message)}[/dim]")
     )
-    if count:
-        console.print(f"[green]✓[/green] Embedded {count} passages with {embedder.name}.")
-    else:
-        console.print("Everything already has embeddings. Nothing to do.")
     store.close()
+
+    if result.done:
+        console.print(f"[green]✓[/green] Embedded {result.done:,} passages with {embedder.name}.")
+    if result.error:
+        console.print(f"[red]Stopped:[/red] {escape(result.error)}")
+        console.print(
+            f"[yellow]{result.remaining:,} passages still have no embedding.[/yellow] "
+            "What is embedded is saved, so running this again resumes rather than restarts."
+        )
+        if "payment" in result.error.lower() or _looks_like_a_rate_limit_message(result.error):
+            console.print(
+                "\nVoyage caps an account with no payment method at 3 requests a minute. "
+                "Adding a card at https://dashboard.voyageai.com/ lifts that; the 200M free "
+                "tokens still apply, so this stays free."
+            )
+        raise typer.Exit(1)
+    if not result.done:
+        console.print("Everything already has embeddings. Nothing to do.")
 
 
 @app.command()

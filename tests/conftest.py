@@ -52,10 +52,11 @@ def offline(monkeypatch):
     is stubbed out as "that route is blocked too". A test that wants the fallback patches
     ``_ytdlp_extract`` itself.
     """
-    from markai.ingest import websites, youtube
+    from markai.ingest import pipeline, websites, youtube
 
     monkeypatch.setattr(websites, "_sleep", lambda _seconds: None)
     monkeypatch.setattr(youtube, "_sleep", lambda _seconds: None)
+    monkeypatch.setattr(pipeline, "_sleep", lambda _seconds: None)
 
     def blocked(url, options):
         raise youtube.RateLimitedError(f"stubbed: no network in tests ({url})")

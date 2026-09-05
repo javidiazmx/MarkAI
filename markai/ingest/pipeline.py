@@ -7,6 +7,7 @@ transcription); ``run_ingest`` does it. A failure in one source never stops the 
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -282,7 +283,7 @@ def run_ingest(
                 )
 
         _handle_orphans(store, only, seen_ids, prune, report, log)
-        report.embedded = _backfill_embeddings(store, embedder, settings, log)
+        report.embedded = _backfill_embeddings(store, embedder, settings, log).done
     finally:
         if owns_client:
             client.close()
@@ -402,37 +403,86 @@ def _store_document(
     (report.updated if existing is not None else report.added).append(label)
 
 
+# A Voyage account with no payment method is capped at 3 requests a minute, so a batch that
+# is refused needs a real wait, not an instant retry.
+EMBED_BACKOFF_SECONDS = (20.0, 40.0, 60.0, 120.0)
+
+_sleep: Callable[[float], None] = time.sleep
+
+
+@dataclass
+class EmbedResult:
+    """What a backfill actually managed.
+
+    A bare count cannot tell "nothing was pending" from "every batch was refused", and
+    reporting the second as the first told the owner their knowledge base was ready when
+    not one passage had been embedded.
+    """
+
+    done: int = 0
+    remaining: int = 0
+    error: str | None = None
+
+    def __bool__(self) -> bool:
+        return self.done > 0
+
+
+def _looks_like_a_rate_limit(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return any(
+        marker in text
+        for marker in ("rate limit", "429", "too many requests", " rpm", " tpm", "quota")
+    )
+
+
 def _backfill_embeddings(
     store: Any,
     embedder: Any | None,
     settings: Settings,
     log: Callable[[str], None] | None,
-) -> int:
+) -> EmbedResult:
     """Embed stored chunks that have none yet, so adding a key later costs no downloads."""
     if embedder is None:
-        return 0
+        return EmbedResult()
     try:
         pending = store.chunks_missing_embeddings(embedder.name)
     except Exception as exc:
         logger.debug("could not look for chunks missing embeddings: %s", exc)
-        return 0
+        return EmbedResult(error=str(exc))
     if not pending:
-        return 0
+        return EmbedResult()
 
     if log:
         log(f"Embedding {len(pending)} stored passages with {embedder.name}")
-    done = 0
+
+    result = EmbedResult(remaining=len(pending))
     batch_size = max(settings.embedding_batch_size, 1)
     for start in range(0, len(pending), batch_size):
         batch = pending[start : start + batch_size]
-        try:
-            vectors = embedder.embed_documents([c.text for c in batch])
-        except Exception as exc:
-            logger.warning("embedding batch failed, leaving those chunks for next time: %s", exc)
-            break
+        vectors = None
+        for wait in (*EMBED_BACKOFF_SECONDS, None):
+            try:
+                vectors = embedder.embed_documents([c.text for c in batch])
+                break
+            except Exception as exc:
+                if wait is None or not _looks_like_a_rate_limit(exc):
+                    # Not something waiting will fix. Stop, and say how far we got: the
+                    # embedded passages are already stored, so a re-run resumes here.
+                    logger.warning("embedding stopped after %s passages: %s", result.done, exc)
+                    result.error = str(exc)
+                    return result
+                if log:
+                    log(f"Voyage is rate-limiting. Waiting {wait:.0f}s, then trying again.")
+                _sleep(wait)
+        if vectors is None:  # pragma: no cover - the loop above always sets or returns
+            return result
+
         store.set_embeddings({c.id: v for c, v in zip(batch, vectors, strict=False)}, embedder.name)
-        done += len(batch)
-    return done
+        result.done += len(batch)
+        result.remaining = len(pending) - result.done
+        if log and result.done % (batch_size * 10) == 0:
+            log(f"  {result.done:,} of {len(pending):,} passages embedded")
+    return result
 
 
 def _handle_orphans(

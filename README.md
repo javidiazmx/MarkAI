@@ -111,6 +111,11 @@ Relative paths resolve against the project folder, so `mark` works from any dire
 **Adding a Voyage key later is free.** Ingest first, add the key whenever you like: the next
 `mark ingest`, or `mark embed`, embeds the passages already on disk. Nothing is downloaded twice.
 
+A Voyage account with no payment method is capped at 3 requests a minute, which is too slow for
+a large knowledge base. A refused batch is waited out and retried, and whatever was embedded is
+saved, so `mark embed` resumes rather than restarts. Adding a card lifts the cap; the free token
+allowance still applies.
+
 **YouTube channels.** List a whole channel under `youtube.channels` and Mark works out the
 video list itself, caching it so re-runs are instant. `mark ingest --force` re-reads the
 channel and picks up anything you have published since.

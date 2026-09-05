@@ -329,3 +329,113 @@ def test_a_forced_re_ingest_does_not_call_a_page_its_own_duplicate(respx_mock, s
     assert again.duplicates == []
     assert len(again.updated) == 1
     store.close()
+
+
+# --- embedding backfill ------------------------------------------------------------------
+
+
+class _RefusingEmbedder:
+    """Voyage with no payment method: 3 requests a minute, then refusal."""
+
+    name = "voyage-3.5"
+
+    def __init__(self, allow: int = 0, message: str = "You have not yet added your payment method"):
+        self.allow = allow
+        self.message = message
+        self.calls = 0
+
+    def embed_documents(self, texts):
+        self.calls += 1
+        if self.calls > self.allow:
+            raise RuntimeError(self.message)
+        return [[0.1, 0.2, 0.3] for _ in texts]
+
+
+def _store_with_chunks(settings):
+    from markai.models import Document, SourceKind
+
+    settings.ensure_dirs()
+    store = KnowledgeStore(settings.db_path)
+    for i in range(6):
+        doc = Document(
+            id=Document.make_id(SourceKind.WEBSITE, f"https://x.test/{i}"),
+            kind=SourceKind.WEBSITE,
+            title=f"Page {i}",
+            locator=f"https://x.test/{i}",
+            text=f"Security deposits and the RLTO, page {i}. " * 40,
+        )
+        doc.ensure_hash()
+        store.upsert_document(doc, chunk_document(doc))
+    return store
+
+
+def test_a_failed_backfill_is_not_reported_as_finished(settings):
+    """It said "Everything already has embeddings" after embedding nothing at all."""
+    from markai.ingest.pipeline import _backfill_embeddings
+
+    store = _store_with_chunks(settings)
+    result = _backfill_embeddings(store, _RefusingEmbedder(), settings, None)
+
+    assert result.done == 0
+    assert result.remaining > 0, "and it says how much is left"
+    assert result.error is not None and "payment method" in result.error
+    assert not result, "falsy, so a caller cannot mistake it for success"
+    store.close()
+
+
+def test_nothing_pending_is_distinguishable_from_everything_failing(settings):
+    from markai.ingest.pipeline import _backfill_embeddings
+
+    store = _store_with_chunks(settings)
+    done = _backfill_embeddings(store, FakeEmbedder(), settings, None)
+    assert done.done > 0 and done.error is None
+
+    again = _backfill_embeddings(store, FakeEmbedder(), settings, None)
+    assert again.done == 0 and again.remaining == 0 and again.error is None
+    store.close()
+
+
+def test_a_rate_limit_is_waited_out_rather_than_abandoned(settings, monkeypatch):
+    """The free tier refuses often. Quitting on the first refusal embedded one batch of 5419."""
+    from markai.ingest import pipeline
+
+    waited: list[float] = []
+    monkeypatch.setattr(pipeline, "_sleep", lambda seconds: waited.append(seconds))
+    settings = settings.model_copy(update={"embedding_batch_size": 2})
+    store = _store_with_chunks(settings)
+
+    embedder = _RefusingEmbedder()
+    calls = {"n": 0}
+
+    def sometimes(texts):
+        calls["n"] += 1
+        if calls["n"] == 1:  # first attempt refused, the retry succeeds
+            raise RuntimeError("429 rate limit exceeded")
+        return [[0.1, 0.2, 0.3] for _ in texts]
+
+    embedder.embed_documents = sometimes
+    result = _backfill_embeddings_for(store, embedder, settings)
+
+    assert waited, "it waited instead of giving up"
+    assert result.done > 0
+    assert result.error is None
+    store.close()
+
+
+def _backfill_embeddings_for(store, embedder, settings):
+    from markai.ingest.pipeline import _backfill_embeddings
+
+    return _backfill_embeddings(store, embedder, settings, None)
+
+
+def test_a_permanent_error_stops_immediately_without_waiting(settings, monkeypatch):
+    from markai.ingest import pipeline
+
+    waited: list[float] = []
+    monkeypatch.setattr(pipeline, "_sleep", lambda seconds: waited.append(seconds))
+    store = _store_with_chunks(settings)
+
+    result = _backfill_embeddings_for(store, _RefusingEmbedder(message="401 invalid key"), settings)
+    assert waited == [], "an invalid key will not fix itself in 20 seconds"
+    assert "401" in (result.error or "")
+    store.close()
