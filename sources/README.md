@@ -15,13 +15,16 @@ that entry. Only do that for sites you control or have permission to read.
 
 ## YouTube
 
-Mark reads the captions YouTube already has, so no API key is needed. Two ways to list
-episodes:
+Mark reads the captions YouTube already has, so no API key is needed. Three ways to list
+episodes, easiest first:
 
-- **A few episodes**: add them under `youtube.episodes`.
-- **Many episodes**: put one URL per line in a text file (see `youtube_urls.example.txt`) and
-  point `youtube.urls_file` at it. To build that list quickly, open your uploads playlist,
-  or export your content list from YouTube Studio, and paste the URLs in.
+- **A whole channel**: add its URL under `youtube.channels`. Mark works out the video list
+  itself and caches it, so later runs are instant. `mark ingest --force` re-reads the channel
+  and picks up new uploads. Set `max_videos_per_channel` to try a handful first.
+- **A few episodes**: add them under `youtube.episodes`, where you can also set a title and
+  episode number by hand. Hand-written entries win over the same video found on a channel.
+- **A list in a file**: put one URL per line in a text file (see `youtube_urls.example.txt`)
+  and point `youtube.urls_file` at it.
 
 If a video has captions turned off, ingest reports it and tells you so. Add a
 `transcript_file` for that one, or list the same episode under the podcast section instead.

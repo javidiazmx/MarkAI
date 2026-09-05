@@ -187,3 +187,142 @@ def test_transcript_file_overrides_the_caption_api(respx_mock, tmp_path, setting
             if isinstance(r, Document)
         ]
     assert documents[0].text == "Written by hand."
+
+
+# --- channels ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://www.youtube.com/@straightupchicagoinvestor",
+        "https://www.youtube.com/@MarkAinleyGCRealty",
+        "https://www.youtube.com/@somechannel/videos",
+        "https://www.youtube.com/channel/UCabcdefghijklmnopqrstu",
+        "https://www.youtube.com/c/SomeName",
+    ],
+)
+def test_channel_urls_are_recognised(url):
+    from markai.ingest.youtube import is_channel_url
+
+    assert is_channel_url(url)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [f"https://www.youtube.com/watch?v={VIDEO}", f"https://youtu.be/{VIDEO}", VIDEO],
+)
+def test_video_urls_are_not_channels(url):
+    from markai.ingest.youtube import is_channel_url
+
+    assert not is_channel_url(url)
+
+
+def test_a_channel_in_episodes_points_at_the_right_field():
+    with pytest.raises(IngestError) as excinfo:
+        extract_video_id("https://www.youtube.com/@straightupchicagoinvestor")
+    assert "channel, not a video" in str(excinfo.value)
+    assert "youtube.channels" in excinfo.value.hint
+
+
+def test_expand_channel_turns_a_listing_into_episodes(tmp_path):
+    from markai.ingest.youtube import expand_channel
+
+    def lister(url, limit):
+        assert limit is None
+        return [{"id": f"vid{i:08d}", "title": f"Episode {i}"} for i in range(4)]
+
+    episodes = expand_channel("https://www.youtube.com/@x", tmp_path, lister=lister)
+    assert len(episodes) == 4
+    assert episodes[0].url == watch_url("vid00000000")
+    assert episodes[0].title == "Episode 0"
+
+
+def test_expand_channel_caches_the_listing(tmp_path):
+    from markai.ingest.youtube import expand_channel
+
+    calls = []
+
+    def lister(url, limit):
+        calls.append(url)
+        return [{"id": "vid00000000", "title": "Only"}]
+
+    expand_channel("https://www.youtube.com/@x", tmp_path, lister=lister)
+    expand_channel("https://www.youtube.com/@x", tmp_path, lister=lister)
+    assert len(calls) == 1, "the second call must come from the cache"
+
+    expand_channel("https://www.youtube.com/@x", tmp_path, refresh=True, lister=lister)
+    assert len(calls) == 2, "refresh must re-read the channel"
+
+
+def test_expand_channel_skips_junk_entries_and_duplicates(tmp_path):
+    from markai.ingest.youtube import expand_channel
+
+    def lister(url, limit):
+        return [
+            {"id": "vid00000000", "title": "Good"},
+            {"id": "vid00000000", "title": "Duplicate"},
+            {"id": "too-short", "title": "Bad id"},
+            {"title": "No id at all"},
+            None,
+        ]
+
+    episodes = expand_channel("https://www.youtube.com/@x", tmp_path, lister=lister)
+    assert [e.title for e in episodes] == ["Good"]
+
+
+def test_a_dead_channel_is_reported_not_crashed(tmp_path):
+    from markai.ingest.youtube import expand_channel
+
+    def lister(url, limit):
+        raise IngestError("channel unavailable", hint="check the URL")
+
+    with pytest.raises(IngestError):
+        expand_channel("https://www.youtube.com/@gone", tmp_path, lister=lister)
+
+
+def test_two_channels_are_merged_and_hand_written_titles_win(tmp_path, settings):
+    from markai.ingest.youtube import _merge_episodes
+
+    section = YouTubeSection(
+        channels=["https://www.youtube.com/@a", "https://www.youtube.com/@b"],
+        episodes=[YouTubeEpisode(url="vid00000000", title="Titulo a mano", episode="212")],
+    )
+    listings = {
+        "https://www.youtube.com/@a": [
+            {"id": "vid00000000", "title": "Del canal"},
+            {"id": "vid00000001", "title": "Segundo"},
+        ],
+        "https://www.youtube.com/@b": [{"id": "vid00000002", "title": "Del otro canal"}],
+    }
+    episodes = _merge_episodes(section, tmp_path, tmp_path, lister=lambda url, limit: listings[url])
+    assert len(episodes) == 3
+    first = episodes[0]
+    assert first.title == "Titulo a mano"
+    assert first.episode == "212"
+
+
+@respx.mock(assert_all_called=False)
+def test_ingest_reads_videos_from_a_channel(respx_mock, tmp_path, settings):
+    respx_mock.get("https://www.youtube.com/oembed").mock(
+        return_value=httpx.Response(200, json={"title": "Screening", "author_name": "SUCI"})
+    )
+    section = YouTubeSection(
+        channels=["https://www.youtube.com/@straightupchicagoinvestor"], channel_name="SUCI"
+    )
+    with httpx.Client() as client:
+        documents = [
+            r
+            for r in ingest_youtube(
+                section,
+                tmp_path,
+                client=client,
+                api=FakeTranscriptApi(),
+                project_root=settings.project_root,
+                lister=lambda url, limit: [{"id": VIDEO, "title": "Screening"}],
+            )
+            if isinstance(r, Document)
+        ]
+    assert len(documents) == 1
+    assert documents[0].locator == watch_url(VIDEO)
+    assert documents[0].channel == "SUCI"

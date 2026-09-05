@@ -17,7 +17,7 @@ from typing import Any
 
 import httpx
 
-from markai.ingest.transcripts import parse_transcript_file, segments_to_text
+from markai.ingest.transcripts import parse_transcript_file, segments_to_text, slugify
 from markai.ingest.websites import make_client
 from markai.models import Document, IngestError, IngestFailure, Segment, SourceKind
 from markai.sources.manifest import YouTubeEpisode, YouTubeSection
@@ -55,6 +55,11 @@ def extract_video_id(url_or_id: str) -> str:
         match = pattern.search(value)
         if match:
             return match.group(1)
+    if is_channel_url(value):
+        raise IngestError(
+            f"{value} is a channel, not a video.",
+            hint="Put channel URLs under youtube.channels, not youtube.episodes.",
+        )
     raise IngestError(
         f"Could not find a YouTube video id in {value!r}.",
         hint="Use the full watch URL, e.g. https://www.youtube.com/watch?v=dQw4w9WgXcQ",
@@ -137,6 +142,110 @@ def fetch_transcript_segments(
     return segments
 
 
+_CHANNEL_RE = re.compile(
+    r"youtube\.com/(?:@[\w.-]+|(?:c|channel|user)/[\w.-]+)(?:/(?:videos|streams|shorts|featured))?/?$",
+    re.IGNORECASE,
+)
+
+
+def is_channel_url(url: str) -> bool:
+    """True for a channel or handle URL, which has no video id to extract."""
+    return bool(_CHANNEL_RE.search((url or "").strip()))
+
+
+def _channel_slug(url: str) -> str:
+    return slugify(url.split("youtube.com/", 1)[-1]) or "channel"
+
+
+def _list_channel_videos(url: str, limit: int | None) -> list[dict[str, Any]]:
+    """Ask yt-dlp for a channel's video list. No media is downloaded."""
+    try:
+        from yt_dlp import YoutubeDL
+        from yt_dlp.utils import DownloadError
+    except ImportError as exc:  # pragma: no cover - yt-dlp is a hard dependency
+        raise IngestError(
+            "yt-dlp is not installed, so channels cannot be expanded.",
+            hint='Reinstall Mark with: pip install -e "." ',
+        ) from exc
+
+    # /videos keeps it to uploads; the bare handle URL also returns the channel's tabs.
+    target = url.rstrip("/")
+    if not target.endswith(("/videos", "/streams", "/shorts")):
+        target = f"{target}/videos"
+
+    options: dict[str, Any] = {
+        "quiet": True,
+        "no_warnings": True,
+        "extract_flat": "in_playlist",  # list entries only, never resolve each video
+        "skip_download": True,
+        "ignoreerrors": True,
+    }
+    if limit:
+        options["playlistend"] = int(limit)
+
+    try:
+        with YoutubeDL(options) as ydl:
+            info = ydl.extract_info(target, download=False)
+    except DownloadError as exc:
+        raise IngestError(
+            f"Could not read the channel {url}: {exc}",
+            hint=(
+                "Check the channel URL in sources.yaml. If YouTube is rate-limiting this "
+                "machine, wait and re-run; the video list is cached once it succeeds."
+            ),
+        ) from exc
+    except Exception as exc:
+        raise IngestError(f"Could not read the channel {url}: {exc}", hint=None) from exc
+
+    entries = [e for e in (info or {}).get("entries") or [] if e]
+    if not entries:
+        raise IngestError(
+            f"The channel {url} returned no videos.",
+            hint="Confirm the channel has public videos and that the URL is right.",
+        )
+    return entries
+
+
+def expand_channel(
+    url: str,
+    cache_dir: Path,
+    limit: int | None = None,
+    refresh: bool = False,
+    lister: Callable[[str, int | None], list[dict[str, Any]]] | None = None,
+) -> list[YouTubeEpisode]:
+    """Every video on a channel, as episodes. Cached so re-runs are instant."""
+    cache_dir = Path(cache_dir)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_path = cache_dir / f"channel-{_channel_slug(url)}.json"
+
+    if cache_path.exists() and not refresh:
+        try:
+            cached = json.loads(cache_path.read_text(encoding="utf-8"))
+            return [YouTubeEpisode(**item) for item in cached]
+        except Exception as exc:
+            logger.debug("ignoring bad channel cache %s: %s", cache_path, exc)
+
+    entries = (lister or _list_channel_videos)(url, limit)
+    episodes: list[YouTubeEpisode] = []
+    seen: set[str] = set()
+    for entry in entries:
+        # yt-dlp yields None for videos it could not read (private, removed, geo-blocked).
+        if not isinstance(entry, dict):
+            continue
+        video_id = entry.get("id")
+        if not video_id or not _ID_RE.match(str(video_id)) or video_id in seen:
+            continue
+        seen.add(video_id)
+        episodes.append(YouTubeEpisode(url=watch_url(video_id), title=(entry.get("title") or None)))
+
+    cache_path.write_text(
+        json.dumps([e.model_dump(exclude_none=True) for e in episodes], indent=1),
+        encoding="utf-8",
+    )
+    logger.info("channel %s: %d videos", url, len(episodes))
+    return episodes
+
+
 def read_urls_file(path: Path) -> list[YouTubeEpisode]:
     """Read a plain list of YouTube URLs, one per line, ``#`` comments allowed."""
     path = Path(path)
@@ -159,7 +268,13 @@ def read_urls_file(path: Path) -> list[YouTubeEpisode]:
     return episodes
 
 
-def _merge_episodes(section: YouTubeSection, project_root: Path) -> list[YouTubeEpisode]:
+def _merge_episodes(
+    section: YouTubeSection,
+    project_root: Path,
+    cache_dir: Path | None = None,
+    refresh: bool = False,
+    lister: Callable[[str, int | None], list[dict[str, Any]]] | None = None,
+) -> list[YouTubeEpisode]:
     episodes: list[YouTubeEpisode] = []
     seen: set[str] = set()
 
@@ -174,10 +289,20 @@ def _merge_episodes(section: YouTubeSection, project_root: Path) -> list[YouTube
         seen.add(video_id)
         episodes.append(entry)
 
+    # Hand-written entries win, so their titles and episode numbers survive expansion.
     for entry in section.episodes:
         add(entry)
     if section.urls_file:
         for entry in read_urls_file(project_root / section.urls_file):
+            add(entry)
+    for channel in section.channels:
+        for entry in expand_channel(
+            channel,
+            cache_dir if cache_dir is not None else project_root,
+            limit=section.max_videos_per_channel,
+            refresh=refresh,
+            lister=lister,
+        ):
             add(entry)
     return episodes
 
@@ -189,6 +314,8 @@ def ingest_youtube(
     api: Any | None = None,
     languages: Sequence[str] | None = None,
     project_root: Path | None = None,
+    refresh_channels: bool = False,
+    lister: Callable[[str, int | None], list[dict[str, Any]]] | None = None,
     log: Callable[[str], None] | None = None,
 ) -> Iterator[Document | IngestFailure]:
     """Yield one Document (or IngestFailure) per YouTube episode in the manifest."""
@@ -201,10 +328,13 @@ def ingest_youtube(
     client = client or make_client()
     try:
         try:
-            episodes = _merge_episodes(section, project_root)
+            episodes = _merge_episodes(section, project_root, cache_dir, refresh_channels, lister)
         except IngestError as exc:
-            yield IngestFailure(SourceKind.YOUTUBE, section.urls_file or "", str(exc), exc.hint)
+            locator = section.urls_file or (section.channels[0] if section.channels else "youtube")
+            yield IngestFailure(SourceKind.YOUTUBE, locator, str(exc), exc.hint)
             return
+        if log and section.channels:
+            log(f"YouTube: {len(episodes)} videos across {len(section.channels)} channel(s)")
 
         for entry in episodes:
             try:

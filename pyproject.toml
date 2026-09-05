@@ -23,6 +23,7 @@ dependencies = [
   "beautifulsoup4>=4.12",
   "lxml>=5.0",
   "youtube-transcript-api>=1.2",
+  "yt-dlp>=2025.1",
   "feedparser>=6.0",
   "webvtt-py>=0.5",
   "srt>=3.5",

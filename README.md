@@ -56,7 +56,7 @@ Then:
 | `mark ingest` | Fetches every source and builds the knowledge base |
 | `mark ingest --dry-run` | Shows the plan (including transcription time) and stops |
 | `mark ingest --only youtube` | Limits to one kind; repeatable |
-| `mark ingest --force` | Re-ingests sources even when they have not changed |
+| `mark ingest --force` | Re-ingests everything, and re-reads YouTube channels for new uploads |
 | `mark ingest --prune` | Deletes stored sources no longer listed in the manifest |
 | `mark status` | What Mark knows, which model, whether the key is set |
 | `mark gaps` | Questions Mark could not answer, so you know what to add |
@@ -97,6 +97,10 @@ Everything lives in `.env`. Only the first line is required.
 Relative paths resolve against the project folder, so `mark` works from any directory.
 
 ## How Mark behaves
+
+**YouTube channels.** List a whole channel under `youtube.channels` and Mark works out the
+video list itself, caching it so re-runs are instant. `mark ingest --force` re-reads the
+channel and picks up anything you have published since.
 
 **Only your material.** Rules, deadlines, dollar amounts, market numbers and local practice all
 have to come from the sources you supplied. When they don't cover a question Mark says "That's

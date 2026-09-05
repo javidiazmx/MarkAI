@@ -23,13 +23,20 @@
 # si sirve (por ejemplo la pagina del RLTO en vez de todo chicago.gov).
 # ---------------------------------------------------------------------------------------
 websites:
-  # --- Tu propio sitio: lo mas valioso, y aqui si vale la pena ir a fondo ---------------
-  - url: https://gcrealtyinc.com
+  # --- Sitios propios: lo mas valioso, aqui si va todo -----------------------------------
+  - url: https://www.gcrealtyinc.com
     title: GC Realty & Development
     crawl: true
-    max_pages: 200
-    exclude_patterns: ["/wp-", "/tag/", "/author/", "/page/", "/feed", "/cart", "/checkout"]
-    notes: Sitio propio, incluye todo el blog.
+    max_pages: 500
+    exclude_patterns: ["/wp-admin", "/wp-login", "/feed", "/cart", "/checkout", "/my-account"]
+    notes: Sitio completo, blog incluido. 500 es el maximo que acepta max_pages.
+
+  - url: https://www.straightupchicagoinvestorpodcast.com
+    title: Straight Up Chicago Investor (sitio del podcast)
+    crawl: true
+    max_pages: 500
+    exclude_patterns: ["/wp-admin", "/wp-login", "/feed", "/cart", "/checkout"]
+    notes: Sitio completo, incluye las notas de cada episodio.
 
   # --- Condados de Chicagoland ---------------------------------------------------------
   - url: https://www.cookcountyil.gov/
@@ -157,15 +164,19 @@ websites:
 # YOUTUBE
 # Mark lee los subtitulos que YouTube ya tiene, asi que no necesita API key.
 #
-# IMPORTANTE: aqui van URLs de VIDEOS individuales, no de canales. Una URL de canal
-# (youtube.com/@loquesea) no se puede usar directamente. Pon la lista de videos en
-# sources/youtube_urls.txt, una URL por linea, y apunta urls_file a ese archivo.
+# Puedes poner canales completos en "channels" (Mark lista los videos solo), videos
+# sueltos en "episodes", o una lista en un archivo aparte con "urls_file".
 # ---------------------------------------------------------------------------------------
 youtube:
-  channel_url: https://www.youtube.com/@straightupchicagoinvestor
+  # Canales completos. Mark saca la lista de videos solo y guarda un cache; al re-ingestar
+  # con --force vuelve a leer el canal y agarra los videos nuevos.
+  channels:
+    - https://www.youtube.com/@straightupchicagoinvestor
+    - https://www.youtube.com/@MarkAinleyGCRealty
+  max_videos_per_channel: null   # null = todos. Pon un numero para probar con pocos primero.
   channel_name: Straight Up Chicago Investor
-  urls_file: sources/youtube_urls.txt
-  episodes: []
+  urls_file: sources/youtube_urls.txt   # opcional, para videos sueltos de otros canales
+  episodes: []                          # opcional, para nombrar un video a mano
 
 # ---------------------------------------------------------------------------------------
 # PODCAST

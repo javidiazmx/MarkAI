@@ -32,6 +32,7 @@ mark --help
 | Never send | `temperature`, `top_p`, `top_k`, assistant prefill. All 400 on Opus 5 |
 | Caching | `cache_control` on the last system block plus top-level; system stays frozen |
 | Embeddings | Optional. Voyage when the key is set, otherwise BM25 only |
+| YouTube channels | yt-dlp flat listing, cached per channel under `data/raw/youtube/` |
 | Storage | SQLite, embeddings as float32 blobs |
 | Tests | No network. `respx` for ingest only |
 

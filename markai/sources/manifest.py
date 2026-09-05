@@ -49,13 +49,23 @@ class YouTubeEpisode(BaseModel):
 
 
 class YouTubeSection(BaseModel):
-    """YouTube material. ``urls_file`` is a plain text file with one URL per line
-    (``#`` comments allowed; an optional ``| Episode title`` suffix after the URL)."""
+    """YouTube material.
 
+    ``channels`` lists whole channels; every video on them is picked up, and new uploads
+    arrive on the next ingest. ``urls_file`` is a plain text file with one URL per line
+    (``#`` comments allowed; an optional ``| Episode title`` suffix after the URL).
+    ``episodes`` is for naming individual videos by hand.
+    """
+
+    channels: list[str] = Field(default_factory=list)
+    max_videos_per_channel: int | None = Field(default=None, ge=1)
     channel_url: str | None = None
     channel_name: str | None = None
     urls_file: str | None = None
     episodes: list[YouTubeEpisode] = Field(default_factory=list)
+
+    def has_sources(self) -> bool:
+        return bool(self.channels or self.episodes or self.urls_file)
 
 
 class PodcastEpisode(BaseModel):
@@ -126,16 +136,13 @@ class SourceManifest(BaseModel):
 
     def is_empty(self) -> bool:
         return not (
-            self.websites
-            or self.youtube.episodes
-            or self.youtube.urls_file
-            or self.podcast.episodes
-            or self.podcast.rss
+            self.websites or self.youtube.has_sources() or self.podcast.episodes or self.podcast.rss
         )
 
     def counts(self) -> dict[str, int]:
         return {
             "websites": len(self.websites),
+            "youtube_channels": len(self.youtube.channels),
             "youtube_episodes": len(self.youtube.episodes),
             "youtube_urls_file": 1 if self.youtube.urls_file else 0,
             "podcast_episodes": len(self.podcast.episodes),

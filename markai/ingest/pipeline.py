@@ -20,7 +20,7 @@ from rich.table import Table
 from markai.config import Settings
 from markai.ingest.podcast import ingest_podcast, resolve_transcript_plan
 from markai.ingest.websites import ingest_websites, make_client
-from markai.ingest.youtube import ingest_youtube, read_urls_file
+from markai.ingest.youtube import expand_channel, ingest_youtube, read_urls_file
 from markai.knowledge.chunking import chunk_document
 from markai.models import Document, IngestFailure, SourceKind
 from markai.sources.manifest import SourceManifest
@@ -149,6 +149,19 @@ def plan_ingest(
             except Exception as exc:
                 logger.debug("could not read urls_file for the plan: %s", exc)
                 plan.youtube_error = str(exc)
+        for channel in manifest.youtube.channels:
+            # Uses the cached listing when there is one, so --dry-run stays cheap on re-runs.
+            try:
+                count += len(
+                    expand_channel(
+                        channel,
+                        settings.youtube_cache_dir,
+                        limit=manifest.youtube.max_videos_per_channel,
+                    )
+                )
+            except Exception as exc:
+                logger.debug("could not list channel %s: %s", channel, exc)
+                plan.youtube_error = str(exc)
         plan.youtube_videos = count
 
     if _wanted(SourceKind.PODCAST, only) and (manifest.podcast.rss or manifest.podcast.episodes):
@@ -190,7 +203,9 @@ def run_ingest(
     seen_ids: set[str] = set()
 
     try:
-        for item in _iter_sources(manifest, settings, only, client, api, allow_transcription, log):
+        for item in _iter_sources(
+            manifest, settings, only, client, api, allow_transcription, force, log
+        ):
             if isinstance(item, IngestFailure):
                 report.failures.append(item)
                 continue
@@ -223,6 +238,7 @@ def _iter_sources(
     client: httpx.Client,
     api: Any | None,
     allow_transcription: bool,
+    force: bool,
     log: Callable[[str], None] | None,
 ) -> Iterator[Document | IngestFailure]:
     if _wanted(SourceKind.WEBSITE, only) and manifest.websites:
@@ -233,9 +249,7 @@ def _iter_sources(
             ),
         )
 
-    if _wanted(SourceKind.YOUTUBE, only) and (
-        manifest.youtube.episodes or manifest.youtube.urls_file
-    ):
+    if _wanted(SourceKind.YOUTUBE, only) and manifest.youtube.has_sources():
         yield from _guarded(
             SourceKind.YOUTUBE,
             lambda: ingest_youtube(
@@ -245,6 +259,7 @@ def _iter_sources(
                 api=api,
                 languages=settings.youtube_languages,
                 project_root=settings.project_root,
+                refresh_channels=force,
                 log=log,
             ),
         )
