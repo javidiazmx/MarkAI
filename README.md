@@ -59,7 +59,7 @@ Then:
 | `mark ingest --dry-run` | Shows the plan (including transcription time) and stops |
 | `mark ingest --only youtube` | Limits to one kind; repeatable |
 | `mark ingest --force` | Re-ingests everything, and re-reads YouTube channels for new uploads |
-| `mark ingest --prune` | Deletes stored sources no longer listed in the manifest |
+| `mark ingest --prune` | Deletes stored sources this run did not produce — dropped pages, dead URLs, removed entries |
 | `mark status` | What Mark knows, which model, whether the key is set |
 | `mark embed` | Adds semantic search to material already ingested, no re-download |
 | `mark gaps` | Questions Mark could not answer, so you know what to add |
@@ -238,8 +238,13 @@ bind anywhere else:
 ## Adding material later
 
 Add the entry to `sources/sources.yaml` and run `mark ingest`. Unchanged sources are skipped, so
-re-running is cheap. Removing an entry does not delete what was stored: use `mark ingest --prune`
-for that. Mark's knowledge grows every time you add something.
+re-running is cheap. Mark's knowledge grows every time you add something.
+
+Removing something is the other half, and it needs `--prune`. A page that a later run rejects —
+because it turned out to be nothing but site furniture, or the URL now 404s — stays in the
+knowledge base until you prune, since the rejection alone does not delete what an earlier run
+stored. `--prune` removes everything the run did not produce, restricted to the kinds it
+actually covered, so `mark ingest --only website --prune` never touches your podcast episodes.
 
 ## Optional extras
 

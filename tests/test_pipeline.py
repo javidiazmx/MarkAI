@@ -556,3 +556,45 @@ def test_a_storage_failure_late_in_a_long_run_is_reported_not_raised(settings, m
     assert result.remaining > 0
     assert "database is locked" in (result.error or "")
     store.close()
+
+
+@respx.mock(assert_all_called=False)
+def test_a_page_that_becomes_a_duplicate_loses_its_stale_copy(respx_mock, settings):
+    """Exactly the owner's case: stripping the footer made two pages identical.
+
+    The second one was stored on an earlier run when it still looked distinct. Declining to
+    update it is not enough - that stale copy stays searchable with its old text.
+    """
+    respx_mock.get("https://example.com/robots.txt").mock(return_value=httpx.Response(404))
+    respx_mock.get("https://example.com/deposits").mock(
+        return_value=httpx.Response(200, text=PAGE, headers={"content-type": "text/html"})
+    )
+    distinct = PAGE.replace("</body>", "<p>A listing at 941 East Hyde Park Boulevard.</p></body>")
+    listing = respx_mock.get("https://example.com/listing").mock(
+        return_value=httpx.Response(200, text=distinct, headers={"content-type": "text/html"})
+    )
+    settings.ensure_dirs()
+    store = KnowledgeStore(settings.db_path)
+    manifest = SourceManifest(
+        websites=[
+            WebsiteSource(url="https://example.com/deposits"),
+            WebsiteSource(url="https://example.com/listing"),
+        ]
+    )
+
+    with httpx.Client() as client:
+        run_ingest(manifest, store, None, settings, only={SourceKind.WEBSITE}, client=client)
+        assert store.stats().documents_by_kind["website"] == 2
+
+        # Now the listing loses its one distinct line and reads exactly like the other page.
+        listing.mock(
+            return_value=httpx.Response(200, text=PAGE, headers={"content-type": "text/html"})
+        )
+        report = run_ingest(
+            manifest, store, None, settings, only={SourceKind.WEBSITE}, force=True, client=client
+        )
+
+    assert len(report.duplicates) == 1
+    assert store.stats().documents_by_kind["website"] == 1, "the stale copy is deleted, not kept"
+    assert [d.locator for d in store.list_documents()] == ["https://example.com/deposits"]
+    store.close()

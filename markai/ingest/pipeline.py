@@ -386,6 +386,10 @@ def _store_document(
         # Same bytes already stored under another address. Keeping both would put two
         # identical passages in every search result.
         report.duplicates.append(f"{label} - same text as {twin}")
+        if existing is not None:
+            # This address was stored on an earlier run, before we knew it was redundant.
+            # Declining to update it would leave that stale copy searchable forever.
+            store.delete_document(document.id)
         return
 
     chunks = chunk_document(
@@ -621,7 +625,7 @@ def _handle_orphans(
             store.delete_document(doc_id)
             report.pruned.append(locator)
         elif log:
-            log(f"Still stored but no longer in sources.yaml: {locator} (use --prune to remove)")
+            log(f"Still stored but not seen in this run: {locator} (use --prune to remove)")
 
 
 __all__ = ["IngestPlan", "IngestReport", "plan_ingest", "run_ingest", "Path"]
