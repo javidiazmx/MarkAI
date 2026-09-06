@@ -68,13 +68,20 @@ def build_business_block(business: BusinessProfile | None) -> str | None:
 
 
 def build_system_blocks(
-    system_prompt: str, business_block: str | None = None
+    system_prompt: str, business_block: str | None = None, ttl: str = "5m"
 ) -> list[dict[str, object]]:
-    """System content blocks with the cache breakpoint on the last one."""
+    """System content blocks with the cache breakpoint on the last one.
+
+    This prefix is the only part of a request that repeats between questions, so it is the
+    only part worth caching. ``ttl`` decides how long it survives an idle gap.
+    """
     blocks: list[dict[str, object]] = [{"type": "text", "text": system_prompt}]
     if business_block:
         blocks.append({"type": "text", "text": business_block})
-    blocks[-1]["cache_control"] = {"type": "ephemeral"}
+    cache: dict[str, object] = {"type": "ephemeral"}
+    if ttl != "5m":
+        cache["ttl"] = ttl
+    blocks[-1]["cache_control"] = cache
     return blocks
 
 

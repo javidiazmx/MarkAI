@@ -383,3 +383,36 @@ def test_probe_reads_a_feed_and_names_the_show_website(respx_mock, tmp_path, mon
     assert "RSS feed" in result.stdout
     assert "realshow.test" in result.stdout
     assert "Straight Up Chicago Investor" in result.stdout
+
+
+def test_the_usage_line_shows_writes_beside_reads():
+    """Reads alone hide the failure mode: paying 1.25x for a cache nothing collects."""
+    from types import SimpleNamespace
+
+    from markai.cli import _usage_line
+
+    cold = SimpleNamespace(
+        model="claude-opus-5",
+        coverage="covered",
+        usage={
+            "input_tokens": 2,
+            "output_tokens": 741,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 4200,
+        },
+    )
+    assert "4,200 written" in _usage_line(cold)
+    assert "no hit yet" in _usage_line(cold)
+
+    warm = SimpleNamespace(
+        model="claude-opus-5",
+        coverage="covered",
+        usage={
+            "input_tokens": 2,
+            "output_tokens": 741,
+            "cache_read_input_tokens": 4200,
+            "cache_creation_input_tokens": 0,
+        },
+    )
+    assert "4,200 read" in _usage_line(warm)
+    assert "no hit yet" not in _usage_line(warm)

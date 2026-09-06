@@ -105,7 +105,9 @@ class MarkAdvisor:
         self.retriever = retriever
         self.tools = list(tools or [])
         self.store = store
-        self.system_blocks = build_system_blocks(system_prompt, build_business_block(business))
+        self.system_blocks = build_system_blocks(
+            system_prompt, build_business_block(business), settings.cache_ttl
+        )
 
         if client is None:
             key = settings.anthropic_key()
@@ -171,7 +173,16 @@ class MarkAdvisor:
         stop_reason: str | None = None
         refused = False
 
+        # The system prefix is cached by its own breakpoint and is the only part that
+        # repeats between questions. A second, automatic breakpoint at the end of the
+        # messages would write the retrieved passages too - and those are different every
+        # question, so that entry is written at 1.25x and never read. Only ask for it when
+        # this prefix really will be sent again: inside a tool loop, or in a conversation
+        # whose next turn replays this history.
+        reuses_history = len(api_messages) > 1
+
         for iteration in range(MAX_TOOL_ITERATIONS):
+            cache_messages = reuses_history or iteration > 0
             try:
                 with self.client.beta.messages.stream(
                     model=self.settings.model,
@@ -183,7 +194,7 @@ class MarkAdvisor:
                     output_config={"effort": self.settings.effort},
                     betas=[FALLBACK_BETA],
                     fallbacks="default",
-                    cache_control={"type": "ephemeral"},
+                    **({"cache_control": {"type": "ephemeral"}} if cache_messages else {}),
                 ) as stream:
                     for delta in stream.text_stream:
                         if delta:

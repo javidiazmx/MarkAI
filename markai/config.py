@@ -101,6 +101,17 @@ class Settings(BaseSettings):
     chunk_overlap_words: int = Field(default=60, ge=0)
     av_window_seconds: float = Field(default=120.0, gt=0)
 
+    cache_ttl: str = Field(
+        default="1h",
+        pattern="^(5m|1h)$",
+        description=(
+            "How long the frozen system prefix stays cached. A write costs 1.25x at 5m and "
+            "2x at 1h; a read costs 0.1x. So 5m pays off from the second question within "
+            "five minutes, 1h from the third within an hour - and either one costs more "
+            "than no cache at all if the questions are further apart than that."
+        ),
+    )
+
     show_citations: bool = Field(
         default=False,
         description=(

@@ -87,6 +87,7 @@ Everything lives in `.env`. Only the first line is required.
 | `MARKAI_DATA_DIR` | `data` | Where the knowledge base and downloads live |
 | `MARKAI_SOURCES_FILE` | `sources/sources.yaml` | Which manifest to read |
 | `MARKAI_SHOW_CITATIONS` | `false` | `[S1]` markers and a source list under the answer |
+| `MARKAI_CACHE_TTL` | `1h` | How long the cached system prefix lives: `5m` or `1h` |
 | `MARKAI_TOP_K` | `8` | Passages handed to Mark per question |
 | `MARKAI_MIN_RELEVANCE` | `2.0` | Below this, a question counts as uncovered |
 | `MARKAI_WEAK_RELEVANCE` | `5.0` | Below this, coverage is reported as weak |
@@ -209,6 +210,29 @@ archives and stylesheets are never followed.
 **Untrusted sources.** Text pulled from web pages and transcripts is escaped and labelled as
 reference material. If a page contains something shaped like an instruction, Mark treats it as
 data, not as an order.
+
+## What a question costs
+
+Only one part of a request repeats between questions: the system prompt and the business
+block, about 1,800 tokens. That prefix carries the cache breakpoint. Everything else — the
+retrieved passages and the question — is different every time.
+
+Which is why the passages are **not** cached on a one-shot question. A cache write costs 1.25×
+the input price, and a block that never gets sent again is never read back, so caching it is a
+25% surcharge for nothing. The breakpoint goes on only when the same prefix really will be sent
+again: inside a tool-call loop, or on the second turn of a conversation.
+
+The prefix TTL is the one judgement call. A write costs 1.25× at `5m` and 2× at `1h`; a read
+costs 0.1×. So `5m` pays for itself from the second question within five minutes, `1h` from the
+third within an hour — and either one costs *more* than no cache at all if questions are spaced
+further apart than that. The default is `1h`, which suits a chat session or a shared browser
+page; set `MARKAI_CACHE_TTL=5m` if Mark is only asked the occasional isolated question.
+
+`mark ask` prints reads and writes on the last line, so you can tell those apart. Writes with no
+reads, question after question, means the TTL is shorter than the gaps between questions.
+
+`MARKAI_EFFORT` is the other lever, and the bigger one: it trades thinking depth against tokens.
+`medium` is the default because it keeps chat quick; `high` is worth it for hard analysis.
 
 ## Data and privacy
 

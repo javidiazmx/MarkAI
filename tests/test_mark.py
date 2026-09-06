@@ -43,8 +43,11 @@ def test_request_shape_matches_the_opus_5_contract(settings, store):
     assert call["fallbacks"] == "default"
     assert call["thinking"] == {"type": "adaptive"}
     assert call["output_config"] == {"effort": settings.effort}
-    assert call["cache_control"] == {"type": "ephemeral"}
-    assert call["system"][-1]["cache_control"] == {"type": "ephemeral"}
+    assert call["system"][-1]["cache_control"] == {"type": "ephemeral", "ttl": settings.cache_ttl}
+    assert "cache_control" not in call, (
+        "a one-shot question never replays its passages, so caching them is a write "
+        "at 1.25x that is never read"
+    )
     assert call["max_tokens"] == settings.request_max_tokens()
     assert [t["name"] for t in call["tools"]] == ["analyze_deal", "mortgage_payment"]
     for banned in ("temperature", "top_p", "top_k"):
@@ -265,3 +268,45 @@ def test_questions_are_logged_for_the_gaps_report(settings, store):
     advisor, _ = build_advisor(settings, store, [text_message("Screening matters [S1].")])
     advisor.ask("How should I screen tenants?")
     assert store.stats().questions_total == 1
+
+
+# --- paying only for cache that gets read ------------------------------------------------
+
+
+def test_the_passages_are_cached_once_a_tool_call_makes_them_repeat(settings, store):
+    """Inside a tool loop the same prefix goes out again, so the write pays for itself."""
+    advisor, client = build_advisor(
+        settings,
+        store,
+        [
+            tool_use_message(
+                "mortgage_payment",
+                {"price": 300000, "down_payment": 60000, "rate": 0.065, "years": 30},
+            ),
+            text_message("About that."),
+        ],
+    )
+    advisor.ask("What is the payment on a 300k two flat?")
+
+    assert "cache_control" not in client.calls[0], "first request: nothing repeats yet"
+    assert client.calls[1]["cache_control"] == {"type": "ephemeral"}, "second: it does"
+
+
+def test_a_conversation_caches_the_history_for_the_next_turn(settings, store):
+    advisor, client = build_advisor(settings, store, [text_message("One."), text_message("Two.")])
+    conversation = Conversation(session_id="t")
+    advisor.ask("How should I screen tenants?", conversation)
+    advisor.ask("And the deposit?", conversation)
+
+    assert "cache_control" not in client.calls[0], "nothing to replay on the first turn"
+    assert client.calls[1]["cache_control"] == {"type": "ephemeral"}, "the history will replay"
+
+
+def test_the_prefix_ttl_is_configurable(settings, store):
+    """5m pays off from the second question in five minutes, 1h from the third in an hour."""
+    short = settings.model_copy(update={"cache_ttl": "5m"})
+    advisor, client = build_advisor(short, store, [text_message("Hi.")])
+    advisor.ask("How should I screen tenants?")
+    assert client.calls[0]["system"][-1]["cache_control"] == {"type": "ephemeral"}, (
+        "5m is the API default, so it is left off the wire"
+    )

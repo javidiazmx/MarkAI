@@ -749,11 +749,27 @@ def _render_answer(advisor: Any, question: str, conversation: Any) -> None:
                 bits.append(citation.url)
             console.print("  " + escape(" · ".join(bits)))
 
+    console.print(f"[dim]{_usage_line(response)}[/dim]")
+
+
+def _usage_line(response: Any) -> str:
+    """One line of what the answer cost, in the units Anthropic bills.
+
+    Writes are shown next to reads on purpose: a run with writes and no reads is paying
+    1.25x for a cache nothing ever collects, which looks identical to a healthy run if you
+    only print the read count.
+    """
     usage = response.usage or {}
-    console.print(
-        f"[dim]{response.model} · in {usage.get('input_tokens', 0)} "
-        f"out {usage.get('output_tokens', 0)} "
-        f"cached {usage.get('cache_read_input_tokens', 0)} · coverage {response.coverage}[/dim]"
+    read = usage.get("cache_read_input_tokens", 0)
+    written = usage.get("cache_creation_input_tokens", 0)
+    cache = f"cache {read:,} read"
+    if written:
+        cache += f" / {written:,} written"
+    if written and not read:
+        cache += " [yellow](no hit yet)[/yellow]"
+    return (
+        f"{response.model} · in {usage.get('input_tokens', 0):,} "
+        f"out {usage.get('output_tokens', 0):,} · {cache} · coverage {response.coverage}"
     )
 
 
