@@ -223,18 +223,32 @@
     wrap.appendChild(box);
   }
 
+  // Frames are separated by a blank line, and the spec allows CRLF, LF or CR for every
+  // newline in the stream. sse-starlette uses CRLF, so splitting on "\n\n" alone matched
+  // nothing at all: every answer arrived, was billed, and was never rendered.
+  var FRAME_SEP = /\r\n\r\n|\n\n|\r\r/;
+  var LINE_SEP = /\r\n|\n|\r/;
+
   function parseSse(buffer, onEvent) {
-    var blocks = buffer.split("\n\n");
+    var blocks = buffer.split(FRAME_SEP);
     var tail = blocks.pop();
     blocks.forEach(function (block) {
       var name = "message";
       var data = [];
-      block.split("\n").forEach(function (line) {
+      block.split(LINE_SEP).forEach(function (line) {
         if (line.indexOf("event:") === 0) name = line.slice(6).trim();
         else if (line.indexOf("data:") === 0) data.push(line.slice(5).trim());
       });
-      if (!data.length) return;
-      try { onEvent(name, JSON.parse(data.join("\n"))); } catch (e) { /* ignore keep-alives */ }
+      if (!data.length) return;  // a comment line: sse-starlette's keep-alive ping
+      var payload;
+      try {
+        payload = JSON.parse(data.join("\n"));
+      } catch (e) {
+        return;  // not ours to render
+      }
+      // Deliberately outside the try: a handler that throws must not be mistaken for a
+      // keep-alive and swallowed, which is how an empty bubble hides a rendering bug.
+      onEvent(name, payload);
     });
     return tail;
   }

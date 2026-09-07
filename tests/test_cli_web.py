@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
 from markai.cli import app
+from markai.config import Settings
 from markai.web.app import create_app
 from tests.fakes import FakeAdvisor
 
@@ -416,3 +417,51 @@ def test_the_usage_line_shows_writes_beside_reads():
     )
     assert "4,200 read" in _usage_line(warm)
     assert "no hit yet" not in _usage_line(warm)
+
+
+# --- the stream the page has to parse ------------------------------------------------------
+
+
+def test_the_server_separates_frames_with_crlf_and_the_page_expects_it():
+    """Every answer arrived, was billed, and rendered as an empty bubble.
+
+    sse-starlette ends every line with CRLF, so frames are separated by "\\r\\n\\r\\n". The
+    page split on "\\n\\n", which never occurs in that stream: nothing was ever parsed. This
+    pins both halves, because a library default is exactly the kind of thing that changes
+    underneath you.
+    """
+    import re
+    from pathlib import Path
+
+    settings = Settings(_env_file=None, data_dir="/tmp/markai-sse-check")
+    settings.ensure_dirs()
+    advisor = FakeAdvisor("Chicago gives you 45 days.")
+    client = TestClient(create_app(settings=settings, advisor=advisor))
+
+    with client.stream(
+        "POST", "/api/chat", json={"session_id": "s1", "message": "How long?"}
+    ) as response:
+        raw = b"".join(response.iter_bytes()).decode("utf-8")
+
+    assert "\r\n\r\n" in raw, "this is the separator the page has to handle"
+    assert "event: done" in raw
+
+    page = Path("markai/web/static/index.html").read_text(encoding="utf-8")
+    match = re.search(r"var FRAME_SEP = /([^/]+)/;", page)
+    assert match, "the page must declare how it splits frames"
+    separator = re.compile(match.group(1).replace("\\\\", "\\"))
+    frames = [f for f in separator.split(raw) if f.strip()]
+    assert len(frames) >= 2, "the page's own regex has to split this stream"
+    assert any("Chicago gives you 45 days." in f for f in frames)
+
+
+def test_a_handler_error_is_not_swallowed_as_a_keep_alive():
+    """The catch around JSON.parse also caught render errors, hiding them as empty bubbles."""
+    from pathlib import Path
+
+    page = Path("markai/web/static/index.html").read_text(encoding="utf-8")
+    body = page[page.index("function parseSse") : page.index("async function send")]
+    handler = body.index("onEvent(name, payload)")
+    catch = body.index("} catch (e) {")
+    assert handler > body.index("payload = JSON.parse")
+    assert handler > catch, "onEvent must sit outside the try that swallows parse failures"
