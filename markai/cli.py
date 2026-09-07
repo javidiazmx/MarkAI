@@ -595,6 +595,98 @@ def _looks_like_a_rate_limit_message(text: str) -> bool:
 
 
 @app.command()
+def audit(
+    show_probes: bool = typer.Option(
+        False, "--probes", help="Print every probe question and what it found."
+    ),
+) -> None:
+    """Check the knowledge base is actually usable, without asking Claude anything.
+
+    Ingest counts say what was stored, not whether a landlord's question finds it.
+    """
+    from markai.audit import audit as run_audit
+    from markai.knowledge.embeddings import build_embedder
+    from markai.knowledge.retriever import Retriever
+
+    settings = _settings()
+    manifest = _manifest(settings)
+    store = _store(settings)
+    retriever = Retriever(store, build_embedder(settings), settings)
+
+    console.print("[bold]Auditing the knowledge base[/bold]")
+    report = run_audit(
+        store, manifest, retriever, lambda message: console.print(f"[dim]  {message}[/dim]")
+    )
+    store.close()
+    console.print()
+
+    shape = Table(title="What is stored", show_header=True, header_style="bold")
+    shape.add_column("Item")
+    shape.add_column("Value", justify="right")
+    shape.add_row("Documents", f"{report.documents:,}")
+    for kind, count in sorted(report.by_kind.items()):
+        shape.add_row(f"  {kind}", f"{count:,}")
+    shape.add_row("Passages", f"{report.chunks:,}")
+    embedded = (
+        f"{report.embedded:,} ({report.embedded / report.chunks:.0%})" if report.chunks else "0"
+    )
+    shape.add_row("  with embeddings", embedded)
+    console.print(shape)
+    console.print()
+
+    if report.source_coverage:
+        sources = Table(title="Pages per listed source", show_header=True, header_style="bold")
+        sources.add_column("Source")
+        sources.add_column("Stored", justify="right")
+        for name, count in report.source_coverage:
+            marker = "[red]0 - nothing[/red]" if count == 0 else f"{count:,}"
+            sources.add_row(escape(name), marker)
+        console.print(sources)
+        console.print()
+
+    if report.probes:
+        answered = sum(1 for _, _, coverage, _ in report.probes if coverage != "none")
+        console.print(
+            f"[bold]Probe questions[/bold]: {answered} of {len(report.probes)} find material."
+        )
+        if show_probes:
+            probes = Table(show_header=True, header_style="bold")
+            probes.add_column("Topic")
+            probes.add_column("Coverage")
+            probes.add_column("Best match")
+            for topic, _question, coverage, top in report.probes:
+                colour = {"none": "red", "weak": "yellow"}.get(coverage, "green")
+                probes.add_row(escape(topic), f"[{colour}]{coverage}[/{colour}]", escape(top))
+            console.print(probes)
+        else:
+            missing = [t for t, _q, c, _top in report.probes if c == "none"]
+            if missing:
+                topics = escape(", ".join(sorted(set(missing))))
+                console.print(f"  [red]No material for:[/red] {topics}")
+            console.print("  [dim]Use --probes to see all of them.[/dim]")
+        console.print()
+
+    if not report.findings:
+        console.print("[green]✓ No problems found.[/green]")
+        return
+
+    for finding in report.findings:
+        colour = "red" if finding.severity == "problem" else "yellow"
+        mark = "✗" if finding.severity == "problem" else "!"
+        console.print(
+            f"[{colour}]{mark}[/{colour}] [bold]{finding.area}[/bold] {escape(finding.detail)}"
+        )
+        if finding.fix:
+            console.print(f"    [dim]{escape(finding.fix)}[/dim]")
+
+    console.print()
+    if report.problems:
+        console.print(f"[red]{len(report.problems)} problem(s) to fix.[/red]")
+        raise typer.Exit(1)
+    console.print("[yellow]Warnings only - nothing is broken.[/yellow]")
+
+
+@app.command()
 def embed() -> None:
     """Add semantic search to material already ingested, without re-downloading it."""
     from markai.ingest.pipeline import _backfill_embeddings

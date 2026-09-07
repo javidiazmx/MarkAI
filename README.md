@@ -61,6 +61,7 @@ Then:
 | `mark ingest --force` | Re-ingests everything, and re-reads YouTube channels for new uploads |
 | `mark ingest --prune` | Deletes stored sources this run did not produce — dropped pages, dead URLs, removed entries |
 | `mark status` | What Mark knows, which model, whether the key is set |
+| `mark audit` | Checks the knowledge base is usable: silent sources, duplicated text, missing embeddings, and whether real questions find anything. Calls Claude never |
 | `mark embed` | Adds semantic search to material already ingested, no re-download |
 | `mark gaps` | Questions Mark could not answer, so you know what to add |
 | `mark search "deposits"` | Searches the knowledge base directly, without calling Claude |
@@ -210,6 +211,26 @@ archives and stylesheets are never followed.
 **Untrusted sources.** Text pulled from web pages and transcripts is escaped and labelled as
 reference material. If a page contains something shaped like an instruction, Mark treats it as
 data, not as an order.
+
+## Checking the ingest actually worked
+
+Ingest counts say what was stored. They do not say whether a landlord's question finds it —
+this project shipped a run that reported 895 pages added while the site's whole blog had been
+silently discarded, and another where five identical footers came back for a question about
+deposits. `mark audit` looks for that class of problem:
+
+- **A listed source that contributed nothing.** A domain in `sources.yaml` with zero stored
+  pages is a silent failure; the audit names it and hands you the `probe` command for it.
+- **The same text stored twice**, and **text repeated across a quarter of the store** — a menu
+  or footer that survived, diluting every passage.
+- **Passages with no embedding**, as a share, so a half-finished `mark embed` is visible.
+- **Documents that produced no searchable passages**, and pages under 40 words.
+- **Twenty real landlord questions**, in English and Spanish, run through retrieval to see
+  whether anything comes back. `--probes` shows each one and its best match.
+
+It never calls Claude. The only paid call is one embedding per probe question when semantic
+search is on — fractions of a cent for the whole run. It exits non-zero when something is
+broken, so it works in a scheduled check.
 
 ## What a question costs
 
