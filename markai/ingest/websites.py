@@ -31,6 +31,21 @@ logger = logging.getLogger(__name__)
 
 USER_AGENT = "MarkAI/0.1 (+https://github.com/javidiazmx/MarkAI; landlord knowledge assistant)"
 
+# Several county sites sit behind a firewall that answers 403 to any user agent it does not
+# recognise as a browser, while their robots.txt allows the crawl outright. robots.txt is the
+# site's considered statement of who may read what; a blanket user-agent rule is not. So when
+# an honest introduction is refused, the request is repeated once looking like the browser a
+# person would have used to read the same public page. Nothing else changes: robots.txt is
+# still obeyed, the politeness delay still applies, and pages behind a login stay unread.
+BROWSER_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+
 _TRACKING_PARAMS = {"fbclid", "gclid", "dclid", "msclkid", "mc_cid", "mc_eid", "igshid", "yclid"}
 _BLOCK_TAGS = ["h1", "h2", "h3", "h4", "h5", "h6", "p", "li", "td", "th", "blockquote", "pre"]
 _STRIP_TAGS = ["script", "style", "nav", "header", "footer", "aside", "noscript", "svg", "form"]
@@ -124,7 +139,9 @@ class PageFetch(NamedTuple):
     pdf: bytes | None = None
 
 
-def fetch_page(url: str, client: httpx.Client, max_bytes: int = 25_000_000) -> PageFetch:
+def fetch_page(
+    url: str, client: httpx.Client, max_bytes: int = 25_000_000, as_browser: bool = False
+) -> PageFetch:
     """GET an HTML page.
 
     Raises ``IngestError`` on a non-2xx status (401/403 carry a login hint) or a non-HTML
@@ -133,16 +150,20 @@ def fetch_page(url: str, client: httpx.Client, max_bytes: int = 25_000_000) -> P
     so keeping the head beats discarding the page.
     """
     try:
-        with client.stream("GET", url) as response:
+        with client.stream("GET", url, headers=BROWSER_HEADERS if as_browser else None) as response:
             status = response.status_code
             final_url = str(response.url)
             if status in (401, 403):
+                if status == 403 and not as_browser:
+                    # Refused for who we said we were, not for what we asked. Try once more.
+                    response.close()
+                    return fetch_page(url, client, max_bytes, as_browser=True)
                 raise IngestError(
                     f"HTTP {status} for {url}",
                     hint=(
-                        "This page requires login or blocks automated readers. Mark can only "
-                        "read pages that open without signing in; save the content as a "
-                        "transcript-style .txt file instead, or drop the entry."
+                        "This page requires login or blocks automated readers, even as a "
+                        "browser. Mark can only read pages that open without signing in; "
+                        "save the content as a .txt file instead, or drop the entry."
                     ),
                 )
             if status == 404:

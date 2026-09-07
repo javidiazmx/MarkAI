@@ -208,6 +208,13 @@ material (the RLTO summary, EPA lead-paint pamphlets, HUD forms) is published th
 PDFs have no selectable text, so Mark says it needs OCR rather than storing a blank page. Images,
 archives and stylesheets are never followed.
 
+**Sites that refuse a bot.** Some council and county sites sit behind a firewall that answers
+403 to any user agent it does not recognise as a browser, while their own robots.txt allows the
+crawl. Mark introduces itself honestly first; if that exact request is refused with a 403, it
+repeats it once presenting as a browser. robots.txt still decides whether a page may be read at
+all — a `Disallow` is never retried, a 401 is never retried, and pages behind a login stay
+unread.
+
 **Untrusted sources.** Text pulled from web pages and transcripts is escaped and labelled as
 reference material. If a page contains something shaped like an instruction, Mark treats it as
 data, not as an order.

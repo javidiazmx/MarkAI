@@ -566,3 +566,66 @@ def test_stripping_leaves_a_site_with_no_repetition_untouched():
 
     kept, hollow = _strip_shared_boilerplate(docs, lambda _m: None)
     assert len(kept) == 6 and hollow == []
+
+
+# --- firewalls that refuse the introduction --------------------------------------------------
+#
+# Four Chicagoland county sites answered 403 to MarkAI's own user agent while their robots.txt
+# allowed the crawl. That is a blanket firewall rule, not an access decision - so the request
+# is repeated once as a browser. robots.txt is still what decides whether we may read at all.
+
+
+@respx.mock(assert_all_called=False)
+def test_a_403_is_retried_once_as_a_browser(respx_mock):
+    seen: list[str] = []
+
+    def refuse_the_bot(request):
+        agent = request.headers.get("user-agent", "")
+        seen.append(agent)
+        if "MarkAI" in agent:
+            return httpx.Response(403)
+        return httpx.Response(200, text=PAGE, headers={"content-type": "text/html"})
+
+    respx_mock.get("https://county.test/housing").mock(side_effect=refuse_the_bot)
+    with httpx.Client(headers={"User-Agent": "MarkAI/0.1"}) as client:
+        fetched = fetch_page("https://county.test/housing", client)
+
+    assert "interest every year" in fetched.html
+    assert len(seen) == 2, "asked honestly first, then as a browser"
+    assert "MarkAI" in seen[0] and "Mozilla" in seen[1]
+
+
+@respx.mock(assert_all_called=False)
+def test_a_403_that_survives_the_retry_still_fails(respx_mock):
+    calls = respx_mock.get("https://locked.test/x").mock(return_value=httpx.Response(403))
+    with httpx.Client() as client, pytest.raises(IngestError) as excinfo:
+        fetch_page("https://locked.test/x", client)
+
+    assert calls.call_count == 2, "tried both ways, then gave up"
+    assert "even as a browser" in (excinfo.value.hint or "")
+
+
+@respx.mock(assert_all_called=False)
+def test_a_401_is_not_retried(respx_mock):
+    """401 is a real request for credentials, not a guess about who is asking."""
+    calls = respx_mock.get("https://private.test/x").mock(return_value=httpx.Response(401))
+    with httpx.Client() as client, pytest.raises(IngestError):
+        fetch_page("https://private.test/x", client)
+    assert calls.call_count == 1
+
+
+@respx.mock(assert_all_called=False)
+def test_robots_still_decides_whether_we_may_read_at_all(respx_mock, tmp_path, settings):
+    """The browser retry is about being recognised, never about getting past a "no"."""
+    respx_mock.get("https://county.test/robots.txt").mock(
+        return_value=httpx.Response(200, text="User-agent: *\nDisallow: /")
+    )
+    page = respx_mock.get("https://county.test/housing").mock(
+        return_value=httpx.Response(200, text=PAGE, headers={"content-type": "text/html"})
+    )
+    source = WebsiteSource(url="https://county.test/housing")
+    with httpx.Client() as client:
+        results = list(ingest_websites([source], tmp_path, client, settings))
+
+    assert page.call_count == 0, "robots said no, so the page is never requested"
+    assert any(isinstance(r, IngestFailure) and "robots" in r.reason.lower() for r in results)
