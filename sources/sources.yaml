@@ -24,24 +24,50 @@
 # ---------------------------------------------------------------------------------------
 websites:
   # --- Sitios propios: lo mas valioso, aqui si va todo -----------------------------------
-  # El sitemap del sitio lista mas de 550 entradas solo bajo /blog, asi que el tope de 500
-  # dejaba fuera cientos de articulos. Comprobar con:
-  #   mark sources missing https://www.gcrealtyinc.com --section /blog
+  # FICHAS DE PROPIEDADES: fuera. Cada una es la misma plantilla de marketing con una
+  # direccion distinta, no aportan nada a una pregunta de arrendamiento, y rotan cada
+  # semana. Ya se comieron 48 paginas del presupuesto en una corrida anterior.
+  #
+  # Las paginas del sitio (servicios, quienes somos, casos) son unos cientos; el blog va
+  # aparte abajo con su propia semilla, asi que aqui no hace falta un tope grande.
   - url: https://www.gcrealtyinc.com
     title: GC Realty & Development
     crawl: true
-    max_pages: 2000
-    exclude_patterns: ["/wp-admin", "/wp-login", "/feed", "/cart", "/checkout", "/my-account"]
-    notes: Sitio completo, blog incluido.
+    max_pages: 400
+    exclude_patterns: &sin_fichas
+      - "/wp-admin"
+      - "/wp-login"
+      - "/feed"
+      - "/cart"
+      - "/checkout"
+      - "/my-account"
+      # Sin barra al inicio a proposito: son regex, y la ruta real es
+      # /chicago-homes-for-rent, no /homes-for-rent.
+      - "_system/listings"       # fichas individuales
+      - "listings/"
+      - "homes-for-rent"         # indices de disponibilidad
+      - "properties-for-rent"
+      - "houses-for-rent"
+      - "apartments-for-rent"
+      - "available-rental"
+      - "vacanc"
+      - "property-search"
+      - "rental-search"
+      - "tenant-portal"
+      - "owner-portal"
+      - "/application"
+    notes: Paginas del sitio. Las fichas de propiedades quedan excluidas a proposito.
 
-  # Semilla aparte para el blog: el crawl entra directo al indice de articulos en vez de
-  # llegar ahi despues de gastar presupuesto en el resto del sitio.
+  # El sitemap lista mas de 550 articulos bajo /blog y el tope viejo de 500 dejaba fuera
+  # cientos. Semilla propia para que el crawl empiece en el indice de articulos en vez de
+  # llegar ahi con el presupuesto gastado. Comprobar que no falte ninguno con:
+  #   mark sources missing https://www.gcrealtyinc.com --section /blog
   - url: https://www.gcrealtyinc.com/blog
     title: GC Realty blog
     crawl: true
     max_pages: 2000
-    include_patterns: ["/blog"]
-    exclude_patterns: ["/wp-admin", "/wp-login", "/feed", "/tag/", "/author/", "?pg="]
+    include_patterns: ["/blog"]    # la cerca: de aqui no se sale
+    exclude_patterns: ["/tag/", "/author/", "/category/", "\\?pg=", "/feed"]
 
   # OJO: la portada de straightupchicagoinvestor.com sirve una copia del sitio de GC Realty
   # (mismo titulo, mismas paginas). Las notas del podcast viven bajo /podcast, y esa es la
@@ -51,7 +77,7 @@ websites:
     crawl: true
     max_pages: 500
     include_patterns: ["/podcast"]
-    exclude_patterns: ["/wp-admin", "/wp-login", "/feed", "/cart", "/checkout"]
+    exclude_patterns: ["/wp-admin", "/wp-login", "/feed", "/cart", "/checkout", "/_system/listings"]
     notes: Notas de cada episodio. La portada del dominio se omite a proposito.
 
   # --- Condados de Chicagoland ---------------------------------------------------------

@@ -26,6 +26,26 @@ class WebsiteSource(BaseModel):
     max_pages: int = Field(default=25, ge=1, le=20_000)
     include_patterns: list[str] = Field(default_factory=list)
     exclude_patterns: list[str] = Field(default_factory=list)
+
+    @field_validator("include_patterns", "exclude_patterns")
+    @classmethod
+    def _must_compile(cls, patterns: list[str]) -> list[str]:
+        """These are regexes. A bad one used to surface halfway through a long crawl.
+
+        "?pg=" reads like a URL fragment and is not valid: ? has nothing to repeat. Say so
+        at load, where `mark sources validate` will catch it in a second.
+        """
+        for pattern in patterns:
+            try:
+                re.compile(pattern)
+            except re.error as exc:
+                raise ValueError(
+                    f"{pattern!r} is not a valid pattern: {exc}. These are regular "
+                    f"expressions, so ? + * ( ) [ ] need a backslash to mean themselves - "
+                    f'"\\?pg=" rather than "?pg=".'
+                ) from exc
+        return patterns
+
     ignore_robots: bool = False
     notes: str | None = None
 

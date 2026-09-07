@@ -120,3 +120,74 @@ def test_save_and_reload_roundtrip(tmp_path: Path):
     reloaded = load_manifest(path)
     assert reloaded.websites[0].title == "A"
     assert reloaded.business.never_say == ["fee quotes"]
+
+
+# --- the owner's own exclusions ------------------------------------------------------------
+
+
+def test_the_live_manifest_keeps_property_listings_out():
+    """Each listing is the same marketing template with a different address on it.
+
+    They carry nothing a landlord's question needs, they rotate weekly, and with max_pages
+    raised to fit 550 blog posts there is now plenty of budget for them to flood into.
+    """
+    from pathlib import Path
+
+    from markai.ingest.websites import discover_links
+    from markai.sources.manifest import load_manifest
+
+    site = load_manifest(Path("sources/sources.yaml")).websites[0]
+    assert "gcrealtyinc.com" in site.url
+
+    listings = [
+        "/_system/listings/1266/313-Ridge-Road-Kenilworth",
+        "/chicago-homes-for-rent",
+        "/naperville-houses-for-rent",
+        "/available-rentals",
+        "/property-search?beds=2",
+        "/tenant-portal",
+    ]
+    keepers = [
+        "/blog/what-can-i-do-if-my-tenant-doesnt-pay-rent",
+        "/chicago-property-management",
+        "/tenant-placement",
+        "/case-study",
+    ]
+    html = "".join(f'<a href="{u}">x</a>' for u in listings + keepers)
+    kept = set(discover_links(html, site.url + "/", site.include_patterns, site.exclude_patterns))
+
+    for url in listings:
+        assert not any(url.split("?")[0] in k for k in kept), f"{url} should be excluded"
+    for url in keepers:
+        assert any(url in k for k in kept), f"{url} should be kept"
+
+
+def test_the_blog_seed_cannot_wander_off_the_blog():
+    from pathlib import Path
+
+    from markai.ingest.websites import discover_links
+    from markai.sources.manifest import load_manifest
+
+    manifest = load_manifest(Path("sources/sources.yaml"))
+    blog = next(w for w in manifest.websites if w.url.endswith("/blog"))
+    html = (
+        '<a href="/blog/five-day-notice">a</a>'
+        '<a href="/chicago-homes-for-rent">b</a>'
+        '<a href="/blog/tag/evictions">c</a>'
+    )
+    kept = discover_links(html, blog.url, blog.include_patterns, blog.exclude_patterns)
+    assert kept == ["https://www.gcrealtyinc.com/blog/five-day-notice"]
+
+
+def test_a_pattern_that_is_not_a_valid_regex_is_caught_at_load():
+    """It used to surface as a crash partway through a 2,000-page crawl."""
+    import pytest
+
+    from markai.sources.manifest import WebsiteSource
+
+    with pytest.raises(ValueError) as excinfo:
+        WebsiteSource(url="https://x.test", exclude_patterns=["?pg="])
+    assert "not a valid pattern" in str(excinfo.value)
+    assert "\\\\?pg=" in str(excinfo.value) or "\\?pg=" in str(excinfo.value), "shows the fix"
+
+    WebsiteSource(url="https://x.test", exclude_patterns=["\\?pg=", "/tag/"])
