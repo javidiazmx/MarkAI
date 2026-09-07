@@ -191,3 +191,19 @@ def test_a_pattern_that_is_not_a_valid_regex_is_caught_at_load():
     assert "\\\\?pg=" in str(excinfo.value) or "\\?pg=" in str(excinfo.value), "shows the fix"
 
     WebsiteSource(url="https://x.test", exclude_patterns=["\\?pg=", "/tag/"])
+
+
+def test_the_live_manifest_has_somewhere_to_hand_a_hard_case():
+    """Jay only offers the call when a real link is configured, so this must not go missing."""
+    from pathlib import Path
+
+    from markai.advisor.prompt_builder import build_business_block
+    from markai.sources.manifest import load_manifest
+
+    business = load_manifest(Path("sources/sources.yaml")).business
+    assert business.escalation_url and business.escalation_url.startswith("https://calendly.com/")
+    assert business.escalation_name == "Russell"
+
+    block = build_business_block(business)
+    assert business.escalation_url in block
+    assert "only when it is genuinely warranted" in block

@@ -283,7 +283,7 @@ business:
   extra_instructions: null    # cualquier otra cosa que Jay deba tener presente
 
   # CUANDO EL CASO SE PASA DE UN CHAT: Jay deja de aconsejar y lo manda con una persona.
-  # Pega aqui el enlace de Calendly de Russell. Mientras este vacio, Jay no ofrece la
-  # llamada - no quiero que invente una direccion.
+  # Lo ofrece una sola vez y solo cuando de verdad hace falta; en una pregunta rutinaria
+  # se leeria como que lo estan quitando de encima. Si borras la url, deja de ofrecerlo.
   escalation_name: Russell
-  escalation_url: null
+  escalation_url: https://calendly.com/russell-wedge-gcrealtyinc/20min
