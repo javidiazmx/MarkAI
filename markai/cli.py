@@ -7,6 +7,7 @@ still works before the rest of the project is configured.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any
 
 import typer
@@ -447,6 +448,72 @@ def _print_probe(url: str, rows: list[tuple[str, str]]) -> None:
     console.print(table)
 
 
+@sources_app.command("missing")
+def sources_missing(
+    url: str = typer.Argument(..., help="The site to check, e.g. https://www.gcrealtyinc.com"),
+    section: str = typer.Option(
+        None, "--section", help='Only this part of the site, e.g. "/blog".'
+    ),
+    write: str = typer.Option(
+        None, "--write", help="Write the missing URLs to this file, one per line."
+    ),
+) -> None:
+    """List pages the site publishes that are not in the knowledge base.
+
+    Counting what was stored cannot tell a complete crawl from one that missed twenty posts.
+    The site's own sitemap can.
+    """
+    import httpx
+
+    from markai.ingest.websites import USER_AGENT
+    from markai.sitemap import diff_against_store
+
+    settings = _settings()
+    store = _store(settings)
+    locators = store.list_locators()
+    store.close()
+
+    console.print(f"[dim]Reading the sitemap for {escape(url)}…[/dim]")
+    with httpx.Client(
+        follow_redirects=True, timeout=60.0, headers={"User-Agent": USER_AGENT}
+    ) as client:
+        diff = diff_against_store(url, locators, client, section)
+
+    if not diff.listed:
+        _fail(
+            "The sitemap listed nothing for that site or section.",
+            f"Tried: {', '.join(diff.sitemaps[:3])}. Some sites publish none, in which case "
+            "this check cannot be made.",
+        )
+
+    console.print(
+        f"[bold]{len(diff.listed):,}[/bold] pages listed"
+        + (f" under {escape(section)}" if section else "")
+        + f" · [green]{len(diff.stored):,} stored[/green]"
+        + (f" · [red]{len(diff.missing):,} missing[/red]" if diff.missing else "")
+        + f" ({diff.coverage:.0%})"
+    )
+
+    if not diff.missing:
+        console.print("[green]✓[/green] Everything the site lists is in the knowledge base.")
+        return
+
+    for missing in diff.missing[:25]:
+        console.print(f"  [red]-[/red] {escape(missing)}")
+    if len(diff.missing) > 25:
+        console.print(f"  [dim]… and {len(diff.missing) - 25:,} more[/dim]")
+
+    if write:
+        path = Path(write)
+        path.write_text("\n".join(diff.missing) + "\n", encoding="utf-8")
+        console.print(f"\nWrote {len(diff.missing):,} URLs to {escape(str(path))}.")
+        console.print(
+            "[dim]Add them to sources.yaml as entries with crawl: false, then "
+            "`mark ingest --only website`.[/dim]"
+        )
+    raise typer.Exit(1)
+
+
 @sources_app.command("list")
 def sources_list() -> None:
     """List what is currently in the knowledge base."""
@@ -778,6 +845,9 @@ def gaps(top: int = typer.Option(20, "--top", help="How many to show.")) -> None
 def search(
     query: str = typer.Argument(..., help="What to look for."),
     k: int = typer.Option(5, "-k", help="How many chunks to show."),
+    scores: bool = typer.Option(
+        False, "--scores", help="Show the raw keyword and semantic scores behind the verdict."
+    ),
 ) -> None:
     """Search the knowledge base directly, without asking Claude."""
     from markai.knowledge.embeddings import build_embedder
@@ -790,10 +860,26 @@ def search(
         _fail("The knowledge base is empty.", "Run `mark ingest` first.")
     result = retriever.retrieve(query, k)
     console.print(f"[dim]coverage: {result.coverage}[/dim]")
+    if scores:
+        # The verdict comes from these two, and a question in Spanish scores no keyword
+        # signal at all against English sources - which is worth being able to see.
+        console.print(
+            f"[dim]top keyword {result.top_lexical_score:.2f} "
+            f"(covered needs {settings.weak_relevance:.2f}) · "
+            f"top semantic {result.top_cosine:.3f} "
+            f"(covered needs {settings.covered_cosine:.2f}) · "
+            f"keyword arm {'used' if result.lexical_used else 'unused'} · "
+            f"semantic arm {'used' if result.vector_used else 'unused'}[/dim]"
+        )
     for index, rc in enumerate(result.chunks, start=1):
         console.print(
             f"[bold]{index}. {escape(rc.document.title)}[/bold] ({rc.document.kind.value})"
         )
+        if scores:
+            console.print(
+                f"   [dim]fused {rc.score:.4f} · keyword rank {rc.lexical_rank} · "
+                f"semantic rank {rc.vector_rank}[/dim]"
+            )
         console.print(f"   {escape(rc.chunk.text[:220])}…")
     store.close()
 

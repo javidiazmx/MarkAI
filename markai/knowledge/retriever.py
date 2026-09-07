@@ -220,7 +220,7 @@ class Retriever:
             return "none"
         if top_bm25 < min_rel and not cos_ok:
             return "none"
-        if top_bm25 < weak_rel and top_cosine < 0.5:
+        if top_bm25 < weak_rel and top_cosine < self.settings.covered_cosine:
             return "weak"
         if positive_count < 2:
             return "weak"

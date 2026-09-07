@@ -53,6 +53,7 @@ Then:
 | `mark sources validate` | Confirms `sources.yaml` parses, and warns about tokens in URLs |
 | `mark sources validate --check-urls` | Also confirms every listed domain resolves, before you spend an hour ingesting |
 | `mark sources probe URL` | Fetches one URL and says exactly what came back, and why it did or did not read |
+| `mark sources missing URL` | Diffs the site's own sitemap against the knowledge base and names the pages that never made it |
 | `mark sources list` | Lists what is currently in the knowledge base |
 | `mark sources match` | Shows which transcript file each podcast episode resolved to |
 | `mark ingest` | Fetches every source and builds the knowledge base |
@@ -65,6 +66,7 @@ Then:
 | `mark embed` | Adds semantic search to material already ingested, no re-download |
 | `mark gaps` | Questions Mark could not answer, so you know what to add |
 | `mark search "deposits"` | Searches the knowledge base directly, without calling Claude |
+| `mark search --scores` | Same, showing the keyword and semantic scores behind the coverage verdict |
 | `mark ask "..."` | One question, one answer, with sources |
 | `mark chat` | A conversation in the terminal (`/reset`, `/sources`, `/quit`) |
 | `mark serve` | The browser chat page |

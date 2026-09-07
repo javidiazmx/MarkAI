@@ -1,0 +1,109 @@
+"""Diffing a site's own page list against the knowledge base.
+
+"Are all the blog posts in there?" cannot be answered by counting what was stored: a crawl
+that missed twenty posts looks exactly like one that found everything.
+"""
+
+from __future__ import annotations
+
+import httpx
+import respx
+
+from markai.sitemap import diff_against_store, discover_sitemaps, read_sitemap
+
+INDEX = """<?xml version="1.0"?>
+<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <sitemap><loc>https://gc.test/sitemap-posts.xml</loc></sitemap>
+  <sitemap><loc>https://gc.test/sitemap-pages.xml</loc></sitemap>
+</sitemapindex>"""
+
+POSTS = """<?xml version="1.0"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://gc.test/blog/eviction-hurdles</loc></url>
+  <url><loc>https://gc.test/blog/five-day-notice</loc></url>
+  <url><loc>https://gc.test/blog/cash-for-keys</loc></url>
+</urlset>"""
+
+PAGES = """<?xml version="1.0"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://gc.test/about</loc></url>
+</urlset>"""
+
+
+def _xml(body: str) -> httpx.Response:
+    return httpx.Response(200, text=body, headers={"content-type": "application/xml"})
+
+
+def _mock(respx_mock) -> None:
+    respx_mock.get("https://gc.test/robots.txt").mock(
+        return_value=httpx.Response(200, text="Sitemap: https://gc.test/sitemap.xml")
+    )
+    respx_mock.get("https://gc.test/sitemap.xml").mock(return_value=_xml(INDEX))
+    respx_mock.get("https://gc.test/sitemap-posts.xml").mock(return_value=_xml(POSTS))
+    respx_mock.get("https://gc.test/sitemap-pages.xml").mock(return_value=_xml(PAGES))
+
+
+@respx.mock(assert_all_called=False)
+def test_robots_names_the_sitemap(respx_mock):
+    _mock(respx_mock)
+    with httpx.Client() as client:
+        assert discover_sitemaps("https://gc.test/blog", client) == ["https://gc.test/sitemap.xml"]
+
+
+@respx.mock(assert_all_called=False)
+def test_a_sitemap_index_is_followed_to_the_pages(respx_mock):
+    _mock(respx_mock)
+    with httpx.Client() as client:
+        pages = read_sitemap("https://gc.test/sitemap.xml", client)
+    assert len(pages) == 4
+    assert "https://gc.test/blog/cash-for-keys" in pages
+
+
+@respx.mock(assert_all_called=False)
+def test_it_names_the_posts_that_are_not_stored(respx_mock):
+    _mock(respx_mock)
+    stored = {"d1": "https://gc.test/blog/eviction-hurdles", "d2": "https://gc.test/about"}
+    with httpx.Client() as client:
+        diff = diff_against_store("https://gc.test", stored, client)
+
+    assert len(diff.listed) == 4
+    assert sorted(diff.missing) == [
+        "https://gc.test/blog/cash-for-keys",
+        "https://gc.test/blog/five-day-notice",
+    ]
+    assert diff.coverage == 0.5
+
+
+@respx.mock(assert_all_called=False)
+def test_a_section_narrows_it_to_the_blog(respx_mock):
+    """The real question is about the blog, not the whole site."""
+    _mock(respx_mock)
+    stored = {"d1": "https://gc.test/blog/eviction-hurdles"}
+    with httpx.Client() as client:
+        diff = diff_against_store("https://gc.test", stored, client, path_contains="/blog")
+
+    assert len(diff.listed) == 3, "the /about page is not a blog post"
+    assert len(diff.missing) == 2
+
+
+@respx.mock(assert_all_called=False)
+def test_a_stored_url_matches_whatever_form_the_sitemap_uses(respx_mock):
+    """Trailing slashes and tracking parameters must not read as a missing page."""
+    respx_mock.get("https://gc.test/robots.txt").mock(return_value=httpx.Response(404))
+    respx_mock.get("https://gc.test/sitemap.xml").mock(
+        return_value=_xml(
+            '<?xml version="1.0"?><urlset><url><loc>https://gc.test/blog/a/</loc></url></urlset>'
+        )
+    )
+    with httpx.Client() as client:
+        diff = diff_against_store("https://gc.test", {"d1": "https://gc.test/blog/a"}, client)
+    assert diff.missing == []
+
+
+@respx.mock(assert_all_called=False)
+def test_a_site_with_no_sitemap_reports_nothing_listed(respx_mock):
+    respx_mock.get("https://bare.test/robots.txt").mock(return_value=httpx.Response(404))
+    respx_mock.get(url__regex=r"https://bare\.test/.*").mock(return_value=httpx.Response(404))
+    with httpx.Client() as client:
+        diff = diff_against_store("https://bare.test", {}, client)
+    assert diff.listed == [] and diff.missing == []

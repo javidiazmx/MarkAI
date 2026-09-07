@@ -112,6 +112,17 @@ class Settings(BaseSettings):
         ),
     )
 
+    covered_cosine: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Semantic score above which a question counts as covered when the keyword arm "
+            "found nothing. A question in Spanish shares no words with English sources, so "
+            "it has no keyword signal by construction and this bar decides it alone."
+        ),
+    )
+
     fast_mode: bool = Field(
         default=False,
         description=(
