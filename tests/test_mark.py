@@ -310,3 +310,41 @@ def test_the_prefix_ttl_is_configurable(settings, store):
     assert client.calls[0]["system"][-1]["cache_control"] == {"type": "ephemeral"}, (
         "5m is the API default, so it is left off the wire"
     )
+
+
+def test_the_disclaimer_does_not_repeat_through_a_conversation(settings, store):
+    from markai.advisor.guardrails import LEGAL_DISCLAIMER
+
+    advisor, _ = build_advisor(
+        settings,
+        store,
+        [
+            text_message("Chicago gives you 45 days to return the deposit."),
+            text_message("And the notice before filing is five days."),
+        ],
+    )
+    conversation = Conversation(session_id="t")
+    first = advisor.ask("How long to return a security deposit?", conversation)
+    second = advisor.ask("What notice do I give before an eviction?", conversation)
+
+    assert LEGAL_DISCLAIMER in first.text
+    assert LEGAL_DISCLAIMER not in second.text
+    assert conversation.disclaimer_given is True
+
+
+def test_fast_mode_is_off_unless_asked_for(settings, store):
+    advisor, client = build_advisor(settings, store, [text_message("Hi.")])
+    advisor.ask("How should I screen tenants?")
+    call = client.calls[0]
+    assert "speed" not in call
+    assert call["betas"] == ["server-side-fallback-2026-07-01"]
+
+
+def test_fast_mode_sends_the_speed_flag_and_its_beta(settings, store):
+    """Opus 5 runs up to 2.5x faster on output, at double the token price."""
+    quick = settings.model_copy(update={"fast_mode": True})
+    advisor, client = build_advisor(quick, store, [text_message("Hi.")])
+    advisor.ask("How should I screen tenants?")
+    call = client.calls[0]
+    assert call["speed"] == "fast"
+    assert set(call["betas"]) == {"server-side-fallback-2026-07-01", "fast-mode-2026-02-01"}

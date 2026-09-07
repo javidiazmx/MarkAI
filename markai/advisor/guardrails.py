@@ -705,10 +705,15 @@ def _contains_disclaimer(answer: str) -> bool:
     return prefix in _norm(answer)
 
 
-def ensure_disclaimer(answer: str, flags: list[str]) -> str:
-    """Append the verbatim disclaimer once when the question or answer is legal."""
+def ensure_disclaimer(answer: str, flags: list[str], already_given: bool = False) -> str:
+    """Append the verbatim disclaimer when the question or answer is legal.
+
+    ``already_given`` suppresses it for the rest of a conversation. Repeated under every
+    answer in a session it reads as furniture and stops being read, which is the opposite
+    of what it is for; said once, it lands. A new conversation says it again.
+    """
     legal = FLAG_LEGAL in flags or is_legal_topic(answer)
-    if not legal or _contains_disclaimer(answer):
+    if not legal or already_given or _contains_disclaimer(answer):
         return answer
     separator = "\n\n" if answer.strip() else ""
     return f"{answer.rstrip()}{separator}{LEGAL_DISCLAIMER}"

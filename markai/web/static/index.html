@@ -135,10 +135,6 @@
 <script>
 (function () {
   "use strict";
-  var IDENTITY_NOTICE =
-    "Jay is an AI assistant built in the style of Mark Ainley (Straight Up Chicago " +
-    "Investor). It is not Mark Ainley, it is not a lawyer, and its answers are not " +
-    "reviewed by him or by an attorney.";
   var log = document.getElementById("log");
   var box = document.getElementById("q");
   var sendBtn = document.getElementById("send");
@@ -373,9 +369,6 @@
           } else if (name === "done") {
             renderAnswer(slot.bubble, data.text || streamed, citations);
             renderCitations(slot.wrap, citations);
-            if ((data.flags || []).indexOf("legal_topic") !== -1) {
-              slot.wrap.appendChild(el("div", "banner", IDENTITY_NOTICE));
-            }
             var usage = data.usage || {};
             var meta = el("div", "meta",
               (data.model || "") + " · coverage " + (data.coverage || "?") +

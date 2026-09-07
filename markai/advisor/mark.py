@@ -24,6 +24,7 @@ from markai.advisor.calculators import TOOL_DEFINITIONS, dispatch_tool
 from markai.advisor.guardrails import (
     FLAG_FOLLOW_UP,
     FLAG_LEGAL,
+    LEGAL_DISCLAIMER,
     REFUSAL_TEXT,
     detect_flags,
     ensure_disclaimer,
@@ -80,6 +81,8 @@ class Conversation:
     last_question: str | None = None
     last_chunks: list[RetrievedChunk] = field(default_factory=list)
     turns: int = 0
+    # The legal disclaimer is said once per conversation, not under every answer.
+    disclaimer_given: bool = False
 
     def add_turn(self, question: str, answer: str, chunks: list[RetrievedChunk]) -> None:
         self.messages.append({"role": "user", "content": question})
@@ -312,7 +315,10 @@ class MarkAdvisor:
             text = ensure_high_risk_response(text, flags)
             if FLAG_LEGAL not in flags and is_legal_topic(text):
                 flags = sorted({*flags, FLAG_LEGAL})
-            text = ensure_disclaimer(text, flags)
+            already = bool(conversation and conversation.disclaimer_given)
+            text = ensure_disclaimer(text, flags, already_given=already)
+            if conversation is not None and LEGAL_DISCLAIMER in text:
+                conversation.disclaimer_given = True
 
             if text.startswith(streamed) and len(text) > len(streamed):
                 yield StreamEvent("text", text[len(streamed) :])

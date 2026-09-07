@@ -279,3 +279,20 @@ def test_a_spanish_answer_still_carries_the_owner_approved_english_wording():
     """The disclaimer is fixed wording approved by the owner. It is appended as-is."""
     answer = "La RLTO exige devolver el deposito dentro de 45 dias."
     assert ensure_disclaimer(answer, [FLAG_LEGAL]).endswith(LEGAL_DISCLAIMER)
+
+
+def test_the_disclaimer_is_said_once_per_conversation():
+    """Under every answer it reads as furniture and stops being read. Once, it lands."""
+    first = ensure_disclaimer("Deposits earn interest.", [FLAG_LEGAL], already_given=False)
+    assert LEGAL_DISCLAIMER in first
+
+    second = ensure_disclaimer(
+        "And the notice period is five days.", [FLAG_LEGAL], already_given=True
+    )
+    assert LEGAL_DISCLAIMER not in second
+    assert second == "And the notice period is five days.", "nothing else is touched"
+
+
+def test_a_first_legal_answer_still_gets_it_after_small_talk():
+    assert LEGAL_DISCLAIMER not in ensure_disclaimer("Rents are up on the north side.", [])
+    assert LEGAL_DISCLAIMER in ensure_disclaimer("The RLTO says 45 days.", [FLAG_LEGAL])

@@ -465,3 +465,49 @@ def test_a_handler_error_is_not_swallowed_as_a_keep_alive():
     catch = body.index("} catch (e) {")
     assert handler > body.index("payload = JSON.parse")
     assert handler > catch, "onEvent must sit outside the try that swallows parse failures"
+
+
+# --- Jay, and a page that does not repeat itself -------------------------------------------
+
+
+def test_the_page_carries_no_disclaimer_box_at_all():
+    """Neither at the top of the session nor under each answer - the owner asked for both gone."""
+    from pathlib import Path
+
+    page = Path("markai/web/static/index.html").read_text(encoding="utf-8")
+    assert '<div class="banner" id="banner">' not in page, "no permanent banner"
+    assert "IDENTITY_NOTICE" not in page, "and no notice box under answers"
+    assert "AI, not a lawyer" in page, "the header still says what it is, always"
+
+
+def test_the_page_and_the_notice_call_the_assistant_jay():
+    from pathlib import Path
+
+    from markai.advisor.guardrails import IDENTITY_NOTICE
+
+    page = Path("markai/web/static/index.html").read_text(encoding="utf-8")
+    assert IDENTITY_NOTICE.startswith("Jay is an AI assistant")
+    assert "Mark Ainley" in IDENTITY_NOTICE, "whose style it borrows is still named"
+    assert "<h1>Jay</h1>" in page
+    assert 'addMessage("mark", "Jay")' in page
+
+
+def test_answers_render_as_markdown_not_asterisks():
+    from pathlib import Path
+
+    page = Path("markai/web/static/index.html").read_text(encoding="utf-8")
+    assert "function renderRich" in page and "function inline" in page
+    # The word appears in a comment explaining why it is not used; the assignment must not.
+    assert ".innerHTML" not in page.replace("never innerHTML", ""), (
+        "answers are built from text nodes, so one can never inject markup into the page"
+    )
+    assert "insertAdjacentHTML" not in page and "document.write" not in page
+
+
+def test_the_status_call_does_not_touch_the_removed_banner():
+    """Referencing it threw, and the header said "Could not reach the server" instead."""
+    from pathlib import Path
+
+    page = Path("markai/web/static/index.html").read_text(encoding="utf-8")
+    status = page[page.index("async function loadStatus") :]
+    assert 'getElementById("banner")' not in status
