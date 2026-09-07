@@ -133,13 +133,28 @@ def _check_embeddings(report: AuditReport, stats: Any) -> None:
 def _check_sources(report: AuditReport, manifest: Any, documents: list, say: Any) -> None:
     """Every listed source should have produced something. A zero is a silent failure."""
     say("Checking each listed source contributed something...")
-    stored_hosts = Counter(
-        _host(d.link or d.locator) for d in documents if d.kind == SourceKind.WEBSITE
-    )
+    stored_hosts: Counter[str] = Counter()
+    # A site that redirects to another hostname still counts as having contributed - the
+    # pages are stored under the host that answered, not the one that was asked. Matching
+    # only the final host would report a working source as silent.
+    landed: dict[str, Counter[str]] = {}
+    for doc in documents:
+        if doc.kind != SourceKind.WEBSITE:
+            continue
+        final = _host(doc.link or doc.locator)
+        stored_hosts[final] += 1
+        asked = _host(str(doc.metadata.get("requested_url") or "")) if doc.metadata else ""
+        if asked and asked != final:
+            landed.setdefault(asked, Counter())[final] += 1
 
     for site in manifest.websites:
         host = _host(site.url)
         count = stored_hosts.get(host, 0)
+        redirected = landed.get(host)
+        if not count and redirected:
+            elsewhere, moved = redirected.most_common(1)[0]
+            report.source_coverage.append((f"{host} -> {elsewhere}", moved))
+            continue
         report.source_coverage.append((host, count))
         if count == 0:
             report.findings.append(

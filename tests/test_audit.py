@@ -150,3 +150,16 @@ def test_the_command_exits_non_zero_when_something_is_broken(tmp_path, monkeypat
     result = runner.invoke(app, ["audit"])
     assert result.exit_code == 1
     assert "problem" in result.stdout.lower()
+
+
+def test_a_site_that_redirects_elsewhere_is_not_called_silent(store, settings):
+    """The pages are stored under the host that answered, not the one that was asked."""
+    doc = _doc("https://newname.test/deposits", "Deposit rules for the county. " * 30)
+    doc.metadata = {"requested_url": "https://oldname.test/"}
+    doc.ensure_hash()
+    _fill(store, [doc])
+
+    report = _audit(store, settings, _manifest(["https://oldname.test/"]))
+    silent = [f for f in report.problems if "oldname.test" in f.detail]
+    assert silent == [], "it answered, just under another name"
+    assert any("oldname.test -> newname.test" in name for name, _n in report.source_coverage)
