@@ -629,3 +629,78 @@ def test_robots_still_decides_whether_we_may_read_at_all(respx_mock, tmp_path, s
 
     assert page.call_count == 0, "robots said no, so the page is never requested"
     assert any(isinstance(r, IngestFailure) and "robots" in r.reason.lower() for r in results)
+
+
+# --- taking the page list from the site instead of guessing at it --------------------------
+#
+# The blog's older articles are only reachable through paginated index pages, so a crawl
+# that follows links stops after the first page: 102 of 678 posts. The site publishes all
+# 678 in its own sitemap, and that list is complete by definition.
+
+SITEMAP = """<?xml version="1.0"?><urlset>
+  <url><loc>https://gc.test/blog/five-day-notice</loc></url>
+  <url><loc>https://gc.test/blog/cash-for-keys</loc></url>
+  <url><loc>https://gc.test/blog/tag/evictions</loc></url>
+  <url><loc>https://gc.test/chicago-homes-for-rent</loc></url>
+  <url><loc>https://gc.test/about</loc></url>
+</urlset>"""
+
+POST = (
+    "<html><head><title>Post</title></head><body><h1>Serving a five day notice</h1>"
+    "<p>Serve it the day rent is late, and use a process server for the record.</p>"
+    "<p>Do not accept partial rent after serving without a written agreement.</p>"
+    "<p>File in the right courtroom or the case starts over from the beginning.</p>"
+    "</body></html>"
+)
+
+
+@respx.mock(assert_all_called=False)
+def test_from_sitemap_ingests_every_listed_page_without_following_links(
+    respx_mock, tmp_path, settings
+):
+    settings = settings.model_copy(update={"crawl_delay_seconds": 0.0})
+    respx_mock.get("https://gc.test/robots.txt").mock(
+        return_value=httpx.Response(200, text="Sitemap: https://gc.test/sitemap.xml")
+    )
+    respx_mock.get("https://gc.test/sitemap.xml").mock(
+        return_value=httpx.Response(200, text=SITEMAP, headers={"content-type": "application/xml"})
+    )
+    posts = respx_mock.get(url__regex=r"https://gc\.test/blog/[a-z-]+$").mock(
+        return_value=httpx.Response(200, text=POST, headers={"content-type": "text/html"})
+    )
+    stray = respx_mock.get("https://gc.test/about").mock(return_value=httpx.Response(200))
+
+    source = WebsiteSource(
+        url="https://gc.test/blog",
+        from_sitemap=True,
+        max_pages=3000,
+        include_patterns=["/blog"],
+        exclude_patterns=["/tag/"],
+    )
+    with httpx.Client() as client:
+        results = list(ingest_websites([source], tmp_path, client, settings))
+
+    stored = {r.locator for r in results if isinstance(r, Document)}
+    assert stored == {
+        "https://gc.test/blog/five-day-notice",
+        "https://gc.test/blog/cash-for-keys",
+    }
+    assert posts.call_count == 2
+    assert stray.call_count == 0, "include_patterns fences the sitemap the same way"
+
+
+@respx.mock(assert_all_called=False)
+def test_a_site_with_no_usable_sitemap_says_so_instead_of_storing_nothing(
+    respx_mock, tmp_path, settings
+):
+    """Silently ingesting one page would look like success."""
+    respx_mock.get("https://bare.test/robots.txt").mock(return_value=httpx.Response(404))
+    respx_mock.get(url__regex=r"https://bare\.test/.*").mock(return_value=httpx.Response(404))
+    source = WebsiteSource(url="https://bare.test/blog", from_sitemap=True)
+    with httpx.Client() as client:
+        results = list(ingest_websites([source], tmp_path, client, settings))
+
+    assert len(results) == 1
+    assert isinstance(results[0], IngestFailure)
+    assert "listed no matching pages" in results[0].reason
+    assert "crawl: true" in (results[0].hint or "")

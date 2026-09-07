@@ -23,6 +23,10 @@ class WebsiteSource(BaseModel):
     url: str
     title: str | None = None
     crawl: bool = False
+    # Take the page list from the site's own sitemap instead of following links. A blog
+    # reachable only through paginated index pages cannot be walked reliably, and a site
+    # that publishes its own index should not be guessed at.
+    from_sitemap: bool = False
     max_pages: int = Field(default=25, ge=1, le=20_000)
     include_patterns: list[str] = Field(default_factory=list)
     exclude_patterns: list[str] = Field(default_factory=list)

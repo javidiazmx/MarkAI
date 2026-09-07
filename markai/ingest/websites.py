@@ -487,6 +487,41 @@ def _strip_shared_boilerplate(
     return kept, hollow
 
 
+def _sitemap_urls(
+    source: WebsiteSource, client: httpx.Client, emit: Callable[[str], None]
+) -> list[str]:
+    """The site's own page list, narrowed by this source's patterns.
+
+    Imported here rather than at module scope because ``sitemap`` imports ``fetch_page``
+    from this module.
+    """
+    from markai.sitemap import discover_sitemaps, read_sitemap
+
+    includes = [re.compile(p) for p in source.include_patterns]
+    excludes = [re.compile(p) for p in source.exclude_patterns]
+
+    found: list[str] = []
+    seen: set[str] = set()
+    for sitemap in discover_sitemaps(source.url, client):
+        for url in read_sitemap(sitemap, client):
+            canon = canonical_url(url)
+            if canon in seen or _host_key(urlsplit(canon).netloc) != _host_key(
+                urlsplit(source.url).netloc
+            ):
+                continue
+            if includes and not any(p.search(canon) for p in includes):
+                continue
+            if any(p.search(canon) for p in excludes):
+                continue
+            if _is_a_file_not_a_page(urlsplit(canon).path):
+                continue
+            seen.add(canon)
+            found.append(canon)
+        if found:
+            break  # the first sitemap that answers is the site's real index
+    return found[: source.max_pages]
+
+
 def ingest_websites(
     sources: list[WebsiteSource],
     cache_dir: Path,
@@ -526,7 +561,22 @@ def ingest_websites(
             seed_canon = canonical_url(source.url)
             queue: deque[str] = deque([source.url])
             visited: set[str] = {seed_canon}
-            max_pages = source.max_pages if source.crawl else 1
+            max_pages = source.max_pages if (source.crawl or source.from_sitemap) else 1
+
+            if source.from_sitemap:
+                listed = _sitemap_urls(source, client, emit)
+                if not listed:
+                    yield IngestFailure(
+                        kind=SourceKind.WEBSITE,
+                        locator=seed_canon,
+                        reason="from_sitemap is set but the site listed no matching pages",
+                        hint="Check the sitemap with `mark sources missing <url>`, or set "
+                        "crawl: true to follow links instead.",
+                    )
+                    continue
+                queue = deque(listed)
+                visited = set(listed)
+                emit(f"{source.url}: {len(listed):,} pages from the sitemap")
             fetched_pages = 0
             # Held back until the crawl finishes: what counts as this site's furniture can
             # only be known once we have seen enough of its pages.
@@ -618,7 +668,7 @@ def ingest_websites(
                     )
                     document.ensure_hash()
                     from_this_source.append(document)
-                if source.crawl and fetched_pages < max_pages:
+                if source.crawl and not source.from_sitemap and fetched_pages < max_pages:
                     for link in discover_links(
                         html, final_url, source.include_patterns, source.exclude_patterns
                     ):

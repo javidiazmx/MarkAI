@@ -210,6 +210,12 @@ the feed, so a show whose host publishes no transcripts still contributes an epi
 record with its number, date and link. A one-line teaser is not enough to store and is reported
 as a failure instead.
 
+**Sites that publish a sitemap.** Set `from_sitemap: true` on a source and its page list comes
+from the site's own index rather than from following links. That is the right mode for a blog:
+older posts are typically reachable only through paginated index pages, so a link-following
+crawl stops after the first page, while the sitemap is complete by definition.
+`include_patterns` narrows it to a section the same way. Verify with `mark sources missing`.
+
 **PDFs.** A PDF linked from a listed site is read like any other page; a lot of housing
 material (the RLTO summary, EPA lead-paint pamphlets, HUD forms) is published that way. Scanned
 PDFs have no selectable text, so Mark says it needs OCR rather than storing a blank page. Images,

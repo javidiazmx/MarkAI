@@ -58,16 +58,17 @@ websites:
       - "/application"
     notes: Paginas del sitio. Las fichas de propiedades quedan excluidas a proposito.
 
-  # El sitemap lista mas de 550 articulos bajo /blog y el tope viejo de 500 dejaba fuera
-  # cientos. Semilla propia para que el crawl empiece en el indice de articulos en vez de
-  # llegar ahi con el presupuesto gastado. Comprobar que no falte ninguno con:
+  # EL BLOG VIENE DEL SITEMAP, no de seguir enlaces. Los articulos viejos solo se alcanzan
+  # por la paginacion (/blog?pg=2, ?pg=3...), asi que un crawl normal se queda en los
+  # primeros. El sitio publica sus 678 articulos en su propio sitemap: esa lista es
+  # completa por definicion. Comprobar con:
   #   mark sources missing https://www.gcrealtyinc.com --section /blog
   - url: https://www.gcrealtyinc.com/blog
     title: GC Realty blog
-    crawl: true
-    max_pages: 2000
-    include_patterns: ["/blog"]    # la cerca: de aqui no se sale
-    exclude_patterns: ["/tag/", "/author/", "/category/", "\\?pg=", "/feed"]
+    from_sitemap: true
+    max_pages: 3000
+    include_patterns: ["/blog"]
+    exclude_patterns: ["/tag/", "/author/", "/category/", "/feed"]
 
   # OJO: la portada de straightupchicagoinvestor.com sirve una copia del sitio de GC Realty
   # (mismo titulo, mismas paginas). Las notas del podcast viven bajo /podcast, y esa es la
