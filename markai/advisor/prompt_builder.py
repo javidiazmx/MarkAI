@@ -61,6 +61,15 @@ def build_business_block(business: BusinessProfile | None) -> str | None:
     if business.never_say:
         lines.append("Never say or promise any of the following:")
         lines.extend(f"- {item}" for item in business.never_say)
+    if business.escalation_url:
+        who = business.escalation_name or "a property manager"
+        lines.append(
+            f"When a situation has outgrown what a chat can settle - the money at stake is "
+            f"real, the facts are tangled, a deadline is close, or it is already in court - "
+            f"stop advising and hand it to {who}: {business.escalation_url}. Offer it once, "
+            f"in one sentence, and only when it is genuinely warranted. On a routine "
+            f"question it reads as a brush-off."
+        )
     if business.extra_instructions:
         lines.append(business.extra_instructions)
     lines.append("</owner_context>")

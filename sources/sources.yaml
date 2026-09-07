@@ -280,4 +280,10 @@ business:
   never_say: []               # cosas que Mark nunca debe prometer ni cotizar
     # - Cotizaciones especificas de management fee
     # - Recomendar un abogado por nombre
-  extra_instructions: null    # cualquier otra cosa que Mark deba tener presente
+  extra_instructions: null    # cualquier otra cosa que Jay deba tener presente
+
+  # CUANDO EL CASO SE PASA DE UN CHAT: Jay deja de aconsejar y lo manda con una persona.
+  # Pega aqui el enlace de Calendly de Russell. Mientras este vacio, Jay no ofrece la
+  # llamada - no quiero que invente una direccion.
+  escalation_name: Russell
+  escalation_url: null

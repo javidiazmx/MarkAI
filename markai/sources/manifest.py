@@ -133,6 +133,9 @@ class BusinessProfile(BaseModel):
     service_area: str | None = None
     never_say: list[str] = Field(default_factory=list)
     extra_instructions: str | None = None
+    # Where to send someone whose situation has outgrown a chat answer.
+    escalation_url: str | None = None
+    escalation_name: str | None = None
 
     def is_empty(self) -> bool:
         return not any(
@@ -144,6 +147,7 @@ class BusinessProfile(BaseModel):
                 self.service_area,
                 self.never_say,
                 self.extra_instructions,
+                self.escalation_url,
             )
         )
 

@@ -206,3 +206,46 @@ def test_stripping_markers_tidies_the_punctuation():
     )
     assert strip_all_markers("Two in a row [S1] [S2] here.") == "Two in a row here."
     assert strip_all_markers("Nothing to strip.") == "Nothing to strip."
+
+
+# --- handing a case to a person --------------------------------------------------------
+
+
+def test_the_handoff_appears_only_when_a_contact_is_configured():
+    """No link, no offer. Jay must never invent somewhere to send a landlord."""
+    from markai.advisor.prompt_builder import build_business_block
+    from markai.sources.manifest import BusinessProfile
+
+    quiet = build_business_block(BusinessProfile(name="GC Realty"))
+    assert quiet is not None and "outgrown" not in quiet
+
+    loud = build_business_block(
+        BusinessProfile(
+            name="GC Realty",
+            escalation_name="Russell",
+            escalation_url="https://calendly.test/russell",
+        )
+    )
+    assert "https://calendly.test/russell" in loud
+    assert "Russell" in loud
+    assert "reads as a brush-off" in loud, "and it says not to offer it on a routine question"
+
+
+def test_the_handoff_names_a_role_when_no_person_is_given():
+    from markai.advisor.prompt_builder import build_business_block
+    from markai.sources.manifest import BusinessProfile
+
+    block = build_business_block(BusinessProfile(escalation_url="https://calendly.test/team"))
+    assert "a property manager" in block
+
+
+def test_the_prompt_asks_for_short_answers_and_one_question_at_a_time():
+    from pathlib import Path
+
+    from markai.advisor.prompt_builder import load_system_prompt
+
+    prompt = load_system_prompt(Path("prompts/mark_system_prompt.md"), show_citations=False)
+    assert "Lead with the answer in the first sentence" in prompt
+    assert "one thing at a time, never a form" in prompt
+    assert "Say what you would do and why" in prompt, "brevity must not cost the judgement"
+    assert "handing off is not a reason to stop being useful" in prompt
