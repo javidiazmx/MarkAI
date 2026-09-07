@@ -210,6 +210,9 @@ class Retriever:
         weak_rel = self.settings.weak_relevance
         min_cos = self.settings.min_cosine
         cos_ok = has_vectors and top_cosine >= min_cos
+        # Strong enough on its own. There are two independent ways to be sure a question is
+        # covered, and only one of them involves shared words.
+        strong_vector = has_vectors and top_cosine >= self.settings.covered_cosine
         if (top_bm25 <= 0 or not has_tokens) and not cos_ok:
             # BM25 scores everything at or below zero on a very small corpus, where a term that
             # appears in most chunks carries a negative weight. Fall back to plain term overlap
@@ -222,7 +225,10 @@ class Retriever:
             return "none"
         if top_bm25 < weak_rel and top_cosine < self.settings.covered_cosine:
             return "weak"
-        if positive_count < 2:
+        if positive_count < 2 and not strong_vector:
+            # Few keyword hits is a warning sign when keywords are what we are relying on.
+            # For a question in Spanish against English sources there are none by
+            # construction, so requiring them here declared covered material uncovered.
             return "weak"
         return "covered"
 

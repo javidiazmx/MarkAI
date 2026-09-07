@@ -319,3 +319,63 @@ def test_switching_embedding_model_marks_everything_as_pending(settings, toy_doc
     assert store.chunks_missing_embeddings(embedder.name) == []
     assert len(store.chunks_missing_embeddings("voyage-3.5")) == len(chunks)
     store.close()
+
+
+# --- a question in the other language --------------------------------------------------
+#
+# "desalojo inquilino no paga" retrieved exactly the right eviction posts with a semantic
+# score of 0.550 - over the bar - and still came back "weak", so Jay told the owner it was
+# not covered. A Spanish question shares no words with English sources, so the keyword arm
+# scores zero by construction and the "at least two keyword hits" rule could never pass.
+
+
+def _coverage_for(settings, **kwargs):
+    from markai.knowledge.retriever import Retriever
+
+    verdict = Retriever.__dict__["_coverage"]
+    args = {
+        "top_bm25": 0.0,
+        "has_tokens": True,
+        "top_cosine": 0.0,
+        "has_vectors": True,
+        "positive_count": 0,
+        "overlap_ratio": 0.0,
+    }
+    args.update(kwargs)
+
+    class Stub:
+        pass
+
+    stub = Stub()
+    stub.settings = settings
+    return verdict(stub, **args)
+
+
+def test_a_strong_semantic_match_alone_counts_as_covered(settings):
+    """The owner's real numbers: no keyword signal at all, cosine 0.550."""
+    assert _coverage_for(settings, top_cosine=0.550, positive_count=0) == "covered"
+
+
+def test_a_middling_semantic_match_without_keywords_stays_weak(settings):
+    """Above the 0.35 floor but under the covered bar: found something, not sure enough."""
+    assert _coverage_for(settings, top_cosine=0.42, positive_count=0) == "weak"
+
+
+def test_below_the_cosine_floor_is_none(settings):
+    assert _coverage_for(settings, top_cosine=0.30, positive_count=0) == "none"
+
+
+def test_nothing_on_either_arm_is_still_none(settings):
+    assert _coverage_for(settings, top_cosine=0.0, has_vectors=False) == "none"
+
+
+def test_the_covered_bar_is_tunable(settings):
+    """Raising it takes the owner's real 0.550 case back to weak, which is the knob."""
+    strict = settings.model_copy(update={"covered_cosine": 0.7})
+    assert _coverage_for(strict, top_cosine=0.550, positive_count=0) == "weak"
+
+
+def test_keyword_evidence_alone_still_carries_a_question(settings):
+    """English questions must behave exactly as before."""
+    assert _coverage_for(settings, top_bm25=9.0, positive_count=4, has_vectors=False) == "covered"
+    assert _coverage_for(settings, top_bm25=9.0, positive_count=1, has_vectors=False) == "weak"

@@ -24,12 +24,24 @@
 # ---------------------------------------------------------------------------------------
 websites:
   # --- Sitios propios: lo mas valioso, aqui si va todo -----------------------------------
+  # El sitemap del sitio lista mas de 550 entradas solo bajo /blog, asi que el tope de 500
+  # dejaba fuera cientos de articulos. Comprobar con:
+  #   mark sources missing https://www.gcrealtyinc.com --section /blog
   - url: https://www.gcrealtyinc.com
     title: GC Realty & Development
     crawl: true
-    max_pages: 500
+    max_pages: 2000
     exclude_patterns: ["/wp-admin", "/wp-login", "/feed", "/cart", "/checkout", "/my-account"]
-    notes: Sitio completo, blog incluido. 500 es el maximo que acepta max_pages.
+    notes: Sitio completo, blog incluido.
+
+  # Semilla aparte para el blog: el crawl entra directo al indice de articulos en vez de
+  # llegar ahi despues de gastar presupuesto en el resto del sitio.
+  - url: https://www.gcrealtyinc.com/blog
+    title: GC Realty blog
+    crawl: true
+    max_pages: 2000
+    include_patterns: ["/blog"]
+    exclude_patterns: ["/wp-admin", "/wp-login", "/feed", "/tag/", "/author/", "?pg="]
 
   # OJO: la portada de straightupchicagoinvestor.com sirve una copia del sitio de GC Realty
   # (mismo titulo, mismas paginas). Las notas del podcast viven bajo /podcast, y esa es la
