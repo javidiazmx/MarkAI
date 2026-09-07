@@ -53,6 +53,18 @@
   .badge { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 20px; background: var(--accent); color: var(--accent-ink); margin-right: 6px; text-transform: uppercase; letter-spacing: .04em; }
   .meta { color: var(--muted); font-size: 12px; margin-top: 6px; }
   sup a { color: var(--accent); text-decoration: none; font-weight: 600; }
+  .start { padding: 8px 4px 4px; }
+  .start h2 { margin: 0 0 4px; font-size: 17px; font-weight: 600; }
+  .start p { margin: 0 0 18px; color: var(--muted); font-size: 14px; max-width: 52ch; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip {
+    border: 1px solid var(--line); background: var(--panel); color: inherit;
+    border-radius: 20px; padding: 8px 14px; font: inherit; font-size: 14px;
+    cursor: pointer; text-align: left; line-height: 1.35;
+  }
+  .chip:hover, .chip:focus-visible { border-color: var(--accent); color: var(--accent); }
+  .lang { margin: 20px 0 8px; font-size: 12px; text-transform: uppercase;
+          letter-spacing: .06em; color: var(--muted); }
   footer {
     position: fixed; bottom: 0; left: 0; right: 0; background: var(--panel);
     border-top: 1px solid var(--line); padding: 12px 16px;
@@ -81,7 +93,18 @@
 </header>
 <div class="banner" id="banner"></div>
 
-<main id="log"></main>
+<main>
+<section class="start" id="start" hidden>
+  <h2>Ask me anything about renting property in Chicagoland.</h2>
+  <p>I answer from Mark Ainley's podcast, GC Realty's material, and the county, city and
+     state sources behind them — not from general knowledge. If it isn't in there, I'll say so.
+     Pregunta en español si prefieres.</p>
+  <div class="chips" id="chips-en"></div>
+  <div class="lang">En español</div>
+  <div class="chips" id="chips-es"></div>
+</section>
+<div id="log"></div>
+</main>
 
 <footer>
   <div class="gate" id="gate">
@@ -223,6 +246,7 @@
     sendBtn.disabled = true;
     box.value = "";
 
+    showStarters(false);
     addMessage("you", "You").bubble.textContent = question;
     var slot = addMessage("mark", "Mark");
     var streamed = "";
@@ -281,6 +305,50 @@
     }
   }
 
+  // The opening screen. A blank page tells a landlord nothing about what Mark covers, and
+  // the chips double as a hint that Spanish works - the guardrails read both languages.
+  var STARTERS = {
+    "chips-en": [
+      "How long do I have to return a security deposit in Chicago?",
+      "My tenant stopped paying in January. What are my steps?",
+      "What should I check on a rental application?",
+      "Do I have to accept a housing voucher?",
+      "When does the heat ordinance season start?",
+      "Run the cash flow on a $400k two-flat with 25% down"
+    ],
+    "chips-es": [
+      "¿Cuánto tiempo tengo para devolver el depósito?",
+      "¿Cómo desalojo a un inquilino que no paga?",
+      "¿Qué documentos le pido a un solicitante?",
+      "¿Puedo cobrar una multa por pago tardío?"
+    ]
+  };
+
+  var start = document.getElementById("start");
+
+  function buildStarters() {
+    Object.keys(STARTERS).forEach(function (id) {
+      var row = document.getElementById(id);
+      row.textContent = "";
+      STARTERS[id].forEach(function (question) {
+        var chip = el("button", "chip", question);
+        chip.type = "button";
+        chip.addEventListener("click", function () {
+          box.value = question;
+          send();
+        });
+        row.appendChild(chip);
+      });
+    });
+  }
+
+  function showStarters(show) {
+    start.hidden = !show;
+  }
+
+  buildStarters();
+  showStarters(true);
+
   sendBtn.addEventListener("click", send);
   box.addEventListener("keydown", function (event) {
     if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); }
@@ -291,6 +359,7 @@
       method: "POST", headers: headers(), body: JSON.stringify({ session_id: sessionId })
     });
     log.textContent = "";
+    showStarters(true);
   });
 
   async function loadStatus() {
