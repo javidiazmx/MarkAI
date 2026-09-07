@@ -44,6 +44,7 @@ PROBE_QUESTIONS: tuple[tuple[str, str], ...] = (
 )
 
 MIN_WORDS = 40
+BARELY_CRAWLED = 2
 NEAR_DUPLICATE_SHARE = 0.25
 
 
@@ -163,6 +164,19 @@ def _check_sources(report: AuditReport, manifest: Any, documents: list, say: Any
                     "source",
                     f"{host} is listed in sources.yaml but contributed no pages.",
                     f"Run `mark sources probe {site.url}` to see what it returns.",
+                )
+            )
+        elif site.crawl and site.max_pages > 5 and count <= BARELY_CRAWLED:
+            # A crawl that stops after a page or two found no links to follow - usually a
+            # menu built in JavaScript. A zero is loud; this is the quiet version of it.
+            report.findings.append(
+                Finding(
+                    "warning",
+                    "source",
+                    f"{host} was set to crawl up to {site.max_pages} pages and produced "
+                    f"{count}. The crawler probably found no links to follow.",
+                    f"Run `mark sources probe {site.url}` - if it reports 0 links, the menu "
+                    "is JavaScript. List the useful pages directly instead of crawling.",
                 )
             )
 

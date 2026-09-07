@@ -163,3 +163,24 @@ def test_a_site_that_redirects_elsewhere_is_not_called_silent(store, settings):
     silent = [f for f in report.problems if "oldname.test" in f.detail]
     assert silent == [], "it answered, just under another name"
     assert any("oldname.test -> newname.test" in name for name, _n in report.source_coverage)
+
+
+def test_a_crawl_that_found_no_links_is_flagged_too(store, settings):
+    """cmap.illinois.gov produced 1 page from a 30-page budget. A zero is loud; this is quiet."""
+    _fill(store, [_doc("https://cmap.test/home", "Regional planning for the area. " * 30)])
+    manifest = SourceManifest(
+        websites=[WebsiteSource(url="https://cmap.test/", crawl=True, max_pages=30)]
+    )
+    report = audit(store, manifest, Retriever(store, None, settings))
+
+    quiet = [f for f in report.findings if "no links to follow" in f.detail]
+    assert quiet and quiet[0].severity == "warning", "it did work, just barely"
+    assert "JavaScript" in quiet[0].fix
+
+
+def test_a_single_page_source_is_not_flagged(store, settings):
+    """crawl: false means one page is the whole point."""
+    _fill(store, [_doc("https://one.test/rlto", "The ordinance says this. " * 30)])
+    manifest = SourceManifest(websites=[WebsiteSource(url="https://one.test/rlto", crawl=False)])
+    report = audit(store, manifest, Retriever(store, None, settings))
+    assert [f for f in report.findings if f.area == "source"] == []
