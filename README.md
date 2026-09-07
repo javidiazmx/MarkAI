@@ -1,11 +1,11 @@
-# Mark
+# Jay
 
-Mark is an AI advisor for landlords who own or manage property in Chicagoland. He answers only
+Jay is an AI advisor for landlords who own or manage property in Chicagoland. He answers only
 from material you give him: your websites, specific YouTube episodes, and your podcast. Nothing
 else. When a question falls outside that material he says so instead of guessing, and every
 claim he makes points back to the episode or page it came from.
 
-Mark is an AI assistant written in the conversational style of Mark Ainley (Straight Up Chicago
+Jay is an AI assistant written in the conversational style of Mark Ainley (Straight Up Chicago
 Investor). He is not Mark Ainley, and he is not a lawyer.
 
 ## How it works
@@ -89,6 +89,7 @@ Everything lives in `.env`. Only the first line is required.
 | `MARKAI_SOURCES_FILE` | `sources/sources.yaml` | Which manifest to read |
 | `MARKAI_SHOW_CITATIONS` | `false` | `[S1]` markers and a source list under the answer |
 | `MARKAI_CACHE_TTL` | `1h` | How long the cached system prefix lives: `5m` or `1h` |
+| `MARKAI_FAST_MODE` | `false` | Opus 5 fast mode: up to 2.5x output speed at double the token price |
 | `MARKAI_TOP_K` | `8` | Passages handed to Mark per question |
 | `MARKAI_MIN_RELEVANCE` | `2.0` | Below this, a question counts as uncovered |
 | `MARKAI_WEAK_RELEVANCE` | `5.0` | Below this, coverage is reported as weak |
@@ -176,6 +177,10 @@ Set `MARKAI_SHOW_CITATIONS=true` to get the other behaviour: `[S1]` markers that
 footnotes with the episode number, publication date, timestamp and link, YouTube ones pointing
 at the exact moment. Useful while checking what Mark is drawing on. Either way, when a source is
 more than about two years old and the question is about law or taxes, Mark says so.
+
+**The identity notice appears with the answers that need it**, not permanently at the top of
+the page. An answer flagged legal carries it underneath; the header says "AI, not a lawyer" at
+all times, because someone should never be unsure whether they are talking to a person.
 
 **Legal questions** end with this sentence, word for word:
 

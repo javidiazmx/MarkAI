@@ -49,6 +49,7 @@ logger = logging.getLogger(__name__)
 
 MAX_TOOL_ITERATIONS = 5
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
+FAST_MODE_BETA = "fast-mode-2026-02-01"
 EMPTY_STORE_TEXT = (
     "My knowledge base is empty, so I've got nothing to work from yet. "
     "Add your sources to sources/sources.yaml and run `mark ingest`."
@@ -181,6 +182,10 @@ class MarkAdvisor:
         # whose next turn replays this history.
         reuses_history = len(api_messages) > 1
 
+        # Fast mode has its own rate limit; a 429 there drops this question back to standard
+        # speed rather than failing it. Kept per-question, so one 429 does not disable it.
+        fast = self.settings.fast_mode
+
         for iteration in range(MAX_TOOL_ITERATIONS):
             cache_messages = reuses_history or iteration > 0
             try:
@@ -192,8 +197,9 @@ class MarkAdvisor:
                     tools=TOOL_DEFINITIONS,
                     thinking={"type": "adaptive"},
                     output_config={"effort": self.settings.effort},
-                    betas=[FALLBACK_BETA],
+                    betas=[FALLBACK_BETA, FAST_MODE_BETA] if fast else [FALLBACK_BETA],
                     fallbacks="default",
+                    **({"speed": "fast"} if fast else {}),
                     **({"cache_control": {"type": "ephemeral"}} if cache_messages else {}),
                 ) as stream:
                     for delta in stream.text_stream:
@@ -207,6 +213,11 @@ class MarkAdvisor:
                 )
                 return
             except anthropic.RateLimitError:
+                if fast:
+                    # Fast mode is rate-limited separately. Standard speed still has room.
+                    logger.info("fast mode was rate-limited; retrying at standard speed")
+                    fast = False
+                    continue
                 yield StreamEvent(
                     "error", "Anthropic is rate-limiting this key. Wait a moment and try again."
                 )

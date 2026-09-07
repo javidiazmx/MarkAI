@@ -112,6 +112,15 @@ class Settings(BaseSettings):
         ),
     )
 
+    fast_mode: bool = Field(
+        default=False,
+        description=(
+            "Run Opus 5 in fast mode: up to 2.5x the output speed at double the token "
+            "price ($10/$50 per MTok instead of $5/$25). Claude API only, and it has its "
+            "own rate limit, so a 429 falls back to standard speed for that question."
+        ),
+    )
+
     show_citations: bool = Field(
         default=False,
         description=(

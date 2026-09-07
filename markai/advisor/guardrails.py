@@ -15,7 +15,7 @@ LEGAL_DISCLAIMER = (
 )
 NOT_COVERED_PHRASE = "That's not covered in my training materials."
 IDENTITY_NOTICE = (
-    "Mark is an AI assistant built in the style of Mark Ainley (Straight Up Chicago "
+    "Jay is an AI assistant built in the style of Mark Ainley (Straight Up Chicago "
     "Investor). It is not Mark Ainley, it is not a lawyer, and its answers are not "
     "reviewed by him or by an attorney."
 )
