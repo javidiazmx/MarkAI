@@ -157,6 +157,7 @@ def create_app(
             return state["advisor"]
         from markai.advisor.mark import MarkAdvisor
         from markai.advisor.prompt_builder import load_system_prompt
+        from markai.sources.facts import facts_path, load_facts
         from markai.sources.manifest import load_manifest
 
         manifest = load_manifest(settings.sources_file)
@@ -168,6 +169,7 @@ def create_app(
             load_system_prompt(settings.system_prompt_path, settings.show_citations),
             business=manifest.business,
             store=current_store,
+            facts=load_facts(facts_path(settings.sources_file)),
         )
         return state["advisor"]
 

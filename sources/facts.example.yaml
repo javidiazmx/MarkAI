@@ -1,0 +1,51 @@
+# ---------------------------------------------------------------------------------------
+# YOUR OWN FACTS. Copy this file to sources/facts.yaml and replace every line.
+#
+# Nothing here is verified, and nothing here is legal advice. It is a shape to fill in.
+# Whatever you put in this file is handed to Jay as authoritative and outranks the blog
+# posts and the podcast, so it has to be right. That is also the point: when an ordinance
+# changes, you edit one line here instead of re-reading four years of blogs.
+#
+# Rules for yourself:
+#   - Every ordinance needs a citation. The loader refuses one without it.
+#   - When a rule changes, do not delete the old one. Set its effective_to to the last day
+#     it applied and add the new one. Jay then answers with whichever is in force today,
+#     and you keep the history.
+#   - Run `mark facts validate` after every edit, and `mark facts probe "a question"` to
+#     see which of these a real question would pull in.
+# ---------------------------------------------------------------------------------------
+
+ordinances:
+  - id: chicago-deposit-return-window        # your own short name, must be unique
+    jurisdiction: Chicago                    # Chicago, Cook County, Evanston, Illinois...
+    topic: security deposit return           # a few words; helps the match
+    rule: >
+      Write the rule here in one sentence, the way you would say it to an owner on the
+      phone. Numbers and deadlines belong in it.
+    citation: "RLTO 5-12-080, or the page you took this from"
+    effective_from: 2010-01-01               # the day it started applying
+    effective_to: null                       # null while it is still in force
+    url: https://example.com/the-ordinance   # optional, where an owner can read it
+    keywords: [deposit, deposito, interest, interes]   # extra words that should match
+    notes: Optional. Anything an owner gets wrong about it.
+
+  # A superseded rule. Kept on purpose: it stops being selected on its own.
+  - id: chicago-deposit-return-window-old
+    jurisdiction: Chicago
+    topic: security deposit return
+    rule: The version that applied before the change. Replace or delete this entry.
+    citation: "RLTO 5-12-080 (pre-amendment)"
+    effective_from: 2000-01-01
+    effective_to: 2009-12-31
+
+costs:
+  - id: boiler-replacement-small-building
+    item: Boiler replacement, small multi-unit
+    low: 0                                   # dollars, your own numbers
+    high: 0
+    unit: per building                       # per job, per unit, per square foot...
+    as_of: 2026-01                           # the month these numbers were true
+    market: Chicago
+    source: Your own invoices
+    keywords: [boiler, caldera, heat, calefaccion]
+    notes: Optional. What moves the number up or down.

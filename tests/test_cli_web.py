@@ -761,3 +761,88 @@ def test_the_episodes_endpoint_is_gated_by_the_access_code(settings, store):
     settings = settings.model_copy(update={"web_access_code": "letmein"})
     client = _client(settings, store)
     assert client.get("/api/episodes").status_code == 401
+
+
+# --- mark facts -------------------------------------------------------------------------
+
+
+def _facts_dir(tmp_path, monkeypatch, body: str | None = None):
+    manifest = tmp_path / "sources.yaml"
+    manifest.write_text("websites: []\n", encoding="utf-8")
+    if body is not None:
+        (tmp_path / "facts.yaml").write_text(body, encoding="utf-8")
+    monkeypatch.setenv("MARKAI_SOURCES_FILE", str(manifest))
+    monkeypatch.setenv("MARKAI_DATA_DIR", str(tmp_path / "data"))
+
+
+GOOD_FACTS = """
+ordinances:
+  - id: deposit
+    jurisdiction: Chicago
+    topic: security deposit return
+    rule: Return the deposit within 45 days.
+    citation: RLTO 5-12-080(d)
+    effective_from: 2010-01-01
+  - id: deposit-old
+    jurisdiction: Chicago
+    topic: security deposit return
+    rule: The older window.
+    citation: RLTO 5-12-080 (pre-amendment)
+    effective_from: 2000-01-01
+    effective_to: 2009-12-31
+costs:
+  - id: boiler
+    item: Boiler replacement
+    low: 9000
+    high: 16000
+"""
+
+
+def test_facts_validate_without_a_file_says_what_to_copy(tmp_path, monkeypatch):
+    _facts_dir(tmp_path, monkeypatch)
+    result = runner.invoke(app, ["facts", "validate"])
+    assert result.exit_code == 0
+    assert "facts.example.yaml" in result.stdout
+
+
+def test_facts_validate_counts_what_applies_today(tmp_path, monkeypatch):
+    _facts_dir(tmp_path, monkeypatch, GOOD_FACTS)
+    result = runner.invoke(app, ["facts", "validate"])
+    assert result.exit_code == 0
+    assert "1 in force today" in result.stdout
+    assert "1 superseded" in result.stdout
+
+
+def test_facts_validate_refuses_a_rule_with_no_citation(tmp_path, monkeypatch):
+    _facts_dir(
+        tmp_path,
+        monkeypatch,
+        "ordinances:\n  - id: x\n    jurisdiction: Chicago\n    topic: t\n"
+        "    rule: r\n    citation: ''\n",
+    )
+    result = runner.invoke(app, ["facts", "validate"])
+    assert result.exit_code == 1
+    assert "citation" in result.stdout + str(result.stderr)
+
+
+def test_facts_list_marks_the_superseded_rule(tmp_path, monkeypatch):
+    _facts_dir(tmp_path, monkeypatch, GOOD_FACTS)
+    result = runner.invoke(app, ["facts", "list"])
+    assert result.exit_code == 0
+    assert "in force" in result.stdout and "superseded" in result.stdout
+    assert "$9,000 to $16,000" in result.stdout
+
+
+def test_facts_probe_shows_what_a_question_would_pull_in(tmp_path, monkeypatch):
+    _facts_dir(tmp_path, monkeypatch, GOOD_FACTS)
+    result = runner.invoke(app, ["facts", "probe", "how long to return a deposit"])
+    assert result.exit_code == 0
+    assert "RLTO 5-12-080(d)" in result.stdout
+    assert "pre-amendment" not in result.stdout, "a superseded rule is never offered"
+
+
+def test_facts_probe_says_when_nothing_matches(tmp_path, monkeypatch):
+    _facts_dir(tmp_path, monkeypatch, GOOD_FACTS)
+    result = runner.invoke(app, ["facts", "probe", "what about parking permits"])
+    assert result.exit_code == 0
+    assert "keywords" in result.stdout

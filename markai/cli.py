@@ -24,8 +24,12 @@ app = typer.Typer(
 )
 sources_app = typer.Typer(help="Inspect and validate sources/sources.yaml.", no_args_is_help=True)
 calc_app = typer.Typer(help="Run the deal calculators from the terminal.", no_args_is_help=True)
+facts_app = typer.Typer(
+    help="The ordinances and cost ranges you maintain by hand.", no_args_is_help=True
+)
 app.add_typer(sources_app, name="sources")
 app.add_typer(calc_app, name="calc")
+app.add_typer(facts_app, name="facts")
 
 console = Console()
 err = Console(stderr=True)
@@ -125,6 +129,7 @@ def _advisor(settings: Any, manifest: Any, store: Any) -> Any:
     from markai.advisor.prompt_builder import load_system_prompt
     from markai.knowledge.embeddings import build_embedder
     from markai.knowledge.retriever import Retriever
+    from markai.sources.facts import facts_path, load_facts
 
     retriever = Retriever(store, build_embedder(settings), settings)
     try:
@@ -139,6 +144,7 @@ def _advisor(settings: Any, manifest: Any, store: Any) -> Any:
             prompt,
             business=manifest.business,
             store=store,
+            facts=load_facts(facts_path(settings.sources_file)),
         )
     except MissingApiKeyError as exc:
         _fail(str(exc), "Get a key at https://console.anthropic.com/ and run `mark init`.")
@@ -900,6 +906,119 @@ def search(
             )
         console.print(f"   {escape(rc.chunk.text[:220])}…")
     store.close()
+
+
+# --------------------------------------------------------------------------------------
+# The owner's own facts
+# --------------------------------------------------------------------------------------
+
+
+def _facts() -> tuple[Any, Any]:
+    from markai.sources.facts import facts_path, load_facts
+
+    settings = _settings()
+    path = facts_path(settings.sources_file)
+    try:
+        return load_facts(path), path
+    except Exception as exc:
+        _fail(f"{path} is not valid: {exc}", "Compare against sources/facts.example.yaml.")
+
+
+@facts_app.command("validate")
+def facts_validate() -> None:
+    """Check facts.yaml parses, every rule names a citation, and the dates make sense."""
+    book, path = _facts()
+    if not path.exists():
+        console.print(
+            f"[dim]No {path.name} yet, so Jay answers from the sources alone. Copy "
+            f"sources/facts.example.yaml to {path} when you want an ordinance layer.[/dim]"
+        )
+        return
+    from datetime import date
+
+    today = date.today()
+    console.print(f"[green]✓[/green] {path} is valid.")
+    console.print(
+        f"  ordinances: {len(book.ordinances)} "
+        f"({len(book.in_force(today))} in force today, {len(book.superseded(today))} "
+        f"superseded) · cost ranges: {len(book.costs)}"
+    )
+    undated = [o.id for o in book.ordinances if not o.effective_from]
+    if undated:
+        console.print(
+            "[yellow]No effective_from on: "
+            + escape(", ".join(undated[:8]))
+            + ". They will be treated as always in force.[/yellow]"
+        )
+
+
+@facts_app.command("list")
+def facts_list() -> None:
+    """Show every rule and price, and whether each one applies today."""
+    from datetime import date
+
+    book, path = _facts()
+    if book.is_empty():
+        console.print(f"[yellow]Nothing in {path}.[/yellow]")
+        return
+    today = date.today()
+    if book.ordinances:
+        table = Table(show_header=True, header_style="bold", title="Ordinances")
+        table.add_column("Where")
+        table.add_column("Topic")
+        table.add_column("From")
+        table.add_column("Until")
+        table.add_column("Citation")
+        table.add_column("Now")
+        for rule in book.ordinances:
+            live = rule.in_force(today)
+            table.add_row(
+                escape(rule.jurisdiction),
+                escape(rule.topic[:40]),
+                str(rule.effective_from or "-"),
+                str(rule.effective_to or "-"),
+                escape(rule.citation[:40]),
+                "[green]in force[/green]" if live else "[dim]superseded[/dim]",
+            )
+        console.print(table)
+    if book.costs:
+        table = Table(show_header=True, header_style="bold", title="Cost ranges")
+        table.add_column("Item")
+        table.add_column("Range")
+        table.add_column("Unit")
+        table.add_column("Priced")
+        for cost in book.costs:
+            table.add_row(
+                escape(cost.item[:44]), cost.money(), escape(cost.unit), cost.as_of or "-"
+            )
+        console.print(table)
+
+
+@facts_app.command("probe")
+def facts_probe(
+    question: str = typer.Argument(..., help="A question, to see which facts it would pull in."),
+) -> None:
+    """Show exactly which of your facts a question puts in front of Jay."""
+    from markai.sources.facts import select
+
+    book, path = _facts()
+    if book.is_empty():
+        console.print(f"[yellow]Nothing in {path}.[/yellow]")
+        return
+    rules, costs = select(book, question)
+    if not rules and not costs:
+        console.print(
+            "[yellow]None of your facts share a word with that question, so Jay would "
+            "answer from the sources alone.[/yellow]"
+        )
+        console.print("[dim]Add the words an owner would actually use to `keywords`.[/dim]")
+        return
+    for rule in rules:
+        console.print(f"[bold]{escape(rule.jurisdiction)}[/bold] · {escape(rule.topic)}")
+        console.print(f"   {escape(rule.rule.strip()[:200])}")
+        console.print(f"   [dim]{escape(rule.citation)} · from {rule.effective_from or '-'}[/dim]")
+    for cost in costs:
+        console.print(f"[bold]{escape(cost.item)}[/bold] {cost.money()} {escape(cost.unit)}")
 
 
 @app.command()

@@ -8,7 +8,9 @@ turn, after the cache breakpoint.
 from __future__ import annotations
 
 import re
+from datetime import date
 from pathlib import Path
+from typing import Any
 
 from markai.knowledge.episodes import deep_link, format_timestamp
 from markai.models import Citation, RetrievedChunk
@@ -135,18 +137,67 @@ def _source_tag(marker: str, rc: RetrievedChunk) -> str:
     return "<source " + " ".join(attrs) + ">"
 
 
+def build_facts_block(
+    ordinances: list[Any],
+    costs: list[Any],
+    as_of: date,
+) -> str:
+    """The owner's own rules and prices for this question, stamped with the day.
+
+    The date belongs here rather than in the system prompt: interpolating it up there would
+    change the cached prefix on every calendar day and silently stop the cache from paying.
+    """
+    if not ordinances and not costs:
+        return ""
+    parts = [f'<authoritative_facts as_of="{as_of.isoformat()}">']
+    for rule in ordinances:
+        attrs = [
+            f'jurisdiction="{escape_attr(rule.jurisdiction, 60)}"',
+            f'topic="{escape_attr(rule.topic, 80)}"',
+            f'citation="{escape_attr(rule.citation, 120)}"',
+        ]
+        if rule.effective_from:
+            attrs.append(f'effective_from="{rule.effective_from.isoformat()}"')
+        if rule.url:
+            attrs.append(f'url="{escape_attr(rule.url, 300)}"')
+        parts.append("<ordinance " + " ".join(attrs) + ">")
+        parts.append(escape_text(rule.rule.strip()))
+        if rule.notes:
+            parts.append(escape_text(rule.notes.strip()))
+        parts.append("</ordinance>")
+    for cost in costs:
+        attrs = [
+            f'item="{escape_attr(cost.item, 80)}"',
+            f'range="{escape_attr(cost.money(), 40)}"',
+            f'unit="{escape_attr(cost.unit, 40)}"',
+            f'market="{escape_attr(cost.market, 60)}"',
+        ]
+        if cost.as_of:
+            attrs.append(f'priced="{escape_attr(cost.as_of, 20)}"')
+        if cost.source:
+            attrs.append(f'source="{escape_attr(cost.source, 80)}"')
+        parts.append("<cost " + " ".join(attrs) + " />")
+        if cost.notes:
+            parts.append(escape_text(cost.notes.strip()))
+    parts.append("</authoritative_facts>")
+    return "\n".join(parts)
+
+
 def build_user_message(
     question: str,
     retrieval,  # RetrievalResult (imported lazily to keep this module light)
     tools: list[ToolLink],
     flags: list[str],
     carried: list[RetrievedChunk] | None = None,
+    facts: str = "",
 ) -> str:
-    """The complete user turn: knowledge base, tool links, flags, and the question."""
+    """The complete user turn: the owner's facts, knowledge base, tools, flags, question."""
     chunks = _ordered_chunks(list(retrieval.chunks), carried)
-    parts: list[str] = [
-        f'<knowledge_base retrieval_status="{retrieval.coverage}" chunks="{len(chunks)}">'
-    ]
+    parts: list[str] = []
+    # First in the turn on purpose: it is the part that outranks everything after it.
+    if facts:
+        parts.append(facts)
+    parts.append(f'<knowledge_base retrieval_status="{retrieval.coverage}" chunks="{len(chunks)}">')
     for index, rc in enumerate(chunks, start=1):
         parts.append(_source_tag(f"S{index}", rc))
         parts.append(escape_text(rc.chunk.text.strip()))

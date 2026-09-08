@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Any, Literal
 
 import anthropic
@@ -38,6 +39,7 @@ from markai.advisor.guardrails import (
 from markai.advisor.prompt_builder import (
     build_business_block,
     build_citations,
+    build_facts_block,
     build_system_blocks,
     build_user_message,
     strip_all_markers,
@@ -47,6 +49,8 @@ from markai.config import Settings
 from markai.knowledge.episodes import EPISODE_TOOL, run_episode_tool
 from markai.knowledge.retriever import Retriever
 from markai.models import AdvisorResponse, RetrievedChunk
+from markai.sources.facts import FactBook
+from markai.sources.facts import select as select_facts
 from markai.sources.manifest import BusinessProfile, ToolLink
 
 logger = logging.getLogger(__name__)
@@ -107,6 +111,7 @@ class MarkAdvisor:
         business: BusinessProfile | None = None,
         client: Any | None = None,
         store: Any | None = None,
+        facts: FactBook | None = None,
     ) -> None:
         self.settings = settings
         self.retriever = retriever
@@ -115,6 +120,10 @@ class MarkAdvisor:
         # Built once and never rebuilt: tools render before the system blocks, so a list
         # that changed between requests would move the cache prefix and lose the cache.
         self.tool_definitions = [*TOOL_DEFINITIONS, EPISODE_TOOL]
+        # The owner's rules and prices. They ride in the user turn, not the system prompt:
+        # they are picked per question and stamped with today's date, and either of those
+        # in a system block would move the cached prefix.
+        self.facts = facts or FactBook()
         self.system_blocks = build_system_blocks(
             system_prompt, build_business_block(business), settings.cache_ttl
         )
@@ -177,7 +186,9 @@ class MarkAdvisor:
             room = max(self.settings.top_k - len(retrieval.chunks), 0)
             carried = list(conversation.last_chunks)[:room]
 
-        user_text = build_user_message(question, retrieval, self.tools, flags, carried)
+        selected_rules, selected_costs = select_facts(self.facts, question)
+        facts_block = build_facts_block(selected_rules, selected_costs, date.today())
+        user_text = build_user_message(question, retrieval, self.tools, flags, carried, facts_block)
         api_messages: list[Any] = list(conversation.messages) if conversation else []
         if attachments:
             # Files first, then the knowledge base and the question, which is the order the

@@ -12,6 +12,7 @@ Investor). He is not Mark Ainley, and he is not a lawyer.
 
 ```
 sources/sources.yaml          you list websites, YouTube episodes, and the podcast
+sources/facts.yaml            optional: your ordinances with effective dates, and local costs
         │
         ▼  mark ingest        fetches pages, captions and transcripts
 data/markai.db                text split into passages, searchable (SQLite)
@@ -19,7 +20,7 @@ data/markai.db                text split into passages, searchable (SQLite)
         ▼  a question         keyword search, plus semantic search if enabled
 retrieved passages
         │
-        ▼  Claude             Mark's system prompt + only those passages
+        ▼  Claude             the system prompt, your facts, and only those passages
 an answer in Mark's voice     grounded in those passages, citations optional
 ```
 
@@ -69,6 +70,9 @@ Then:
 | `mark search --scores` | Same, showing the keyword and semantic scores behind the coverage verdict |
 | `mark episodes "boilers"` | Which episodes cover a topic: number, guest, topics, and a link that lands on the minute |
 | `mark episodes --guest "Jane Doe"` | The catalog, filtered to the episodes whose title names someone |
+| `mark facts validate` | Checks `sources/facts.yaml`: every ordinance cites something, the dates make sense |
+| `mark facts list` | Every rule and price you maintain, and whether each applies today |
+| `mark facts probe "..."` | Which of your facts a real question would put in front of Jay |
 | `mark ask "..."` | One question, one answer, with sources |
 | `mark chat` | A conversation in the terminal (`/reset`, `/sources`, `/quit`) |
 | `mark serve` | The browser chat page |

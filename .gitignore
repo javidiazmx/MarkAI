@@ -9,6 +9,7 @@ data/*
 
 # Private manifest (feed URLs with tokens); load_manifest prefers it when present
 sources/sources.local.yaml
+sources/facts.local.yaml
 
 # Python
 __pycache__/
