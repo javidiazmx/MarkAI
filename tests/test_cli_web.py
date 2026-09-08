@@ -1218,3 +1218,128 @@ def test_mark_accounts_resets_a_password(tmp_path, monkeypatch):
         app, ["accounts", "reset-password", "nobody@example.com", "--password", "a new password"]
     )
     assert missing.exit_code == 1
+
+
+# --- the lead reaching the CRM ----------------------------------------------------------
+
+
+def test_a_signup_queues_a_lead_with_what_they_asked_about(settings, store):
+    from markai.web.crm import Crm
+
+    sent = []
+    client = _client(settings, store, FakeAdvisor())
+    headers = {"X-Browser-Id": "b1"}
+    _ask(client, "t1", "How long do I have to return a deposit?")
+
+    # Swap the queue's sender before signing up, so nothing leaves the process.
+    queue = Crm(settings.data_dir / "leads.db", url="https://crm.test/hook", sender=sent.append)
+    client.post("/api/account", json={**SIGNUP, "password": ""}, headers=headers)
+    queue.deliver_pending()
+    queue.close()
+
+    assert len(sent) == 1
+    lead = sent[0]
+    assert lead["email"] == "javier@example.com"
+    assert lead["neighborhood"] == "Logan Square"
+    assert lead["asked_about"] == "How long do I have to return a deposit"
+    assert lead["has_password"] is False
+
+
+def test_a_signup_without_a_password_is_still_remembered(settings, store):
+    client = _client(settings, store, FakeAdvisor())
+    headers = {"X-Browser-Id": "b1"}
+    _ask(client, "t1", "One")
+    _ask(client, "t2", "Two")
+
+    made = client.post("/api/account", json={**SIGNUP, "password": ""}, headers=headers)
+    assert made.status_code == 200
+    assert made.json()["has_password"] is False
+    assert _ask(client, "t3", "Third question").status_code == 200, "no wall on this device"
+
+    state = client.get("/api/account", headers=headers).json()
+    assert state["signed_in"] is True and state["has_password"] is False
+
+
+def test_the_password_can_be_required_by_the_owner(settings, store):
+    settings = settings.model_copy(update={"password_required": True})
+    client = _client(settings, store)
+    bad = client.post(
+        "/api/account", json={**SIGNUP, "password": ""}, headers={"X-Browser-Id": "b1"}
+    )
+    assert bad.status_code == 400
+    assert "8 characters" in bad.json()["detail"]
+
+
+def test_a_password_added_later_keeps_this_device_signed_in(settings, store):
+    client = _client(settings, store, FakeAdvisor())
+    headers = {"X-Browser-Id": "b1"}
+    client.post("/api/account", json={**SIGNUP, "password": ""}, headers=headers)
+
+    added = client.post("/api/password", json={"password": "six flats and a boiler"})
+    assert added.json() == {"has_password": True}
+    assert client.get("/api/account", headers=headers).json()["signed_in"] is True
+
+    client.post("/api/logout")
+    back = client.post(
+        "/api/login", json={"email": "javier@example.com", "password": "six flats and a boiler"}
+    )
+    assert back.json()["has_password"] is True
+
+
+def test_adding_a_password_needs_to_be_signed_in(settings, store):
+    client = _client(settings, store)
+    refused = client.post("/api/password", json={"password": "six flats and a boiler"})
+    assert refused.status_code == 401
+
+
+def test_an_email_already_taken_without_a_password_is_not_handed_over(settings, store):
+    client = _client(settings, store, FakeAdvisor())
+    client.post("/api/account", json={**SIGNUP, "password": ""}, headers={"X-Browser-Id": "b1"})
+    _ask(client, "t1", "Something private about my building")
+    client.post("/api/logout")
+
+    again = client.post(
+        "/api/account",
+        json={**SIGNUP, "name": "Someone Else", "password": ""},
+        headers={"X-Browser-Id": "b2"},
+    )
+    assert again.status_code == 400
+    assert "no password yet" in again.json()["detail"]
+    assert client.get("/api/threads", headers={"X-Browser-Id": "b2"}).json() == {"threads": []}
+
+
+def test_mark_leads_lists_and_sends(tmp_path, monkeypatch):
+    from markai.web.accounts import Account
+    from markai.web.crm import Crm, build_payload
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True)
+    queue = Crm(data_dir / "leads.db")
+    queue.enqueue(
+        "a1",
+        build_payload(
+            Account(
+                id="a1",
+                email="javier@example.com",
+                name="Javier Diaz",
+                phone="312-555-0134",
+                neighborhood="Logan Square",
+            )
+        ),
+    )
+    queue.close()
+
+    manifest = tmp_path / "sources.yaml"
+    manifest.write_text("websites: []\n", encoding="utf-8")
+    monkeypatch.setenv("MARKAI_SOURCES_FILE", str(manifest))
+    monkeypatch.setenv("MARKAI_DATA_DIR", str(data_dir))
+
+    listed = runner.invoke(app, ["leads", "list"])
+    assert listed.exit_code == 0
+    assert "javier@example.com" in listed.stdout
+    assert "No CRM webhook set" in listed.stdout
+    assert "1 waiting" in listed.stdout
+
+    blocked = runner.invoke(app, ["leads", "send"])
+    assert blocked.exit_code == 1
+    assert "MARKAI_CRM_WEBHOOK_URL" in blocked.stdout + str(blocked.stderr)

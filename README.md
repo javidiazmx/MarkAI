@@ -94,6 +94,9 @@ Then:
 | `mark accounts list` | The landlords with an account on the page |
 | `mark accounts list --csv leads.csv` | The same, exported. That file holds personal data |
 | `mark accounts reset-password EMAIL` | Set a password. The only recovery route there is |
+| `mark leads test` | Sends one fake lead, to prove the CRM wiring before a real one |
+| `mark leads list` | Every lead and whether your CRM has it yet |
+| `mark leads send` | Push whatever is waiting, `--retry-all` after fixing a URL |
 | `mark ask "..."` | One question, one answer, with sources |
 | `mark chat` | A conversation in the terminal (`/reset`, `/sources`, `/quit`) |
 | `mark serve` | The browser chat page |
@@ -317,8 +320,11 @@ reads, question after question, means the TTL is shorter than the gaps between q
 - Properties a landlord adds in the sidebar go to `data/portfolio.db`, on the same machine
   and under the same owner, and ride along with each of their questions so an answer can be
   about their building. Removing one deletes the row.
+- A new lead is queued in `data/leads.db` and POSTed to `MARKAI_CRM_WEBHOOK_URL` if one is
+  set. That is the one place any of this leaves the machine on purpose, so whatever you
+  point it at is where a landlord's contact details end up.
 - The account form writes a name, an email, a phone and a neighborhood to
-  `data/accounts.db`, alongside an scrypt hash of the password. None of it reaches the log,
+  `data/accounts.db`, alongside an scrypt hash of the password when there is one. None of it reaches the log,
   passwords included, and none of it leaves that file; `mark accounts list` is how you read
   it. It is personal data about other people, so it comes with obligations the rest of this
   does not: say what you will do with it, do only that, and treat the export like your rent
@@ -326,17 +332,35 @@ reads, question after question, means the TTL is shorter than the gaps between q
 - All of these sit under `data/`, which is excluded from version control, and all of them
   are worth knowing about before this page goes in front of anyone but you.
 
-## The free account
+## The account, and the lead
 
-Two questions get answered, then the page asks for a name, an email, a phone, the
-neighborhood the rental is in, and a password. The email is the username.
-`MARKAI_FREE_QUESTIONS_BEFORE_SIGNUP` moves the line, `MARKAI_ACCOUNT_REQUIRED=false`
-removes it. The terminal is never asked.
+Two questions get answered, then the page asks for a name, an email, a phone and the
+neighborhood the rental is in. That form is the lead. `MARKAI_FREE_QUESTIONS_BEFORE_SIGNUP`
+moves the line, `MARKAI_ACCOUNT_REQUIRED=false` removes it. The terminal is never asked.
+
+**A password is offered, not demanded**, and the reasoning is worth keeping because it is
+easy to get backwards:
+
+- A password does not verify an email. Neither route does, so requiring one does not raise
+  lead quality; it costs conversion at the moment somebody decides.
+- What it buys is a **second device**. Without one, that device is remembered and the wall
+  does not come back. With one, the account signs in anywhere.
+- Without email delivery there is no reset link, so every forgotten password lands in
+  Mark's inbox. Fewer passwords, fewer of those.
+
+So the page takes the lead first and offers "add a password to use Jay on your phone too"
+in the sidebar afterwards, where it reads as a feature rather than a toll. Set
+`MARKAI_PASSWORD_REQUIRED=true` to demand one at signup instead.
 
 Signing in is what makes it an account rather than a form: conversations and properties
-belong to the account, so they follow a landlord to another machine, and the two questions
-they asked before signing up are claimed by the account they just made rather than
-disappearing. While nobody is signed in, all of that belongs to the browser instead.
+belong to the account, so they follow a landlord to another machine, and the questions they
+asked before signing up are claimed by the account they just made rather than disappearing.
+While nobody is signed in, all of that belongs to the browser instead.
+
+An email already held by an account with no password is refused rather than handed over. It
+would be one line to give that device the existing account, and it would mean anyone who
+knows a landlord's email can read their conversations. They are told to get a password set,
+which is the same path as forgetting one.
 
 How the password is held, since this is the part worth being able to check:
 
@@ -365,6 +389,30 @@ The free-question count is kept apart from the saved conversations on purpose: d
 conversation does not hand back a free question. It is counted when an answer lands, so a
 question that failed costs nothing. Someone who clears their browser storage while
 anonymous does get another two.
+
+### Sending the lead to a CRM
+
+`MARKAI_CRM_WEBHOOK_URL` is POSTed a flat JSON lead the moment someone signs up: name,
+email, phone, neighborhood, what they asked about, how many questions they had, and whether
+they set a password. Any endpoint that takes a JSON POST works, which includes a CRM's own
+inbound URL and a Zapier or Make catch hook. `MARKAI_CRM_WEBHOOK_TOKEN` becomes an
+`Authorization: Bearer` header; `MARKAI_CRM_WEBHOOK_HEADER` carries one custom header
+instead.
+
+Two things it will not do. It will not lose a lead: the lead is written to `data/leads.db`
+first and delivered after, retried with backoff up to six times and retried again on the
+next start, so an outage or a wrong URL costs time and nothing else. And it will not make a
+landlord wait: delivery runs on a worker thread, off the path that answers a question.
+
+```bash
+mark leads test              # one obviously fake lead, to prove the wiring
+mark leads list              # every lead, and whether the CRM has it
+mark leads send              # push what is waiting
+mark leads send --retry-all  # after fixing a URL, put the ones that gave up back
+```
+
+The payload is flat on purpose: a shape that does not change is one you map once. Whatever
+the URL, it receives the same keys.
 - Questions are logged locally (text, coverage, token counts) so `mark gaps` can show you what
   material to add. Answers are not logged. Nothing above DEBUG level records question content.
 

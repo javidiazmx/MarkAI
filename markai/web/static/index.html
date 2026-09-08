@@ -203,6 +203,13 @@
     font-size: 12px; color: var(--muted);
   }
   .whoami span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #pass-form { display: grid; gap: 6px; padding: 8px 0 0; }
+  #pass-form input {
+    width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px;
+    background: var(--bg); color: var(--ink); font: inherit; font-size: 13px;
+  }
+  #pass-form button { padding: 7px 12px; font-size: 13px; border-radius: 7px; }
+  #pass-form .pair { display: flex; gap: 6px; }
   .thread { display: flex; align-items: center; }
   .thread .pick {
     flex: 1; min-width: 0; background: none; border: 0; color: inherit; font: inherit;
@@ -265,6 +272,19 @@
       <span id="whoami-name"></span>
       <button class="linkish" id="sign-out" type="button">Sign out</button>
     </div>
+    <form id="pass-form" hidden>
+      <input id="pw-new" type="password" minlength="8" maxlength="200"
+             autocomplete="new-password" placeholder="A password, 8 characters or more" />
+      <div class="formerr" id="pass-error"></div>
+      <div class="pair">
+        <button type="submit">Save</button>
+        <button class="ghost" id="pass-cancel" type="button">Not now</button>
+      </div>
+    </form>
+    <p class="whoami" id="add-pass-row" hidden>
+      <button class="linkish" id="add-pass" type="button">Add a password</button>
+      to use Jay on your phone too.
+    </p>
   </div>
 </aside>
 
@@ -282,15 +302,17 @@
       <input id="su-hood" type="text" maxlength="80"
              placeholder="Neighborhood where your rental is" required />
       <input id="su-pass" type="password" minlength="8" maxlength="200"
-             autocomplete="new-password" placeholder="Password, at least 8 characters"
-             required />
+             autocomplete="new-password"
+             placeholder="Password (optional, for a second device)" />
       <div class="formerr" id="signup-error"></div>
       <div class="row-buttons">
         <button type="submit" id="signup-go">Create my free account</button>
       </div>
       <p class="fineprint">
-        Your email is your username. This stays with GC Realty, it is not sold or shared,
-        and the neighborhood is what lets Jay answer for your side of the line.
+        This device remembers you either way. A password is only needed to pick Jay back up
+        on your phone, and you can add one later. Your email is the username. This stays
+        with GC Realty, it is not sold or shared, and the neighborhood is what lets Jay
+        answer for your side of the line.
       </p>
     </form>
     <p class="fineprint">
@@ -647,10 +669,52 @@
   function drawWhoami() {
     var signedIn = account.required && account.signed_in;
     whoami.hidden = !signedIn;
+    // Offered, never demanded: what it buys is a second device, and that is worth more to
+    // someone who has already seen Jay work than to someone at the door.
+    document.getElementById("add-pass-row").hidden = !signedIn || account.has_password;
     if (signedIn) {
       document.getElementById("whoami-name").textContent = account.name || account.email || "";
     }
   }
+
+  var passForm = document.getElementById("pass-form");
+  var passError = document.getElementById("pass-error");
+
+  document.getElementById("add-pass").addEventListener("click", function () {
+    passForm.hidden = false;
+    document.getElementById("add-pass-row").hidden = true;
+    document.getElementById("pw-new").focus();
+  });
+
+  document.getElementById("pass-cancel").addEventListener("click", function () {
+    passForm.hidden = true;
+    document.getElementById("pw-new").value = "";
+    drawWhoami();
+  });
+
+  passForm.addEventListener("submit", async function (event) {
+    event.preventDefault();
+    passError.textContent = "";
+    var field = document.getElementById("pw-new");
+    try {
+      var response = await fetch("/api/password", {
+        method: "POST", headers: headers(), body: JSON.stringify({ password: field.value })
+      });
+      if (!response.ok) {
+        var detail = "That did not go through.";
+        try { detail = (await response.json()).detail || detail; } catch (e) {}
+        passError.textContent = detail;
+        return;
+      }
+    } catch (error) {
+      passError.textContent = "Could not reach the server.";
+      return;
+    }
+    field.value = "";
+    passForm.hidden = true;
+    account.has_password = true;
+    drawWhoami();
+  });
 
   function showHalf(which) {
     var login = which === "login";
@@ -683,6 +747,7 @@
     account.signed_in = true;
     account.name = data.name;
     account.email = data.email;
+    account.has_password = !!data.has_password;
     account.free_left = 0;
     drawWhoami();
     signupCard.hidden = true;

@@ -85,7 +85,6 @@ def test_every_field_is_kept_and_the_email_is_the_username():
         ("phone", "555", "area code"),
         ("neighborhood", "", "neighborhood"),
         ("password", "short", f"at least {MIN_PASSWORD_CHARS}"),
-        ("password", "", f"at least {MIN_PASSWORD_CHARS}"),
         ("password", "x" * 400, "longer than"),
         ("password", "javier@example.com", "cannot be your email"),
         ("password", "with a\nline break", "line break"),
@@ -101,6 +100,18 @@ def test_a_phone_written_any_way_is_accepted():
         assert parse({**FORM, "phone": written})[0].phone
 
 
+def test_no_password_is_the_default_route():
+    """The lead is the point; a password is an upgrade, so leaving it blank is allowed."""
+    account, password = parse({**FORM, "password": ""})
+    assert password == ""
+    assert account.email == "javier@example.com"
+
+
+def test_a_blank_password_is_refused_when_the_owner_requires_one():
+    with pytest.raises(SignupError, match=f"at least {MIN_PASSWORD_CHARS}"):
+        parse({**FORM, "password": ""}, password_required=True)
+
+
 def test_a_passphrase_with_spaces_is_a_fine_password():
     account, password = parse({**FORM, "password": "my six flat on division"})
     assert verify_password(password, hash_password(password))
@@ -110,8 +121,49 @@ def test_a_passphrase_with_spaces_is_a_fine_password():
 # --- signing up and in ------------------------------------------------------------------
 
 
-def test_signing_up_returns_an_account_and_a_session(accounts):
+# --- the lead-only account --------------------------------------------------------------
+
+
+def test_an_account_with_no_password_still_remembers_this_device(accounts):
+    account, token = accounts.create({**FORM, "password": ""})
+    assert account.has_password is False
+    assert accounts.account_for_token(token).email == "javier@example.com"
+    assert accounts.needs_signup(account.owner_id) is False, "no wall on this device"
+
+
+@pytest.mark.parametrize("attempt", ["", " ", "anything", "password"])
+def test_nothing_signs_in_to_a_passwordless_account(accounts, attempt):
+    """A hash of the empty string would have matched a blank password. It is not stored."""
+    accounts.create({**FORM, "password": ""})
+    with pytest.raises(LoginError, match="do not match"):
+        accounts.sign_in("javier@example.com", attempt)
+
+
+def test_that_email_is_not_handed_to_whoever_types_it(accounts):
+    accounts.create({**FORM, "password": ""})
+    with pytest.raises(SignupError, match="no password yet"):
+        accounts.create({**FORM, "name": "Someone Else", "password": ""})
+
+
+def test_a_password_set_later_turns_it_into_a_real_account(accounts):
+    _account, token = accounts.create({**FORM, "password": ""})
+    accounts.set_password("javier@example.com", "six flats and a boiler", keep_token=token)
+    assert accounts.by_email("javier@example.com").has_password is True
+    assert accounts.sign_in("javier@example.com", "six flats and a boiler")[0]
+    assert accounts.account_for_token(token) is not None, "the device that set it stays in"
+
+
+def test_adding_a_password_still_throws_the_other_devices_out(accounts):
+    _account, phone = accounts.create({**FORM, "password": ""})
+    laptop = accounts.start_session(_account.id)
+    accounts.set_password("javier@example.com", "six flats and a boiler", keep_token=phone)
+    assert accounts.account_for_token(phone) is not None
+    assert accounts.account_for_token(laptop) is None
+
+
+def test_signing_up_with_a_password_returns_an_account_and_a_session(accounts):
     account, token = accounts.create(FORM)
+    assert account.has_password is True
     assert token
     assert accounts.account_for_token(token).email == "javier@example.com"
     assert accounts.by_email("JAVIER@EXAMPLE.COM").id == account.id

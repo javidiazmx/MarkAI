@@ -139,6 +139,34 @@ class Settings(BaseSettings):
             "the page never asks. The terminal never asks either way."
         ),
     )
+    crm_webhook_url: str = Field(
+        default="",
+        description=(
+            "Where a new lead is POSTed as JSON: LeadSimple's inbound URL, a Zapier or "
+            "Make catch hook, or your own endpoint. Empty: leads queue and wait, so "
+            "nothing is lost while this is being set up."
+        ),
+    )
+    crm_webhook_token: SecretStr | None = Field(
+        default=None,
+        description="Sent as `Authorization: Bearer ...` when the CRM needs a key.",
+    )
+    crm_webhook_header: str = Field(
+        default="",
+        description=(
+            "An extra header for a CRM that wants something other than a bearer token, "
+            "written as `Name: value`."
+        ),
+    )
+    password_required: bool = Field(
+        default=False,
+        description=(
+            "Make the password mandatory at signup. Off: it is optional, and an account "
+            "without one is remembered on that device but cannot sign in elsewhere. A "
+            "password does not verify an email, so requiring one costs conversion without "
+            "buying lead quality; what it buys is a second device."
+        ),
+    )
     session_days: int = Field(
         default=30,
         ge=1,
@@ -264,6 +292,21 @@ class Settings(BaseSettings):
 
     def anthropic_key(self) -> str | None:
         return self._reveal(self.anthropic_api_key)
+
+    def crm_token(self) -> str | None:
+        return self._reveal(self.crm_webhook_token)
+
+    def crm_headers(self) -> dict[str, str]:
+        """Whatever the CRM needs to accept the POST. Never logged, never in `mark status`."""
+        headers: dict[str, str] = {}
+        token = self.crm_token()
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        if self.crm_webhook_header and ":" in self.crm_webhook_header:
+            name, _, value = self.crm_webhook_header.partition(":")
+            if name.strip():
+                headers[name.strip()] = value.strip()
+        return headers
 
     def voyage_key(self) -> str | None:
         return self._reveal(self.voyage_api_key)

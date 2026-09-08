@@ -1,8 +1,18 @@
-"""Accounts with a password. The email is the username.
+"""Accounts. The email is the username, and the password is optional on purpose.
 
-Two questions get answered for free, then a landlord creates an account and keeps going.
-This module owns everything about that: the password, the sign-in session, and the count of
-free questions a browser has spent before signing up.
+Two questions get answered for free, then a landlord gives a name, an email, a phone and
+the neighborhood their rental is in, and keeps going. That form is the lead. A password is
+offered alongside it and not demanded, because of what each one actually buys:
+
+- A password does not verify an email. Neither route does, so requiring one does not raise
+  lead quality; it costs conversion at the moment somebody decides.
+- What a password buys is a **second device**. Without one, this device is remembered and
+  the wall does not come back; with one, the account signs in anywhere.
+- Without email delivery there is no reset link, so every forgotten password lands in the
+  owner's inbox. Fewer passwords, fewer of those.
+
+``MARKAI_PASSWORD_REQUIRED=true`` makes it mandatory for anyone who would rather have it
+that way.
 
 What is deliberate here:
 
@@ -17,12 +27,16 @@ What is deliberate here:
 - **Identity is the account, not the browser.** Signed in, a landlord's conversations and
   properties follow them to another machine; anonymous, they belong to the browser. Both
   are an *owner id*, which is what the other stores key on.
+- **An email already taken by a passwordless account is refused, not handed over.** It
+  would be one line to issue a session to whoever types that address, and it would mean
+  anyone who knows a landlord's email can read their conversations. So they are told to get
+  a password set instead, which is the same recovery path as forgetting one.
 
 What this still does not do, and what that means: there is no email delivery, so there is
 no verification and no self-service password reset. An address is whatever they typed, and
-a landlord who forgets their password needs the owner to run
-``mark accounts reset-password``. Anyone building on this should know that before they
-treat an address here as proof of anything.
+a landlord who needs a password set needs the owner to run ``mark accounts
+reset-password``. Anyone building on this should know that before they treat an address
+here as proof of anything.
 """
 
 from __future__ import annotations
@@ -76,7 +90,7 @@ CREATE TABLE IF NOT EXISTS accounts (
     name          TEXT NOT NULL,
     phone         TEXT NOT NULL,
     neighborhood  TEXT NOT NULL,
-    password_hash TEXT NOT NULL,
+    password_hash TEXT NOT NULL DEFAULT '',
     created_at    REAL NOT NULL,
     last_login_at REAL
 );
@@ -170,6 +184,8 @@ class Account:
     name: str
     phone: str
     neighborhood: str
+    # Whether they set one. The page uses this to offer adding one later.
+    has_password: bool = False
 
     @property
     def owner_id(self) -> str:
@@ -182,6 +198,7 @@ class Account:
             "name": self.name,
             "phone": self.phone,
             "neighborhood": self.neighborhood,
+            "has_password": self.has_password,
         }
 
 
@@ -203,9 +220,16 @@ def normalize_email(value: Any) -> str:
     return _clean(value, MAX_EMAIL_CHARS).lower()
 
 
-def check_password(password: Any, email: str = "") -> str:
-    """Validate a new password. Length is the rule that matters; the rest is a trap."""
+def check_password(password: Any, email: str = "", required: bool = True) -> str:
+    """Validate a new password. Length is the rule that matters; the rest is a trap.
+
+    Returns "" when none was given and none is required, which is what a lead-only signup
+    looks like: the account exists, this device is remembered, and there is nothing to
+    sign in with anywhere else.
+    """
     raw = str(password or "")
+    if not raw and not required:
+        return ""
     if "\n" in raw or "\r" in raw:
         raise SignupError("A password cannot contain a line break.")
     if len(raw) < MIN_PASSWORD_CHARS:
@@ -217,8 +241,8 @@ def check_password(password: Any, email: str = "") -> str:
     return raw
 
 
-def parse(raw: dict[str, Any]) -> tuple[Account, str]:
-    """Validate the signup form. Returns the account and the password to hash."""
+def parse(raw: dict[str, Any], password_required: bool = False) -> tuple[Account, str]:
+    """Validate the signup form. Returns the account and the password, which may be ""."""
     name = _clean(raw.get("name"), MAX_NAME_CHARS)
     if len(name) < 2:
         raise SignupError("Tell us your name.")
@@ -231,7 +255,7 @@ def parse(raw: dict[str, Any]) -> tuple[Account, str]:
     neighborhood = _clean(raw.get("neighborhood"), MAX_NEIGHBORHOOD_CHARS)
     if len(neighborhood) < 2:
         raise SignupError("Which neighborhood is your rental in?")
-    password = check_password(raw.get("password"), email)
+    password = check_password(raw.get("password"), email, required=password_required)
     return (
         Account(
             id=secrets.token_hex(16),
@@ -301,6 +325,7 @@ class Accounts:
             name=row["name"],
             phone=row["phone"],
             neighborhood=row["neighborhood"],
+            has_password=bool(row["password_hash"]),
         )
 
     def by_email(self, email: str) -> Account | None:
@@ -311,16 +336,26 @@ class Accounts:
             row = self._conn.execute("SELECT * FROM accounts WHERE email = ?", (needle,)).fetchone()
         return self._row_to_account(row) if row else None
 
-    def create(self, raw: dict[str, Any]) -> tuple[Account, str]:
-        """Create an account and a signed-in session. Returns the account and its token."""
-        account, password = parse(raw)
-        stored = hash_password(password)
+    def create(self, raw: dict[str, Any], password_required: bool = False) -> tuple[Account, str]:
+        """Create an account and a session for this device. Returns it and the token."""
+        account, password = parse(raw, password_required=password_required)
+        account.has_password = bool(password)
+        # An empty string, never a hash of one: a hash of "" would match a blank password.
+        stored = hash_password(password) if password else ""
         with self._lock, self._conn:
             taken = self._conn.execute(
-                "SELECT 1 FROM accounts WHERE email = ?", (account.email,)
+                "SELECT password_hash FROM accounts WHERE email = ?", (account.email,)
             ).fetchone()
-            if taken:
+            if taken and taken["password_hash"]:
                 raise SignupError("There is already an account with that email. Sign in instead.")
+            if taken:
+                # Handing this device the existing account would mean anyone who knows a
+                # landlord's email can read their conversations. Same path as a forgotten
+                # password instead.
+                raise SignupError(
+                    "That email is already with us, and it has no password yet. Email "
+                    "mark@gcrealtyinc.com to get one set, then sign in."
+                )
             self._conn.execute(
                 "INSERT INTO accounts (id, email, name, phone, neighborhood, password_hash,"
                 " created_at, last_login_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -346,8 +381,9 @@ class Accounts:
         with self._lock:
             row = self._conn.execute("SELECT * FROM accounts WHERE email = ?", (needle,)).fetchone()
         # An unknown email still costs a hash, so the wait does not answer the question the
-        # message refuses to.
-        stored = row["password_hash"] if row else _DUMMY_HASH
+        # message refuses to. An account with no password is unreachable by the same
+        # measure: nothing can match it, and nothing is said about why.
+        stored = (row["password_hash"] if row else "") or _DUMMY_HASH
         if not verify_password(str(password or ""), stored) or row is None:
             self._note_failure(needle)
             raise LoginError(WRONG_CREDENTIALS)
@@ -359,18 +395,30 @@ class Accounts:
             )
         return account, self.start_session(account.id)
 
-    def set_password(self, email: str, password: str) -> None:
-        """Reset a password from the terminal. There is no self-service route to this."""
+    def set_password(self, email: str, password: str, keep_token: str | None = None) -> None:
+        """Set or reset a password from the terminal. There is no self-service route.
+
+        This is also how a lead-only account becomes one that can sign in on a second
+        device, which is the whole reason the owner has this command.
+        """
         account = self.by_email(email)
         if account is None:
             raise SignupError(f"No account with the email {normalize_email(email)!r}.")
-        stored = hash_password(check_password(password, account.email))
+        stored = hash_password(check_password(password, account.email, required=True))
         with self._lock, self._conn:
             self._conn.execute(
                 "UPDATE accounts SET password_hash = ? WHERE id = ?", (stored, account.id)
             )
-            # Every existing session goes: a reset is also how you throw someone out.
-            self._conn.execute("DELETE FROM sessions WHERE account_id = ?", (account.id,))
+            # Every other session goes: a reset is also how you throw someone out. The one
+            # doing the setting is kept when it is the landlord adding a password to their
+            # own account, because signing them out of that would be a strange reward.
+            if keep_token:
+                self._conn.execute(
+                    "DELETE FROM sessions WHERE account_id = ? AND token_hash != ?",
+                    (account.id, self._token_hash(keep_token)),
+                )
+            else:
+                self._conn.execute("DELETE FROM sessions WHERE account_id = ?", (account.id,))
 
     def all(self, limit: int | None = None) -> list[tuple[Account, float]]:
         """Every account, newest first, with when it was created. For `mark accounts`."""

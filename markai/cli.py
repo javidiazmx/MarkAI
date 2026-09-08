@@ -30,10 +30,12 @@ facts_app = typer.Typer(
 accounts_app = typer.Typer(
     help="The landlords who created an account on the page.", no_args_is_help=True
 )
+leads_app = typer.Typer(help="Leads on their way to your CRM.", no_args_is_help=True)
 app.add_typer(sources_app, name="sources")
 app.add_typer(calc_app, name="calc")
 app.add_typer(facts_app, name="facts")
 app.add_typer(accounts_app, name="accounts")
+app.add_typer(leads_app, name="leads")
 
 console = Console()
 err = Console(stderr=True)
@@ -1013,6 +1015,123 @@ def accounts_reset_password(
     store.close()
     console.print(f"[green]✓[/green] Password set for {escape(email)}.")
     console.print("[dim]Every session that account had is signed out.[/dim]")
+
+
+def _crm(settings: Any) -> Any:
+    from markai.web.crm import Crm
+
+    return Crm(
+        settings.data_dir / "leads.db",
+        url=settings.crm_webhook_url,
+        headers=settings.crm_headers(),
+    )
+
+
+@leads_app.command("list")
+def leads_list(
+    limit: int = typer.Option(25, "-n", "--limit", help="How many to show."),
+) -> None:
+    """Every lead and whether the CRM has it yet."""
+    from datetime import UTC, datetime
+
+    settings = _settings()
+    crm = _crm(settings)
+    counts = crm.counts()
+    rows = crm.all(limit=limit)
+    configured = crm.configured
+    crm.close()
+
+    if not configured:
+        console.print(
+            "[yellow]No CRM webhook set, so leads are queued and waiting.[/yellow]\n"
+            "[dim]Put the URL in .env as MARKAI_CRM_WEBHOOK_URL, then run "
+            "`mark leads send`.[/dim]"
+        )
+    console.print(
+        f"[dim]{counts['total']} total · {counts['delivered']} delivered · "
+        f"{counts['waiting']} waiting · {counts['gave_up']} gave up[/dim]"
+    )
+    if not rows:
+        return
+    table = Table(show_header=True, header_style="bold", title="Leads")
+    table.add_column("When")
+    table.add_column("Name", overflow="fold")
+    table.add_column("Email", overflow="fold")
+    table.add_column("State")
+    table.add_column("Why not", overflow="fold")
+    for lead in rows:
+        if lead.delivered:
+            state = "[green]delivered[/green]"
+        elif lead.gave_up:
+            state = "[red]gave up[/red]"
+        else:
+            state = f"waiting ({lead.attempts})"
+        table.add_row(
+            datetime.fromtimestamp(lead.created_at, UTC).strftime("%Y-%m-%d"),
+            escape(str(lead.payload.get("name", ""))),
+            escape(str(lead.payload.get("email", ""))),
+            state,
+            escape(lead.last_error[:60]),
+        )
+    console.print(table)
+
+
+@leads_app.command("send")
+def leads_send(
+    retry_all: bool = typer.Option(
+        False, "--retry-all", help="Also retry the ones that gave up, after fixing the URL."
+    ),
+) -> None:
+    """Push whatever is waiting to the CRM now."""
+    settings = _settings()
+    crm = _crm(settings)
+    if not crm.configured:
+        crm.close()
+        _fail(
+            "No CRM webhook is set.",
+            "Add MARKAI_CRM_WEBHOOK_URL to .env. A Zapier or Make catch hook works, and so "
+            "does any endpoint that accepts a JSON POST.",
+        )
+    if retry_all:
+        console.print(f"[dim]Requeued {crm.reset_attempts()} undelivered lead(s).[/dim]")
+    delivered, failed = crm.deliver_pending()
+    counts = crm.counts()
+    crm.close()
+    console.print(f"[green]✓[/green] Sent {delivered}, {failed} to retry.")
+    console.print(
+        f"[dim]{counts['waiting']} waiting · {counts['gave_up']} gave up · "
+        f"{counts['delivered']} delivered in total[/dim]"
+    )
+
+
+@leads_app.command("test")
+def leads_test() -> None:
+    """Send one obviously fake lead, to prove the wiring before a real one arrives."""
+    from markai.web.crm import build_payload
+
+    settings = _settings()
+    crm = _crm(settings)
+    if not crm.configured:
+        crm.close()
+        _fail("No CRM webhook is set.", "Add MARKAI_CRM_WEBHOOK_URL to .env first.")
+
+    class _Fake:
+        name = "TEST LEAD - please ignore"
+        email = "test@example.com"
+        phone = "312-555-0100"
+        neighborhood = "Logan Square"
+        has_password = False
+
+    crm.enqueue("test", build_payload(_Fake(), {"asked_about": "A test from mark leads test"}))
+    delivered, failed = crm.deliver_pending()
+    crm.close()
+    if delivered:
+        console.print("[green]✓[/green] The CRM accepted it. Go look for the test lead.")
+        return
+    _fail(
+        f"The CRM did not accept it ({failed} failed).",
+        "Run `mark leads list` for the reason it gave.",
+    )
 
 
 # --------------------------------------------------------------------------------------
