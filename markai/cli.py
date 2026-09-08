@@ -902,6 +902,77 @@ def search(
     store.close()
 
 
+@app.command()
+def episodes(
+    query: str = typer.Argument("", help="A topic to look for. Omit to list the catalog."),
+    guest: str = typer.Option("", "--guest", help="Only episodes whose title names this person."),
+    limit: int = typer.Option(10, "-n", "--limit", help="How many to show."),
+    kind: str = typer.Option(
+        "all", "--kind", help="all, podcast or youtube.", case_sensitive=False
+    ),
+) -> None:
+    """Search the podcast and video index: episode, guest, topics and the minute."""
+    from markai.knowledge.episodes import AV_KINDS, catalog, find_moments
+    from markai.models import SourceKind
+
+    wanted = {"all": AV_KINDS, "podcast": (SourceKind.PODCAST,), "youtube": (SourceKind.YOUTUBE,)}
+    kinds = wanted.get(kind.lower())
+    if kinds is None:
+        _fail(f"Unknown kind {kind!r}.", "Use all, podcast or youtube.")
+
+    settings = _settings()
+    store = _store(settings)
+
+    if not query.strip():
+        entries = catalog(store, guest=guest or None, kinds=kinds, limit=limit)
+        if not entries:
+            console.print("[yellow]No episodes match.[/yellow]")
+            store.close()
+            return
+        table = Table(show_header=True, header_style="bold", title="Episodes")
+        table.add_column("Ep.")
+        table.add_column("Title")
+        table.add_column("Guest")
+        table.add_column("Date")
+        for entry in entries:
+            title = escape(entry.title[:70])
+            if not entry.transcribed:
+                title += " [dim](show notes only)[/dim]"
+            table.add_row(
+                entry.number or "-", title, escape(entry.guest or "-"), entry.published_at or "-"
+            )
+        console.print(table)
+        console.print(f"[dim]{len(entries)} shown[/dim]")
+        store.close()
+        return
+
+    from markai.knowledge.embeddings import build_embedder
+    from markai.knowledge.retriever import Retriever
+
+    retriever = Retriever(store, build_embedder(settings), settings)
+    if retriever.is_empty():
+        _fail("The knowledge base is empty.", "Run `mark ingest` first.")
+    moments = find_moments(retriever, query, limit=limit, kinds=kinds)
+    if not moments:
+        console.print(f"[yellow]Nothing in the episodes covers {escape(query)}.[/yellow]")
+        store.close()
+        return
+    for index, moment in enumerate(moments, start=1):
+        label = moment.label()
+        console.print(
+            f"[bold]{index}. {escape(moment.title)}[/bold]"
+            + (f" [dim]{label}[/dim]" if label else "")
+        )
+        if moment.guest:
+            console.print(f"   guest: {escape(moment.guest)}")
+        if moment.topics:
+            console.print(f"   [dim]topics: {escape(', '.join(moment.topics))}[/dim]")
+        console.print(f"   {escape(moment.quote)}…")
+        if moment.url:
+            console.print(f"   [blue]{escape(moment.url)}[/blue]")
+    store.close()
+
+
 # --------------------------------------------------------------------------------------
 # Asking Mark
 # --------------------------------------------------------------------------------------

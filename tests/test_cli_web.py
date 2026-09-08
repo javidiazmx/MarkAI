@@ -218,7 +218,7 @@ def test_reset_starts_a_new_conversation(settings, store):
 def test_the_index_page_is_served(settings, store):
     response = _client(settings, store).get("/")
     assert response.status_code == 200
-    assert "Chicagoland landlord advisor" in response.text
+    assert "Your Chicagoland AI Advisor" in response.text
 
 
 def test_importing_the_module_needs_no_credentials(monkeypatch):
@@ -712,3 +712,52 @@ def test_the_page_lists_saved_conversations_on_the_side():
     assert "/api/threads" in page
     assert "startNew" in page, "a new conversation gets a new id instead of reusing the old one"
     assert ".innerHTML" not in page, "titles are landlord text; they go in as text nodes"
+
+
+# --- the episode index ------------------------------------------------------------------
+
+
+def test_episodes_lists_the_catalog(tmp_path, monkeypatch, settings, store):
+    monkeypatch.setenv("MARKAI_DATA_DIR", str(settings.data_dir))
+    result = runner.invoke(app, ["episodes"])
+    assert result.exit_code == 0
+    assert "212" in result.stdout and "198" in result.stdout
+    assert "Security deposit rules" not in result.stdout, "a web page is not an episode"
+
+
+def test_episodes_searches_for_a_topic(tmp_path, monkeypatch, settings, store):
+    monkeypatch.setenv("MARKAI_DATA_DIR", str(settings.data_dir))
+    result = runner.invoke(app, ["episodes", "heat ordinance temperature"])
+    assert result.exit_code == 0
+    assert "Winter heat rules" in result.stdout
+    assert "Ep. 198" in result.stdout
+
+
+def test_episodes_says_so_when_nothing_matches(tmp_path, monkeypatch, settings, store):
+    monkeypatch.setenv("MARKAI_DATA_DIR", str(settings.data_dir))
+    result = runner.invoke(app, ["episodes", "zzzzq nonexistent topic"])
+    assert result.exit_code == 0
+    assert "Nothing in the episodes" in result.stdout
+
+
+def test_episodes_rejects_an_unknown_kind(tmp_path, monkeypatch, settings, store):
+    monkeypatch.setenv("MARKAI_DATA_DIR", str(settings.data_dir))
+    result = runner.invoke(app, ["episodes", "--kind", "blogs"])
+    assert result.exit_code == 1
+
+
+def test_the_episodes_endpoint_searches_and_lists(settings, store):
+    client = _client(settings, store)
+
+    found = client.get("/api/episodes", params={"q": "heat ordinance", "limit": 3}).json()
+    assert found["episodes"][0]["number"] == "198"
+    assert found["episodes"][0]["timestamp"] is not None
+
+    listed = client.get("/api/episodes").json()
+    assert [e["number"] for e in listed["episodes"]] == ["212", "198"]
+
+
+def test_the_episodes_endpoint_is_gated_by_the_access_code(settings, store):
+    settings = settings.model_copy(update={"web_access_code": "letmein"})
+    client = _client(settings, store)
+    assert client.get("/api/episodes").status_code == 401

@@ -49,7 +49,11 @@ def test_request_shape_matches_the_opus_5_contract(settings, store):
         "at 1.25x that is never read"
     )
     assert call["max_tokens"] == settings.request_max_tokens()
-    assert [t["name"] for t in call["tools"]] == ["analyze_deal", "mortgage_payment"]
+    assert [t["name"] for t in call["tools"]] == [
+        "analyze_deal",
+        "mortgage_payment",
+        "find_episode",
+    ]
     for banned in ("temperature", "top_p", "top_k"):
         assert banned not in call
 
@@ -350,3 +354,18 @@ def test_fast_mode_sends_the_speed_flag_and_its_beta(settings, store):
     call = client.calls[0]
     assert call["speed"] == "fast"
     assert set(call["betas"]) == {"server-side-fallback-2026-07-01", "fast-mode-2026-02-01"}
+
+
+def test_find_episode_is_answered_from_the_knowledge_base(settings, store):
+    finals = [
+        tool_use_message("find_episode", {"topic": "heat ordinance", "limit": 3}),
+        text_message("Episode 198 covers the heat season."),
+    ]
+    advisor, client = build_advisor(settings, store, finals)
+    response = advisor.ask("Which episode covers the heat ordinance?")
+
+    assert response.tool_calls == ["find_episode"]
+    block = client.calls[1]["messages"][-1]["content"][0]
+    assert block["is_error"] is False
+    assert '"number": "198"' in block["content"], "the episode number came from the store"
+    assert "timestamp" in block["content"], "and the minute the answer is at"

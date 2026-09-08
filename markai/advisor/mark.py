@@ -44,6 +44,7 @@ from markai.advisor.prompt_builder import (
     strip_unused_markers,
 )
 from markai.config import Settings
+from markai.knowledge.episodes import EPISODE_TOOL, run_episode_tool
 from markai.knowledge.retriever import Retriever
 from markai.models import AdvisorResponse, RetrievedChunk
 from markai.sources.manifest import BusinessProfile, ToolLink
@@ -111,6 +112,9 @@ class MarkAdvisor:
         self.retriever = retriever
         self.tools = list(tools or [])
         self.store = store
+        # Built once and never rebuilt: tools render before the system blocks, so a list
+        # that changed between requests would move the cache prefix and lose the cache.
+        self.tool_definitions = [*TOOL_DEFINITIONS, EPISODE_TOOL]
         self.system_blocks = build_system_blocks(
             system_prompt, build_business_block(business), settings.cache_ttl
         )
@@ -217,7 +221,7 @@ class MarkAdvisor:
                     max_tokens=self.settings.request_max_tokens(),
                     system=self.system_blocks,
                     messages=api_messages,
-                    tools=TOOL_DEFINITIONS,
+                    tools=self.tool_definitions,
                     thinking={"type": "adaptive"},
                     output_config={"effort": self.settings.effort},
                     betas=[FALLBACK_BETA, FAST_MODE_BETA] if fast else [FALLBACK_BETA],
@@ -295,8 +299,11 @@ class MarkAdvisor:
                     tool_calls.append(name)
                     yield StreamEvent("tool_call", name)
                     try:
-                        result = dispatch_tool(name, dict(block.input or {}))
-                    except Exception as exc:  # dispatch_tool is defensive, this is belt and braces
+                        if name == EPISODE_TOOL["name"]:
+                            result = run_episode_tool(self.retriever, dict(block.input or {}))
+                        else:
+                            result = dispatch_tool(name, dict(block.input or {}))
+                    except Exception as exc:  # the dispatchers are defensive; belt and braces
                         result = {"error": str(exc)}
                     results.append(
                         {

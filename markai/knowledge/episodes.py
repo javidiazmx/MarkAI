@@ -1,0 +1,324 @@
+"""A searchable index of the podcast and the YouTube episodes.
+
+Two questions a landlord actually asks: "which episode covers this?" and "who was the guest
+on that one?" Both are answerable from what ingest already stored, so nothing here calls a
+model or the network.
+
+- **Number** comes from the feed (``Document.episode``).
+- **Guest** is read off the title. Titles are written by people, so the parser is tolerant
+  and refuses rather than guesses: a name it is not confident about comes back as ``None``.
+- **Topics** are the terms that set the episode apart from the rest of the corpus, scored
+  with the BM25 index's own idf. That is why "yeah" and "chicago" do not show up as topics
+  without a hand-kept stoplist to remove them.
+- **Timestamp** is the start of the passage that matched, which is what makes the answer
+  useful: the episode plus the minute, not just the episode.
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+from dataclasses import dataclass, field
+from typing import Any
+
+from markai.models import Document, RetrievedChunk, SourceKind
+
+logger = logging.getLogger(__name__)
+
+AV_KINDS: tuple[SourceKind, ...] = (SourceKind.PODCAST, SourceKind.YOUTUBE)
+
+# The hosts are never "the guest". Add co-hosts here as the show adds them.
+HOSTS: frozenset[str] = frozenset({"mark ainley"})
+
+MAX_TOPICS = 6
+MAX_QUOTE_CHARS = 220
+
+# "Ep. 214:", "Episode 214 -", "#214", "214." at the front of a title.
+_EPISODE_PREFIX = re.compile(
+    r"^\s*(?:ep(?:isode)?\.?\s*|#)\s*\d+\s*[:\-–|]?\s*|^\s*\d{1,4}\s*[:\-–|]\s*",
+    re.IGNORECASE,
+)
+_LEAD_IN = re.compile(
+    r"\b(?:with|w/|ft\.?|feat\.?|featuring|guest|guests|con|invitado|invitada)\b\s*:?\s*",
+    re.IGNORECASE,
+)
+_NAME_PART = re.compile(r"^(?:[A-Z][\w'’\-]*|de|del|la|van|von|der|di|da|Mc|O')$")
+_NUMBERED = re.compile(r"\d")
+
+
+def strip_episode_prefix(title: str) -> str:
+    """``"Ep. 214: Boilers 101"`` becomes ``"Boilers 101"``."""
+    return _EPISODE_PREFIX.sub("", title or "").strip()
+
+
+def _looks_like_a_name(text: str) -> bool:
+    words = text.split()
+    if not (2 <= len(words) <= 4) or len(text) > 40 or _NUMBERED.search(text):
+        return False
+    if text.lower() in HOSTS:
+        return False
+    return all(_NAME_PART.match(word.strip(".,")) for word in words)
+
+
+def guest_from_title(title: str) -> str | None:
+    """The guest's name if the title names one, otherwise ``None``.
+
+    Titles come from a human typing into a feed, so this reads the shapes that actually
+    occur and declines everything else. A wrong name is worse than no name.
+    """
+    text = strip_episode_prefix(title or "")
+    if not text:
+        return None
+
+    # "... with Jane Doe", "... ft. Jane Doe", "Guest: Jane Doe"
+    for match in _LEAD_IN.finditer(text):
+        tail = text[match.end() :]
+        tail = re.split(r"[|(\[]|\s[-–]\s|,|\bon\b|\babout\b|\bsobre\b", tail)[0]
+        candidate = tail.strip(" .:-–|")
+        if _looks_like_a_name(candidate):
+            return candidate
+
+    # "Jane Doe on Boilers", "Jane Doe: Boilers"
+    head = re.split(r"\bon\b|:|\||\s[-–]\s", text, maxsplit=1)[0].strip(" .:-–|")
+    if _looks_like_a_name(head):
+        return head
+    return None
+
+
+def deep_link(document: Document, start_time: float | None) -> str | None:
+    """The best URL for a moment: a YouTube watch link jumps to the second."""
+    url = document.link or document.locator
+    if not url or not url.startswith(("http://", "https://")):
+        return None
+    if document.kind == SourceKind.YOUTUBE and start_time is not None:
+        separator = "&" if "?" in url else "?"
+        return f"{url}{separator}t={int(start_time)}s"
+    return url
+
+
+def _singular(term: str) -> str:
+    return term[:-1] if len(term) > 4 and term.endswith("s") else term
+
+
+def dedupe_terms(terms: list[str]) -> list[str]:
+    """Keep the first of "deposit" and "deposits"; they are not two topics."""
+    kept: list[str] = []
+    stems: set[str] = set()
+    for term in terms:
+        stem = _singular(term)
+        if stem in stems:
+            continue
+        stems.add(stem)
+        kept.append(term)
+    return kept
+
+
+@dataclass
+class EpisodeMoment:
+    """One episode, and the minute in it that answered the question."""
+
+    kind: SourceKind
+    title: str
+    number: str | None = None
+    guest: str | None = None
+    url: str | None = None
+    timestamp: str | None = None
+    start_time: float | None = None
+    published_at: str | None = None
+    channel: str | None = None
+    topics: list[str] = field(default_factory=list)
+    quote: str = ""
+    score: float = 0.0
+
+    def label(self) -> str:
+        """``Ep. 214 · 12:30`` for a list, falling back to the date."""
+        bits = []
+        if self.number:
+            bits.append(f"Ep. {self.number}")
+        if self.timestamp:
+            bits.append(self.timestamp)
+        if not bits and self.published_at:
+            bits.append(self.published_at)
+        return " · ".join(bits)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "kind": self.kind.value,
+            "number": self.number,
+            "title": self.title,
+            "guest": self.guest,
+            "url": self.url,
+            "timestamp": self.timestamp,
+            "published_at": self.published_at,
+            "channel": self.channel,
+            "topics": self.topics,
+            "quote": self.quote,
+        }
+
+
+@dataclass
+class EpisodeEntry:
+    """One episode as the catalog lists it, with no question attached."""
+
+    kind: SourceKind
+    title: str
+    number: str | None = None
+    guest: str | None = None
+    url: str | None = None
+    published_at: str | None = None
+    channel: str | None = None
+    transcribed: bool = True
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "kind": self.kind.value,
+            "number": self.number,
+            "title": self.title,
+            "guest": self.guest,
+            "url": self.url,
+            "published_at": self.published_at,
+            "channel": self.channel,
+            "transcribed": self.transcribed,
+        }
+
+
+def format_timestamp(seconds: float) -> str:
+    """``m:ss`` under an hour, ``h:mm:ss`` above it."""
+    total = max(int(seconds), 0)
+    hours, remainder = divmod(total, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours:
+        return f"{hours}:{minutes:02d}:{secs:02d}"
+    return f"{minutes}:{secs:02d}"
+
+
+def _timestamp(seconds: float | None) -> str | None:
+    return None if seconds is None else format_timestamp(seconds)
+
+
+def _moment(retriever: Any, rc: RetrievedChunk) -> EpisodeMoment:
+    doc = rc.document
+    return EpisodeMoment(
+        kind=doc.kind,
+        title=doc.title,
+        number=doc.episode,
+        guest=guest_from_title(doc.title),
+        url=deep_link(doc, rc.chunk.start_time),
+        timestamp=_timestamp(rc.chunk.start_time),
+        start_time=rc.chunk.start_time,
+        published_at=doc.published_at,
+        channel=doc.channel,
+        topics=dedupe_terms(retriever.distinctive_terms(doc.id, limit=MAX_TOPICS + 2))[:MAX_TOPICS],
+        quote=" ".join(rc.chunk.text.split())[:MAX_QUOTE_CHARS],
+        score=rc.score,
+    )
+
+
+def find_moments(
+    retriever: Any,
+    query: str,
+    limit: int = 5,
+    kinds: tuple[SourceKind, ...] = AV_KINDS,
+) -> list[EpisodeMoment]:
+    """The episodes that talk about ``query``, best first, one moment per episode."""
+    if not (query or "").strip() or retriever.is_empty():
+        return []
+    # Retrieve wide and then keep only what is spoken: on most questions the blog posts
+    # outrank the transcripts, so a plain top-k would come back with no episodes at all.
+    result = retriever.retrieve(query, k=max(limit * 10, 50))
+    best: dict[str, RetrievedChunk] = {}
+    for rc in sorted(result.chunks, key=lambda c: -c.score):
+        if rc.document.kind not in kinds or rc.document.id in best:
+            continue
+        best[rc.document.id] = rc
+    return [_moment(retriever, rc) for rc in list(best.values())[:limit]]
+
+
+def _sort_key(entry: EpisodeEntry) -> tuple:
+    number = -1
+    if entry.number and entry.number.isdigit():
+        number = int(entry.number)
+    return (number, entry.published_at or "", entry.title)
+
+
+def catalog(
+    store: Any,
+    guest: str | None = None,
+    kinds: tuple[SourceKind, ...] = AV_KINDS,
+    limit: int | None = None,
+) -> list[EpisodeEntry]:
+    """Every episode in the knowledge base, newest first, optionally filtered by guest."""
+    needle = (guest or "").strip().lower()
+    entries: list[EpisodeEntry] = []
+    for kind in kinds:
+        for doc in store.list_documents(kind):
+            name = guest_from_title(doc.title)
+            if needle and needle not in (name or "").lower() and needle not in doc.title.lower():
+                continue
+            entries.append(
+                EpisodeEntry(
+                    kind=doc.kind,
+                    title=doc.title,
+                    number=doc.episode,
+                    guest=name,
+                    url=doc.link or (doc.locator if doc.locator.startswith("http") else None),
+                    published_at=doc.published_at,
+                    channel=doc.channel,
+                    transcribed=doc.metadata.get("transcript_method") != "show_notes",
+                )
+            )
+    entries.sort(key=_sort_key, reverse=True)
+    return entries[:limit] if limit else entries
+
+
+# --- the tool Jay can call ---------------------------------------------------------------
+
+EPISODE_TOOL: dict[str, Any] = {
+    "name": "find_episode",
+    "description": (
+        "Search the podcast and video transcripts for the episodes that discuss a topic. "
+        "Call this when the user asks which episode covers something, asks for a link to "
+        "an episode, asks who talked about a topic, or when pointing them at an episode "
+        "would answer better than a summary. Returns the episode number, title, guest, a "
+        "link that jumps to the moment, and a short quote. Do not guess an episode number "
+        "or a guest name yourself: if this returns nothing, say there isn't one."
+    ),
+    "strict": True,
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "topic": {
+                "type": "string",
+                "description": "What to look for, in the user's own words. English or Spanish.",
+            },
+            "limit": {
+                "type": "integer",
+                "description": "How many episodes to return, 1 to 5. Use 3 unless asked for more.",
+            },
+        },
+        "required": ["topic", "limit"],
+        "additionalProperties": False,
+    },
+}
+
+
+def run_episode_tool(retriever: Any, tool_input: dict[str, Any]) -> dict[str, Any]:
+    """Serve ``find_episode``. Always returns a JSON-serializable dict, never raises."""
+    topic = str((tool_input or {}).get("topic") or "").strip()
+    if not topic:
+        return {"error": "topic is required."}
+    try:
+        limit = int((tool_input or {}).get("limit") or 3)
+    except (TypeError, ValueError):
+        limit = 3
+    limit = max(1, min(limit, 5))
+    try:
+        moments = find_moments(retriever, topic, limit=limit)
+    except Exception as exc:  # a search failing must not fail the answer
+        logger.warning("find_episode failed: %s", exc)
+        return {"error": "The episode index could not be searched."}
+    return {
+        "topic": topic,
+        "episodes": [m.to_dict() for m in moments],
+        "found": len(moments),
+    }

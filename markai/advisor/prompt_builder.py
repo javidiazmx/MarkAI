@@ -10,7 +10,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from markai.models import Citation, RetrievedChunk, SourceKind
+from markai.knowledge.episodes import deep_link, format_timestamp
+from markai.models import Citation, RetrievedChunk
 from markai.sources.manifest import BusinessProfile, ToolLink
 
 _CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
@@ -108,16 +109,6 @@ def escape_attr(text: str, limit: int = 200) -> str:
     return escape_text(cleaned).replace('"', "&quot;")
 
 
-def format_timestamp(seconds: float) -> str:
-    """``m:ss`` under an hour, ``h:mm:ss`` above it."""
-    total = max(int(seconds), 0)
-    hours, remainder = divmod(total, 3600)
-    minutes, secs = divmod(remainder, 60)
-    if hours:
-        return f"{hours}:{minutes:02d}:{secs:02d}"
-    return f"{minutes}:{secs:02d}"
-
-
 def _ordered_chunks(
     retrieval_chunks: list[RetrievedChunk], carried: list[RetrievedChunk] | None
 ) -> list[RetrievedChunk]:
@@ -183,14 +174,7 @@ def build_user_message(
 
 
 def _citation_url(rc: RetrievedChunk) -> str | None:
-    doc = rc.document
-    url = doc.link or doc.locator
-    if not url or not url.startswith(("http://", "https://")):
-        return None
-    if doc.kind == SourceKind.YOUTUBE and rc.chunk.start_time is not None:
-        separator = "&" if "?" in url else "?"
-        return f"{url}{separator}t={int(rc.chunk.start_time)}s"
-    return url
+    return deep_link(rc.document, rc.chunk.start_time)
 
 
 def strip_all_markers(answer_text: str) -> str:

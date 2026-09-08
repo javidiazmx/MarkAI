@@ -9,7 +9,9 @@ whole corpus lives in memory after ``refresh()``; a query never touches the data
 from __future__ import annotations
 
 import logging
+import math
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -137,6 +139,34 @@ class Retriever:
 
     def is_empty(self) -> bool:
         return not self._chunks
+
+    def distinctive_terms(self, doc_id: str, limit: int = 6, min_count: int = 2) -> list[str]:
+        """The terms that set one document apart from the rest of the corpus.
+
+        Frequency inside the document weighted by the BM25 index's own idf, which is why a
+        transcript's "yeah" and "chicago" fall away without a hand-kept stoplist. Terms the
+        index scores at or below zero (they are in most of the corpus) are dropped, so a
+        small corpus can legitimately produce no topics at all.
+        """
+        if self._bm25 is None or not doc_id:
+            return []
+        counts: Counter[str] = Counter()
+        for index, chunk in enumerate(self._chunks):
+            if chunk.doc_id != doc_id:
+                continue
+            counts.update(
+                term for term in self._chunk_tokens[index] if len(term) >= 4 and not term.isdigit()
+            )
+        if not counts:
+            return []
+        idf = getattr(self._bm25, "idf", {}) or {}
+        scored = [
+            ((1.0 + math.log(count)) * idf.get(term, 0.0), term)
+            for term, count in counts.items()
+            if count >= min_count and idf.get(term, 0.0) > 0.0
+        ]
+        scored.sort(key=lambda pair: (-pair[0], pair[1]))
+        return [term for _, term in scored[: max(limit, 0)]]
 
     # --- rankings --------------------------------------------------------------------------
 

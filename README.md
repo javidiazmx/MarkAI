@@ -67,6 +67,8 @@ Then:
 | `mark gaps` | Questions Mark could not answer, so you know what to add |
 | `mark search "deposits"` | Searches the knowledge base directly, without calling Claude |
 | `mark search --scores` | Same, showing the keyword and semantic scores behind the coverage verdict |
+| `mark episodes "boilers"` | Which episodes cover a topic: number, guest, topics, and a link that lands on the minute |
+| `mark episodes --guest "Jane Doe"` | The catalog, filtered to the episodes whose title names someone |
 | `mark ask "..."` | One question, one answer, with sources |
 | `mark chat` | A conversation in the terminal (`/reset`, `/sources`, `/quit`) |
 | `mark serve` | The browser chat page |

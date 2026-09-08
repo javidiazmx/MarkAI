@@ -110,6 +110,7 @@ def create_app(
         "store": store,
         "advisor_error": None,
         "history": None,
+        "retriever": None,
     }
     sessions = _Sessions(settings.max_sessions)
     daily = _DailyCounter()
@@ -141,22 +142,28 @@ def create_app(
             state["store"] = KnowledgeStore(settings.db_path)
         return state["store"]
 
+    def get_retriever() -> Any:
+        """Shared with the advisor: loading the corpus twice would double the memory."""
+        if state["retriever"] is None:
+            from markai.knowledge.embeddings import build_embedder
+            from markai.knowledge.retriever import Retriever
+
+            state["retriever"] = Retriever(get_store(), build_embedder(settings), settings)
+        return state["retriever"]
+
     def get_advisor() -> Any:
         """Build the advisor on first use so import never needs credentials."""
         if state["advisor"] is not None:
             return state["advisor"]
         from markai.advisor.mark import MarkAdvisor
         from markai.advisor.prompt_builder import load_system_prompt
-        from markai.knowledge.embeddings import build_embedder
-        from markai.knowledge.retriever import Retriever
         from markai.sources.manifest import load_manifest
 
         manifest = load_manifest(settings.sources_file)
         current_store = get_store()
-        retriever = Retriever(current_store, build_embedder(settings), settings)
         state["advisor"] = MarkAdvisor(
             settings,
-            retriever,
+            get_retriever(),
             manifest.tools,
             load_system_prompt(settings.system_prompt_path, settings.show_citations),
             business=manifest.business,
@@ -208,6 +215,23 @@ def create_app(
                 for doc in documents
             ]
         }
+
+    @app.get("/api/episodes")
+    def episodes(
+        q: str = "",
+        guest: str = "",
+        limit: int = 5,
+        _: None = Depends(require_access),
+    ) -> dict[str, Any]:
+        """A topic search over the transcripts, or the catalog when there is no topic."""
+        from markai.knowledge.episodes import catalog, find_moments
+
+        limit = min(max(limit, 1), 50)
+        if q.strip():
+            found = find_moments(get_retriever(), q, limit=limit)
+            return {"query": q, "episodes": [m.to_dict() for m in found]}
+        listed = catalog(get_store(), guest=guest or None, limit=limit)
+        return {"query": "", "episodes": [e.to_dict() for e in listed]}
 
     @app.get("/api/gaps")
     def gaps(limit: int = 20, _: None = Depends(require_access)) -> dict[str, Any]:
