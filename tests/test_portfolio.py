@@ -90,8 +90,8 @@ def test_one_browser_never_sees_another(portfolio):
     assert portfolio.delete("b2", portfolio.list("b1")[0].id) is False
 
 
-def test_a_browser_with_no_id_cannot_save(portfolio):
-    with pytest.raises(PropertyError, match="nowhere to save"):
+def test_nobody_to_save_for_means_nothing_is_saved(portfolio):
+    with pytest.raises(PropertyError, match="nobody to save this for"):
         portfolio.add("", _six_flat())
     assert portfolio.list("") == []
 

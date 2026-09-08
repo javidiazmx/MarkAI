@@ -4,11 +4,10 @@
 boiler worth fixing?" depends on how many units it heats. A landlord who has already told
 Jay about their six flat should not have to describe it again in every conversation.
 
-Kept on the operator's own disk, keyed by the same browser id as the conversation list, and
-never sent anywhere except into the question the landlord is asking. Same trust model as the
-chat: there is no login, the id is unguessable rather than protected, and an address is the
-kind of thing a landlord expects to stay on their own machine. Deleting a property deletes
-the row.
+Kept on the operator's own disk, keyed by the same owner as the conversation list - the
+account when someone is signed in, the browser when they are not - and never sent anywhere
+except into the question the landlord is asking. An address is the kind of thing a landlord
+expects to stay on their own machine. Deleting a property deletes the row.
 """
 
 from __future__ import annotations
@@ -34,14 +33,14 @@ MAX_UNITS = 5000
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS properties (
     id          TEXT PRIMARY KEY,
-    browser_id  TEXT NOT NULL,
+    owner_id    TEXT NOT NULL,
     label       TEXT NOT NULL,
     units       INTEGER,
     city        TEXT NOT NULL DEFAULT '',
     notes       TEXT NOT NULL DEFAULT '',
     created_at  REAL NOT NULL
 );
-CREATE INDEX IF NOT EXISTS properties_by_browser ON properties(browser_id, created_at);
+CREATE INDEX IF NOT EXISTS properties_by_owner ON properties(owner_id, created_at);
 """
 
 
@@ -109,7 +108,7 @@ def parse(raw: dict[str, Any]) -> Property:
 
 
 class Portfolio:
-    """SQLite-backed list of properties per browser."""
+    """SQLite-backed list of properties per owner."""
 
     def __init__(self, path: Path) -> None:
         self._path = Path(path)
@@ -117,17 +116,39 @@ class Portfolio:
         self._lock = threading.Lock()
         self._conn = sqlite3.connect(self._path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
+        self._migrate("properties")
         self._conn.executescript(SCHEMA)
         self._conn.commit()
 
-    def list(self, browser_id: str) -> list[Property]:
-        if not browser_id:
+    def _migrate(self, table: str) -> None:
+        """Rename a pre-account ``browser_id`` column and prefix the rows it holds.
+
+        Identity used to be the browser. It is now an owner, which is a browser while
+        nobody is signed in and an account once someone is, so the old rows keep working by
+        becoming ``browser:<id>``. Nothing is dropped.
+        """
+        listing = self._conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        if table not in {row[0] for row in listing}:
+            return
+        columns = {row[1] for row in self._conn.execute(f"PRAGMA table_info({table})")}
+        if "owner_id" in columns or "browser_id" not in columns:
+            return
+        with self._conn:
+            self._conn.execute(f"ALTER TABLE {table} RENAME COLUMN browser_id TO owner_id")
+            self._conn.execute(
+                f"UPDATE {table} SET owner_id = 'browser:' || owner_id"
+                " WHERE owner_id NOT LIKE 'browser:%' AND owner_id NOT LIKE 'account:%'"
+            )
+        logger.info("%s now keys on owner_id", table)
+
+    def list(self, owner_id: str) -> list[Property]:
+        if not owner_id:
             return []
         with self._lock:
             rows = self._conn.execute(
-                "SELECT id, label, units, city, notes FROM properties WHERE browser_id = ?"
+                "SELECT id, label, units, city, notes FROM properties WHERE owner_id = ?"
                 " ORDER BY created_at LIMIT ?",
-                (browser_id, MAX_PROPERTIES),
+                (owner_id, MAX_PROPERTIES),
             ).fetchall()
         return [
             Property(
@@ -136,14 +157,30 @@ class Portfolio:
             for r in rows
         ]
 
-    def add(self, browser_id: str, raw: dict[str, Any]) -> Property:
+    def reassign(self, old_owner: str, new_owner: str) -> int:
+        """Move rows from one owner to another, for the moment a landlord signs up.
+
+        They asked two questions and then created an account; those two conversations are
+        theirs, and a sidebar that empties itself at signup would be a bug. Only called
+        for the browser the signup came from, and never on a later sign-in, where the
+        anonymous rows could belong to whoever used that machine before.
+        """
+        if not old_owner or not new_owner or old_owner == new_owner:
+            return 0
+        with self._lock, self._conn:
+            cursor = self._conn.execute(
+                "UPDATE properties SET owner_id = ? WHERE owner_id = ?", (new_owner, old_owner)
+            )
+        return cursor.rowcount
+
+    def add(self, owner_id: str, raw: dict[str, Any]) -> Property:
         """Save one property. Raises ``PropertyError`` when it cannot be saved."""
-        if not browser_id:
-            raise PropertyError("This browser has no id, so there is nowhere to save it.")
+        if not owner_id:
+            raise PropertyError("There is nobody to save this for.")
         item = parse(raw)
         with self._lock, self._conn:
             count = self._conn.execute(
-                "SELECT COUNT(*) FROM properties WHERE browser_id = ?", (browser_id,)
+                "SELECT COUNT(*) FROM properties WHERE owner_id = ?", (owner_id,)
             ).fetchone()[0]
             if count >= MAX_PROPERTIES:
                 raise PropertyError(
@@ -151,11 +188,11 @@ class Portfolio:
                     f"with each question, so the list has to stay short."
                 )
             self._conn.execute(
-                "INSERT OR REPLACE INTO properties (id, browser_id, label, units, city, notes,"
+                "INSERT OR REPLACE INTO properties (id, owner_id, label, units, city, notes,"
                 " created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (
                     item.id,
-                    browser_id,
+                    owner_id,
                     item.label,
                     item.units,
                     item.city,
@@ -165,11 +202,11 @@ class Portfolio:
             )
         return item
 
-    def delete(self, browser_id: str, property_id: str) -> bool:
+    def delete(self, owner_id: str, property_id: str) -> bool:
         with self._lock, self._conn:
             cursor = self._conn.execute(
-                "DELETE FROM properties WHERE id = ? AND browser_id = ?",
-                (property_id, browser_id),
+                "DELETE FROM properties WHERE id = ? AND owner_id = ?",
+                (property_id, owner_id),
             )
         return cursor.rowcount > 0
 

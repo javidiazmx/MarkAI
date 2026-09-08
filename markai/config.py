@@ -139,6 +139,19 @@ class Settings(BaseSettings):
             "the page never asks. The terminal never asks either way."
         ),
     )
+    session_days: int = Field(
+        default=30,
+        ge=1,
+        le=365,
+        description="How long a sign-in cookie lasts before a landlord signs in again.",
+    )
+    cookie_secure: bool = Field(
+        default=False,
+        description=(
+            "Send the sign-in cookie only over https. Off by default because the page is "
+            "usually run on http://127.0.0.1; turn it on the moment it is behind a domain."
+        ),
+    )
     free_questions_before_signup: int = Field(
         default=2,
         ge=0,

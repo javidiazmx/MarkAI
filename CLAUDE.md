@@ -57,6 +57,13 @@ The owner runs this on Windows. Commands you hand over go in `cmd` form, or thro
   Do not interpolate source text anywhere without escaping.
 - **The three fixed strings** in `guardrails.py` (disclaimer, identity notice, fair-housing
   refusal) are owner-approved wording. Changing them needs the owner's sign-off.
+- **The legal disclaimer is the platform's, not the model's.** The prompt must never ask for
+  a standing disclaimer: `guardrails` decides, appends it once per conversation where the
+  surface has no standing notice, and strips one the model wrote anyway.
+- **Identity in `markai/web/` is an owner id**, `account:<id>` when signed in and
+  `browser:<id>` when not. Nothing stores anything against a bare browser id.
+- **Never log a password, an email, a phone, or a question.** `accounts.py` logs an account
+  id prefix and nothing else.
 
 ## Testing conventions
 

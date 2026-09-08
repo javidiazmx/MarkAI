@@ -27,9 +27,13 @@ calc_app = typer.Typer(help="Run the deal calculators from the terminal.", no_ar
 facts_app = typer.Typer(
     help="The ordinances and cost ranges you maintain by hand.", no_args_is_help=True
 )
+accounts_app = typer.Typer(
+    help="The landlords who created an account on the page.", no_args_is_help=True
+)
 app.add_typer(sources_app, name="sources")
 app.add_typer(calc_app, name="calc")
 app.add_typer(facts_app, name="facts")
+app.add_typer(accounts_app, name="accounts")
 
 console = Console()
 err = Console(stderr=True)
@@ -908,29 +912,41 @@ def search(
     store.close()
 
 
-@app.command()
-def accounts(
+def _accounts_store(settings: Any) -> Any:
+    from markai.web.accounts import Accounts
+
+    path = settings.data_dir / "accounts.db"
+    if not path.exists():
+        _fail(
+            f"No accounts yet ({path} does not exist).",
+            "Nobody has signed up on the page.",
+        )
+    return Accounts(path, free_questions=settings.free_questions_before_signup)
+
+
+@accounts_app.command("list")
+def accounts_list(
     csv_path: Path = typer.Option(
         None, "--csv", help="Write them to a CSV file instead of printing a table."
     ),
     limit: int = typer.Option(50, "-n", "--limit", help="How many to show."),
 ) -> None:
-    """The landlords who signed up on the page: name, email, phone, neighborhood."""
+    """The landlords with an account: name, email, phone, neighborhood."""
     import csv as csv_module
     from datetime import UTC, datetime
 
-    from markai.web.accounts import Accounts
-
     settings = _settings()
-    path = settings.data_dir / "accounts.db"
-    if not path.exists():
-        console.print(f"[yellow]Nobody has signed up yet ({path} does not exist).[/yellow]")
-        return
-    store = Accounts(path, free_questions=settings.free_questions_before_signup)
+    store = _accounts_store(settings)
     rows = store.all(limit=None if csv_path else limit)
+    legacy = store.legacy_signups()
     store.close()
+    if legacy:
+        console.print(
+            f"[dim]{legacy} signup(s) from before passwords are kept in the signups_v1 "
+            f"table. They have no password, so they are not accounts.[/dim]"
+        )
     if not rows:
-        console.print("[yellow]Nobody has signed up yet.[/yellow]")
+        console.print("[yellow]Nobody has an account yet.[/yellow]")
         return
 
     def when(stamp: float, with_time: bool = True) -> str:
@@ -949,7 +965,7 @@ def accounts(
         console.print("[dim]That file holds personal data. Treat it like your rent roll.[/dim]")
         return
 
-    table = Table(show_header=True, header_style="bold", title="Free accounts")
+    table = Table(show_header=True, header_style="bold", title="Accounts")
     table.add_column("When")
     # An email you have to guess the end of is no use, so these wrap instead of truncating.
     table.add_column("Name", overflow="fold")
@@ -967,7 +983,36 @@ def accounts(
             escape(account.neighborhood),
         )
     console.print(table)
-    console.print(f"[dim]{len(rows)} shown · `mark accounts --csv leads.csv` to export[/dim]")
+    console.print(f"[dim]{len(rows)} shown · `mark accounts list --csv leads.csv` to export[/dim]")
+
+
+@accounts_app.command("reset-password")
+def accounts_reset_password(
+    email: str = typer.Argument(..., help="The account's email, which is its username."),
+    password: str = typer.Option(
+        None, "--password", help="The new password. Prompted for, hidden, if omitted."
+    ),
+) -> None:
+    """Set a landlord's password.
+
+    There is no email delivery here, so there is no reset link a landlord can use. This is
+    the whole recovery story: they email the owner and the owner runs this. Every session
+    that account had is ended, which is also how you throw someone out.
+    """
+    from markai.web.accounts import LoginError, SignupError
+
+    settings = _settings()
+    store = _accounts_store(settings)
+    if not password:
+        password = typer.prompt("New password (hidden)", hide_input=True, confirmation_prompt=True)
+    try:
+        store.set_password(email, password)
+    except (SignupError, LoginError) as exc:
+        store.close()
+        _fail(str(exc))
+    store.close()
+    console.print(f"[green]✓[/green] Password set for {escape(email)}.")
+    console.print("[dim]Every session that account had is signed out.[/dim]")
 
 
 # --------------------------------------------------------------------------------------

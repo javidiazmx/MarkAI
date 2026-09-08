@@ -91,8 +91,9 @@ Then:
 | `mark facts validate` | Checks `sources/facts.yaml`: every ordinance cites something, the dates make sense |
 | `mark facts list` | Every rule and price you maintain, and whether each applies today |
 | `mark facts probe "..."` | Which of your facts a real question would put in front of Jay |
-| `mark accounts` | The landlords who signed up on the page |
-| `mark accounts --csv leads.csv` | The same, exported. That file holds personal data |
+| `mark accounts list` | The landlords with an account on the page |
+| `mark accounts list --csv leads.csv` | The same, exported. That file holds personal data |
+| `mark accounts reset-password EMAIL` | Set a password. The only recovery route there is |
 | `mark ask "..."` | One question, one answer, with sources |
 | `mark chat` | A conversation in the terminal (`/reset`, `/sources`, `/quit`) |
 | `mark serve` | The browser chat page |
@@ -314,32 +315,56 @@ reads, question after question, means the TTL is shorter than the gaps between q
   leaves the machine, and deleting a conversation in the sidebar deletes the row.
   `mark chat` writes nothing.
 - Properties a landlord adds in the sidebar go to `data/portfolio.db`, on the same machine
-  and under the same browser id, and ride along with each of their questions so an answer
-  can be about their building. Removing one deletes the row.
-- The free account form writes a name, an email, a phone and a neighborhood to
-  `data/accounts.db`. Those fields never reach the log and go nowhere except that file;
-  `mark accounts` is how you read them. It is personal data about other people, so it comes
-  with obligations the rest of this does not: say what you will do with it, do only that,
-  and treat the export like your rent roll.
+  and under the same owner, and ride along with each of their questions so an answer can be
+  about their building. Removing one deletes the row.
+- The account form writes a name, an email, a phone and a neighborhood to
+  `data/accounts.db`, alongside an scrypt hash of the password. None of it reaches the log,
+  passwords included, and none of it leaves that file; `mark accounts list` is how you read
+  it. It is personal data about other people, so it comes with obligations the rest of this
+  does not: say what you will do with it, do only that, and treat the export like your rent
+  roll.
 - All of these sit under `data/`, which is excluded from version control, and all of them
   are worth knowing about before this page goes in front of anyone but you.
 
 ## The free account
 
-Two questions get answered, then the page asks for a name, an email, a phone and the
-neighborhood the rental is in. `MARKAI_FREE_QUESTIONS_BEFORE_SIGNUP` moves the line and
-`MARKAI_ACCOUNT_REQUIRED=false` removes it. The terminal is never asked.
+Two questions get answered, then the page asks for a name, an email, a phone, the
+neighborhood the rental is in, and a password. The email is the username.
+`MARKAI_FREE_QUESTIONS_BEFORE_SIGNUP` moves the line, `MARKAI_ACCOUNT_REQUIRED=false`
+removes it. The terminal is never asked.
 
-Said plainly, because it matters for what you build on top of it: this is a signup form,
-not a login. There is no password, so nothing about it proves anyone is who they say, and
-someone who clears their browser storage gets a new id and two more free questions. That
-is the normal shape of a lead wall and it does the job it is there for. It is not access
-control, and the access code (`MARKAI_WEB_ACCESS_CODE`) is still the only thing that keeps
-strangers off the page.
+Signing in is what makes it an account rather than a form: conversations and properties
+belong to the account, so they follow a landlord to another machine, and the two questions
+they asked before signing up are claimed by the account they just made rather than
+disappearing. While nobody is signed in, all of that belongs to the browser instead.
 
-The count is kept apart from the saved conversations on purpose: deleting a conversation
-does not hand back a free question. It is counted when an answer lands, so a question that
-failed costs nothing.
+How the password is held, since this is the part worth being able to check:
+
+- Stored as an scrypt hash with a random salt per account, never as a password. The cost
+  parameters live inside each hash, so raising them later does not lock anyone out.
+- The session is a random token in an HttpOnly, SameSite=Lax cookie, and only the token's
+  sha256 is stored. No script on the page can read the cookie, no other site can post with
+  it, and a stolen database yields no usable session.
+- A wrong password and an unknown email give the same message and cost the same time, so
+  neither the wording nor the wait says whether an address has an account. Repeated
+  failures for one email are throttled.
+- Signing out ends that session only, so a phone and a laptop are independent. Resetting a
+  password ends all of them.
+
+Turn on `MARKAI_COOKIE_SECURE=true` the moment this is behind a domain rather than
+`127.0.0.1`, or the cookie will travel over plain http.
+
+What it still does not do, so nobody builds on a promise that is not there: there is no
+email delivery, which means no address verification and no self-service password reset. An
+email is whatever the landlord typed. Recovery is `mark accounts reset-password`, which is
+why the form says to email Mark. And the access code (`MARKAI_WEB_ACCESS_CODE`) is still
+the thing that decides who reaches the page at all; an account decides who Jay answers
+for, not who can knock.
+
+The free-question count is kept apart from the saved conversations on purpose: deleting a
+conversation does not hand back a free question. It is counted when an answer lands, so a
+question that failed costs nothing. Someone who clears their browser storage while
+anonymous does get another two.
 - Questions are logged locally (text, coverage, token counts) so `mark gaps` can show you what
   material to add. Answers are not logged. Nothing above DEBUG level records question content.
 

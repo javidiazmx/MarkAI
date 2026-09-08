@@ -3,10 +3,10 @@
 Titles are made from the first question, not by asking Claude for one: a title should cost
 nothing and appear the instant a conversation starts.
 
-Stored per browser, keyed by the session id the page generates. There is no login, so this
-is not a security boundary - it is the same trust model as the chat itself, and the id is
-unguessable rather than protected. Question text is what the landlord typed, so the same
-rule as the question log applies: it lives on the operator's own disk and goes nowhere else.
+Stored per owner: the account once someone has signed in, so their conversations follow
+them to another machine, and the browser itself while they have not. Question text is what
+the landlord typed, so the same rule as the question log applies: it lives on the
+operator's own disk and goes nowhere else.
 
 Reopening a conversation restores the transcript on screen. Whether Jay still *remembers* it
 depends on the in-memory ``Conversation`` for that id, which the LRU keeps until the process
@@ -35,14 +35,14 @@ MAX_THREADS_PER_BROWSER = 100
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS threads (
     id          TEXT PRIMARY KEY,
-    browser_id  TEXT NOT NULL,
+    owner_id    TEXT NOT NULL,
     title       TEXT NOT NULL,
     created_at  REAL NOT NULL,
     updated_at  REAL NOT NULL,
     turns       INTEGER NOT NULL DEFAULT 0,
     messages    TEXT NOT NULL DEFAULT '[]'
 );
-CREATE INDEX IF NOT EXISTS threads_by_browser ON threads(browser_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS threads_by_owner ON threads(owner_id, updated_at DESC);
 """
 
 _FILLER = re.compile(
@@ -97,19 +97,41 @@ class History:
         self._lock = threading.Lock()
         self._conn = sqlite3.connect(self._path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
+        self._migrate("threads")
         self._conn.executescript(SCHEMA)
         self._conn.commit()
 
-    def record(self, browser_id: str, thread_id: str, question: str, answer: str) -> None:
+    def _migrate(self, table: str) -> None:
+        """Rename a pre-account ``browser_id`` column and prefix the rows it holds.
+
+        Identity used to be the browser. It is now an owner, which is a browser while
+        nobody is signed in and an account once someone is, so the old rows keep working by
+        becoming ``browser:<id>``. Nothing is dropped.
+        """
+        listing = self._conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        if table not in {row[0] for row in listing}:
+            return
+        columns = {row[1] for row in self._conn.execute(f"PRAGMA table_info({table})")}
+        if "owner_id" in columns or "browser_id" not in columns:
+            return
+        with self._conn:
+            self._conn.execute(f"ALTER TABLE {table} RENAME COLUMN browser_id TO owner_id")
+            self._conn.execute(
+                f"UPDATE {table} SET owner_id = 'browser:' || owner_id"
+                " WHERE owner_id NOT LIKE 'browser:%' AND owner_id NOT LIKE 'account:%'"
+            )
+        logger.info("%s now keys on owner_id", table)
+
+    def record(self, owner_id: str, thread_id: str, question: str, answer: str) -> None:
         """Append one exchange, creating the thread and its title on the first question."""
-        if not browser_id or not thread_id:
+        if not owner_id or not thread_id:
             return
         now = time.time()
         try:
             with self._lock, self._conn:
                 row = self._conn.execute(
-                    "SELECT messages, turns FROM threads WHERE id = ? AND browser_id = ?",
-                    (thread_id, browser_id),
+                    "SELECT messages, turns FROM threads WHERE id = ? AND owner_id = ?",
+                    (thread_id, owner_id),
                 ).fetchone()
                 messages = json.loads(row["messages"]) if row else []
                 messages.append({"role": "user", "content": question})
@@ -117,55 +139,71 @@ class History:
                 if row:
                     self._conn.execute(
                         "UPDATE threads SET messages = ?, turns = ?, updated_at = ?"
-                        " WHERE id = ? AND browser_id = ?",
-                        (json.dumps(messages), row["turns"] + 1, now, thread_id, browser_id),
+                        " WHERE id = ? AND owner_id = ?",
+                        (json.dumps(messages), row["turns"] + 1, now, thread_id, owner_id),
                     )
                 else:
                     self._conn.execute(
-                        "INSERT INTO threads (id, browser_id, title, created_at, updated_at,"
+                        "INSERT INTO threads (id, owner_id, title, created_at, updated_at,"
                         " turns, messages) VALUES (?, ?, ?, ?, ?, 1, ?)",
                         (
                             thread_id,
-                            browser_id,
+                            owner_id,
                             title_for(question),
                             now,
                             now,
                             json.dumps(messages),
                         ),
                     )
-                self._prune(browser_id)
+                self._prune(owner_id)
         except sqlite3.Error as exc:
             # A conversation that cannot be filed is not a reason to lose the answer.
             logger.warning("could not save conversation %s: %s", thread_id, exc)
 
-    def _prune(self, browser_id: str) -> None:
+    def _prune(self, owner_id: str) -> None:
         self._conn.execute(
-            "DELETE FROM threads WHERE browser_id = ? AND id NOT IN ("
-            "  SELECT id FROM threads WHERE browser_id = ?"
+            "DELETE FROM threads WHERE owner_id = ? AND id NOT IN ("
+            "  SELECT id FROM threads WHERE owner_id = ?"
             "  ORDER BY updated_at DESC LIMIT ?)",
-            (browser_id, browser_id, MAX_THREADS_PER_BROWSER),
+            (owner_id, owner_id, MAX_THREADS_PER_BROWSER),
         )
 
-    def list(self, browser_id: str, limit: int = 50) -> list[Thread]:
-        if not browser_id:
+    def reassign(self, old_owner: str, new_owner: str) -> int:
+        """Move rows from one owner to another, for the moment a landlord signs up.
+
+        They asked two questions and then created an account; those two conversations are
+        theirs, and a sidebar that empties itself at signup would be a bug. Only called
+        for the browser the signup came from, and never on a later sign-in, where the
+        anonymous rows could belong to whoever used that machine before.
+        """
+        if not old_owner or not new_owner or old_owner == new_owner:
+            return 0
+        with self._lock, self._conn:
+            cursor = self._conn.execute(
+                "UPDATE threads SET owner_id = ? WHERE owner_id = ?", (new_owner, old_owner)
+            )
+        return cursor.rowcount
+
+    def list(self, owner_id: str, limit: int = 50) -> list[Thread]:
+        if not owner_id:
             return []
         with self._lock:
             rows = self._conn.execute(
-                "SELECT id, title, updated_at, turns FROM threads WHERE browser_id = ?"
+                "SELECT id, title, updated_at, turns FROM threads WHERE owner_id = ?"
                 " ORDER BY updated_at DESC LIMIT ?",
-                (browser_id, max(1, min(limit, MAX_THREADS_PER_BROWSER))),
+                (owner_id, max(1, min(limit, MAX_THREADS_PER_BROWSER))),
             ).fetchall()
         return [
             Thread(id=r["id"], title=r["title"], updated_at=r["updated_at"], turns=r["turns"])
             for r in rows
         ]
 
-    def get(self, browser_id: str, thread_id: str) -> Thread | None:
+    def get(self, owner_id: str, thread_id: str) -> Thread | None:
         with self._lock:
             row = self._conn.execute(
                 "SELECT id, title, updated_at, turns, messages FROM threads"
-                " WHERE id = ? AND browser_id = ?",
-                (thread_id, browser_id),
+                " WHERE id = ? AND owner_id = ?",
+                (thread_id, owner_id),
             ).fetchone()
         if row is None:
             return None
@@ -177,10 +215,10 @@ class History:
             messages=json.loads(row["messages"]),
         )
 
-    def delete(self, browser_id: str, thread_id: str) -> bool:
+    def delete(self, owner_id: str, thread_id: str) -> bool:
         with self._lock, self._conn:
             cursor = self._conn.execute(
-                "DELETE FROM threads WHERE id = ? AND browser_id = ?", (thread_id, browser_id)
+                "DELETE FROM threads WHERE id = ? AND owner_id = ?", (thread_id, owner_id)
             )
         return cursor.rowcount > 0
 

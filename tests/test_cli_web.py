@@ -950,6 +950,15 @@ def test_the_page_has_a_properties_panel_and_a_handoff():
 # --- the free account -------------------------------------------------------------------
 
 
+SIGNUP = {
+    "name": "Javier Diaz",
+    "email": "javier@example.com",
+    "phone": "312-555-0134",
+    "neighborhood": "Logan Square",
+    "password": "six flats and a boiler",
+}
+
+
 def test_two_questions_are_answered_then_the_wall(settings, store):
     client = _client(settings, store, FakeAdvisor())
     headers = {"X-Browser-Id": "b1"}
@@ -972,35 +981,86 @@ def test_signing_up_lets_the_third_question_through(settings, store):
     _ask(client, "t1", "First question")
     _ask(client, "t2", "Second question")
 
-    made = client.post(
-        "/api/account",
-        json={
-            "name": "Javier Diaz",
-            "email": "javier@example.com",
-            "phone": "312-555-0134",
-            "neighborhood": "Logan Square",
-        },
-        headers=headers,
-    )
-    assert made.json() == {"signed_up": True, "name": "Javier Diaz"}
-    assert client.get("/api/account", headers=headers).json()["signed_up"] is True
+    made = client.post("/api/account", json=SIGNUP, headers=headers)
+    assert made.json()["signed_in"] is True
+    assert made.json()["email"] == "javier@example.com"
+    assert "mark_auth" in made.cookies, "signing up signs you in"
+
+    state = client.get("/api/account", headers=headers).json()
+    assert state["signed_in"] is True and state["name"] == "Javier Diaz"
     assert _ask(client, "t3", "Third question").status_code == 200
+
+
+def test_signing_in_again_from_a_clean_browser(settings, store):
+    client = _client(settings, store, FakeAdvisor())
+    client.post("/api/account", json=SIGNUP, headers={"X-Browser-Id": "b1"})
+    client.post("/api/logout")
+    assert client.get("/api/account").json()["signed_in"] is False
+
+    # A different browser id entirely: the account is the identity, not the browser.
+    back = client.post(
+        "/api/login",
+        json={"email": "JAVIER@example.com", "password": "six flats and a boiler"},
+        headers={"X-Browser-Id": "b2"},
+    )
+    assert back.json()["name"] == "Javier Diaz"
+    assert _ask(client, "t9", "A question from the other machine", browser="b2").status_code == 200
+
+
+def test_a_wrong_password_is_refused_without_saying_which_half(settings, store):
+    client = _client(settings, store)
+    client.post("/api/account", json=SIGNUP, headers={"X-Browser-Id": "b1"})
+    client.post("/api/logout")
+
+    wrong = client.post("/api/login", json={"email": "javier@example.com", "password": "not it"})
+    unknown = client.post("/api/login", json={"email": "nobody@example.com", "password": "not it"})
+    assert wrong.status_code == unknown.status_code == 401
+    assert wrong.json()["detail"] == unknown.json()["detail"]
+    assert client.get("/api/account").json()["signed_in"] is False
+
+
+def test_a_signup_that_is_missing_a_password_is_refused(settings, store):
+    client = _client(settings, store)
+    bad = client.post(
+        "/api/account",
+        json={**SIGNUP, "password": "short"},
+        headers={"X-Browser-Id": "b1"},
+    )
+    assert bad.status_code == 400
+    assert "8 characters" in bad.json()["detail"]
+
+
+def test_the_session_cookie_cannot_be_read_by_a_script(settings, store):
+    client = _client(settings, store)
+    made = client.post("/api/account", json=SIGNUP, headers={"X-Browser-Id": "b1"})
+    header = made.headers["set-cookie"].lower()
+    assert "httponly" in header
+    assert "samesite=lax" in header, "so no other site can post with it"
+
+
+def test_conversations_follow_the_account_not_the_browser(settings, store):
+    client = _client(settings, store, FakeAdvisor())
+    client.post("/api/account", json=SIGNUP, headers={"X-Browser-Id": "b1"})
+    _ask(client, "t1", "How long for a deposit?")
+    client.post("/api/properties", json={"label": "2145 W Division"})
+
+    client.post("/api/logout")
+    assert client.get("/api/threads", headers={"X-Browser-Id": "b2"}).json() == {"threads": []}
+
+    client.post(
+        "/api/login", json={"email": "javier@example.com", "password": "six flats and a boiler"}
+    )
+    threads = client.get("/api/threads", headers={"X-Browser-Id": "b2"}).json()["threads"]
+    assert [t["title"] for t in threads] == ["How long for a deposit"]
+    properties = client.get("/api/properties", headers={"X-Browser-Id": "b2"}).json()
+    assert [p["label"] for p in properties["properties"]] == ["2145 W Division"]
 
 
 def test_the_neighborhood_reaches_the_advisor(settings, store):
     advisor = FakeAdvisor()
     client = _client(settings, store, advisor)
     headers = {"X-Browser-Id": "b1"}
-    client.post(
-        "/api/account",
-        json={
-            "name": "Javier Diaz",
-            "email": "javier@example.com",
-            "phone": "312-555-0134",
-            "neighborhood": "Logan Square",
-        },
-        headers=headers,
-    )
+    client.post("/api/account", json=SIGNUP, headers=headers)
     _ask(client, "t1", "Do I need a heat certificate?")
     assert advisor.neighborhood == "Logan Square"
 
@@ -1071,7 +1131,7 @@ def test_the_page_has_the_signup_form_with_the_four_fields():
     from pathlib import Path
 
     page = Path("markai/web/static/index.html").read_text(encoding="utf-8")
-    for field in ("su-name", "su-email", "su-phone", "su-hood"):
+    for field in ("su-name", "su-email", "su-phone", "su-hood", "su-pass"):
         assert f'id="{field}"' in page
     assert "signup_required" in page, "the page reacts to the server's wall, not its own count"
     assert "heldQuestion" in page, "the question they were typing is asked after signup"
@@ -1084,13 +1144,13 @@ def test_mark_accounts_lists_and_exports_the_signups(tmp_path, monkeypatch):
     data_dir.mkdir(parents=True)
     store = Accounts(data_dir / "accounts.db", free_questions=2)
     store.create(
-        "b1",
         {
             "name": "Javier Diaz",
             "email": "javier@example.com",
             "phone": "312-555-0134",
             "neighborhood": "Logan Square",
-        },
+            "password": "six flats and a boiler",
+        }
     )
     store.close()
 
@@ -1099,13 +1159,13 @@ def test_mark_accounts_lists_and_exports_the_signups(tmp_path, monkeypatch):
     monkeypatch.setenv("MARKAI_SOURCES_FILE", str(manifest))
     monkeypatch.setenv("MARKAI_DATA_DIR", str(data_dir))
 
-    listed = runner.invoke(app, ["accounts"])
+    listed = runner.invoke(app, ["accounts", "list"])
     assert listed.exit_code == 0
     assert "javier@example.com" in listed.stdout
     assert "Logan Square" in listed.stdout
 
     out = tmp_path / "leads.csv"
-    exported = runner.invoke(app, ["accounts", "--csv", str(out)])
+    exported = runner.invoke(app, ["accounts", "list", "--csv", str(out)])
     assert exported.exit_code == 0
     body = out.read_text(encoding="utf-8")
     assert "signed_up_utc,name,email,phone,neighborhood" in body
@@ -1117,6 +1177,44 @@ def test_mark_accounts_says_so_when_nobody_signed_up(tmp_path, monkeypatch):
     manifest.write_text("websites: []\n", encoding="utf-8")
     monkeypatch.setenv("MARKAI_SOURCES_FILE", str(manifest))
     monkeypatch.setenv("MARKAI_DATA_DIR", str(tmp_path / "data"))
-    result = runner.invoke(app, ["accounts"])
-    assert result.exit_code == 0
-    assert "Nobody has signed up" in result.stdout
+    result = runner.invoke(app, ["accounts", "list"])
+    assert result.exit_code == 1
+    assert "No accounts yet" in result.stdout + str(result.stderr)
+
+
+def test_mark_accounts_resets_a_password(tmp_path, monkeypatch):
+    from markai.web.accounts import Accounts
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True)
+    store = Accounts(data_dir / "accounts.db")
+    _account, token = store.create(
+        {
+            "name": "Javier Diaz",
+            "email": "javier@example.com",
+            "phone": "312-555-0134",
+            "neighborhood": "Logan Square",
+            "password": "the old password",
+        }
+    )
+    store.close()
+
+    manifest = tmp_path / "sources.yaml"
+    manifest.write_text("websites: []\n", encoding="utf-8")
+    monkeypatch.setenv("MARKAI_SOURCES_FILE", str(manifest))
+    monkeypatch.setenv("MARKAI_DATA_DIR", str(data_dir))
+
+    done = runner.invoke(
+        app, ["accounts", "reset-password", "javier@example.com", "--password", "a new password"]
+    )
+    assert done.exit_code == 0
+
+    store = Accounts(data_dir / "accounts.db")
+    assert store.account_for_token(token) is None, "the reset signed that session out"
+    assert store.sign_in("javier@example.com", "a new password")[0]
+    store.close()
+
+    missing = runner.invoke(
+        app, ["accounts", "reset-password", "nobody@example.com", "--password", "a new password"]
+    )
+    assert missing.exit_code == 1

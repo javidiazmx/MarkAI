@@ -16,7 +16,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Response
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
@@ -26,6 +26,7 @@ from markai.advisor.guardrails import IDENTITY_NOTICE
 logger = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+SESSION_COOKIE = "mark_auth"
 
 
 class Attachment(BaseModel):
@@ -47,12 +48,20 @@ class ResetRequest(BaseModel):
 
 
 class SignupRequest(BaseModel):
-    """The free account form. Validated again in the store, which owns the rules."""
+    """The account form. Validated again in the store, which owns the rules."""
 
     name: str = Field(default="", max_length=200)
     email: str = Field(default="", max_length=400)
     phone: str = Field(default="", max_length=60)
     neighborhood: str = Field(default="", max_length=200)
+    password: str = Field(default="", max_length=400)
+
+
+class LoginRequest(BaseModel):
+    """Sign in. The email is the username."""
+
+    email: str = Field(default="", max_length=400)
+    password: str = Field(default="", max_length=400)
 
 
 class PropertyRequest(BaseModel):
@@ -147,6 +156,23 @@ def create_app(
         """Which browser is asking. Sent as a header so ids stay out of the request log."""
         return (x_browser_id or "").strip()[:128]
 
+    def signed_in_of(mark_auth: str | None = Cookie(default=None)) -> Any:
+        """The account behind the sign-in cookie, or None. HttpOnly: no script reads it."""
+        if not settings.account_required:
+            return None
+        return get_accounts().account_for_token(mark_auth)
+
+    def owner_of(browser: str = Depends(browser_of), account: Any = Depends(signed_in_of)) -> str:
+        """Who this request belongs to.
+
+        The account once someone is signed in, so their conversations and properties follow
+        them to another machine; the browser while they are anonymous. Everything that
+        stores anything keys on this and never on the browser directly.
+        """
+        from markai.web.accounts import anonymous_owner
+
+        return account.owner_id if account is not None else anonymous_owner(browser)
+
     def get_history() -> Any:
         if state["history"] is None:
             from markai.web.history import History
@@ -163,6 +189,7 @@ def create_app(
             state["accounts"] = Accounts(
                 settings.data_dir / "accounts.db",
                 free_questions=settings.free_questions_before_signup,
+                session_days=settings.session_days,
             )
         return state["accounts"]
 
@@ -281,17 +308,17 @@ def create_app(
 
     @app.get("/api/threads")
     def threads(
-        browser: str = Depends(browser_of), _: None = Depends(require_access)
+        owner: str = Depends(owner_of), _: None = Depends(require_access)
     ) -> dict[str, Any]:
-        return {"threads": [t.to_dict() for t in get_history().list(browser)]}
+        return {"threads": [t.to_dict() for t in get_history().list(owner)]}
 
     @app.get("/api/threads/{thread_id}")
     def thread(
         thread_id: str,
-        browser: str = Depends(browser_of),
+        owner: str = Depends(owner_of),
         _: None = Depends(require_access),
     ) -> dict[str, Any]:
-        found = get_history().get(browser, thread_id)
+        found = get_history().get(owner, thread_id)
         if found is None:
             raise HTTPException(status_code=404, detail="No such conversation.")
         return found.to_dict(with_messages=True)
@@ -299,60 +326,107 @@ def create_app(
     @app.delete("/api/threads/{thread_id}")
     def forget_thread(
         thread_id: str,
-        browser: str = Depends(browser_of),
+        owner: str = Depends(owner_of),
         _: None = Depends(require_access),
     ) -> dict[str, Any]:
-        return {"deleted": get_history().delete(browser, thread_id)}
+        return {"deleted": get_history().delete(owner, thread_id)}
+
+    def _set_session(response: Response, token: str) -> None:
+        """HttpOnly so no script can read it, Lax so no other site can post with it."""
+        response.set_cookie(
+            SESSION_COOKIE,
+            token,
+            max_age=settings.session_days * 86400,
+            httponly=True,
+            samesite="lax",
+            secure=settings.cookie_secure,
+            path="/",
+        )
 
     @app.get("/api/account")
     def account(
-        browser: str = Depends(browser_of), _: None = Depends(require_access)
+        owner: str = Depends(owner_of),
+        signed_in: Any = Depends(signed_in_of),
+        _: None = Depends(require_access),
     ) -> dict[str, Any]:
-        """Whether this browser has an account, and how many free questions are left."""
+        """Who is signed in, and how many free questions are left if nobody is."""
         if not settings.account_required:
-            return {"required": False, "signed_up": True, "free_left": None, "name": None}
+            return {"required": False, "signed_in": True, "free_left": None, "name": None}
         accounts = get_accounts()
-        existing = accounts.get(browser)
         return {
             "required": True,
-            "signed_up": existing is not None,
-            "free_left": accounts.free_left(browser),
+            "signed_in": signed_in is not None,
+            "free_left": accounts.free_left(owner),
             "free_questions": accounts.free_questions,
-            # The name is what the page greets them with. Nothing else comes back.
-            "name": existing.name if existing else None,
+            # The name to greet them with and the username they signed in as. No more.
+            "name": signed_in.name if signed_in else None,
+            "email": signed_in.email if signed_in else None,
         }
 
     @app.post("/api/account")
     def create_account(
         payload: SignupRequest,
+        response: Response,
         browser: str = Depends(browser_of),
         _: None = Depends(require_access),
     ) -> dict[str, Any]:
-        from markai.web.accounts import SignupError
+        from markai.web.accounts import SignupError, anonymous_owner
 
         try:
-            saved = get_accounts().create(browser, payload.model_dump())
+            saved, token = get_accounts().create(payload.model_dump())
         except SignupError as exc:
             # The message names the field, so it is meant to be shown.
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return {"signed_up": True, "name": saved.name}
+        # The two questions they asked before signing up are theirs. Claimed here and only
+        # here: on a later sign-in the anonymous rows could be whoever used this machine.
+        anonymous = anonymous_owner(browser)
+        get_history().reassign(anonymous, saved.owner_id)
+        get_portfolio().reassign(anonymous, saved.owner_id)
+        _set_session(response, token)
+        return {"signed_in": True, "name": saved.name, "email": saved.email}
+
+    @app.post("/api/login")
+    def login(
+        payload: LoginRequest,
+        response: Response,
+        _: None = Depends(require_access),
+    ) -> dict[str, Any]:
+        from markai.web.accounts import LoginError
+
+        try:
+            account, token = get_accounts().sign_in(payload.email, payload.password)
+        except LoginError as exc:
+            # 401 is right here and says nothing about which half was wrong.
+            raise HTTPException(status_code=401, detail=str(exc)) from exc
+        _set_session(response, token)
+        return {"signed_in": True, "name": account.name, "email": account.email}
+
+    @app.post("/api/logout")
+    def logout(
+        response: Response,
+        mark_auth: str | None = Cookie(default=None),
+        _: None = Depends(require_access),
+    ) -> dict[str, Any]:
+        get_accounts().end_session(mark_auth)
+        response.delete_cookie(SESSION_COOKIE, path="/")
+        return {"signed_in": False}
 
     @app.get("/api/properties")
     def properties(
-        browser: str = Depends(browser_of), _: None = Depends(require_access)
+        owner: str = Depends(owner_of), _: None = Depends(require_access)
     ) -> dict[str, Any]:
-        return {"properties": [p.to_dict() for p in get_portfolio().list(browser)]}
+        return {"properties": [p.to_dict() for p in get_portfolio().list(owner)]}
 
     @app.post("/api/properties")
     def add_property(
         payload: PropertyRequest,
-        browser: str = Depends(browser_of),
+        owner: str = Depends(owner_of),
         _: None = Depends(require_access),
     ) -> dict[str, Any]:
         from markai.web.portfolio import PropertyError
 
         try:
-            saved = get_portfolio().add(browser, payload.model_dump())
+            saved = get_portfolio().add(owner, payload.model_dump())
         except PropertyError as exc:
             # The message names the field and the limit, so it is useful to show.
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -361,15 +435,15 @@ def create_app(
     @app.delete("/api/properties/{property_id}")
     def forget_property(
         property_id: str,
-        browser: str = Depends(browser_of),
+        owner: str = Depends(owner_of),
         _: None = Depends(require_access),
     ) -> dict[str, Any]:
-        return {"deleted": get_portfolio().delete(browser, property_id)}
+        return {"deleted": get_portfolio().delete(owner, property_id)}
 
     @app.post("/api/handoff")
     def handoff(
         payload: ResetRequest,
-        browser: str = Depends(browser_of),
+        owner: str = Depends(owner_of),
         _: None = Depends(require_access),
     ) -> dict[str, Any]:
         """Case notes for the property manager, built from what is already stored."""
@@ -385,8 +459,8 @@ def create_app(
 
         return {
             "text": build_handoff(
-                get_history().get(browser, payload.session_id),
-                get_portfolio().list(browser),
+                get_history().get(owner, payload.session_id),
+                get_portfolio().list(owner),
                 name=name,
                 url=url,
             ),
@@ -402,7 +476,8 @@ def create_app(
     @app.post("/api/chat")
     def chat(
         payload: ChatRequest,
-        browser: str = Depends(browser_of),
+        owner: str = Depends(owner_of),
+        signed_in: Any = Depends(signed_in_of),
         _: None = Depends(require_access),
     ) -> EventSourceResponse:
         from markai.advisor.attachments import AttachmentError, decode_all
@@ -427,7 +502,7 @@ def create_app(
                 status_code=429, detail="Mark has hit today's question limit. Try again tomorrow."
             )
 
-        if settings.account_required and get_accounts().needs_signup(browser):
+        if settings.account_required and get_accounts().needs_signup(owner):
             # 403 with a marker rather than 401: the page has to tell a spent free trial
             # apart from a missing access code, and they mean different things.
             raise HTTPException(
@@ -453,18 +528,17 @@ def create_app(
         entry[2] = asked + 1
 
         record: Callable[[str, str], None] | None = None
-        if browser:
+        if owner:
             history = get_history()
             accounts = get_accounts()
             thread_id = payload.session_id
 
             def record(question: str, answer: str) -> None:
-                history.record(browser, thread_id, question, answer)
+                history.record(owner, thread_id, question, answer)
                 # Counted on the way out, not on the way in: a question that failed to
                 # produce an answer has not spent anything.
-                accounts.count_question(browser)
+                accounts.count_question(owner)
 
-        signed_up = get_accounts().get(browser) if browser else None
         return EventSourceResponse(
             _events(
                 get_advisor,
@@ -473,8 +547,8 @@ def create_app(
                 lock,
                 files,
                 record,
-                get_portfolio().list(browser) if browser else None,
-                signed_up.neighborhood if signed_up else None,
+                get_portfolio().list(owner) if owner else None,
+                signed_in.neighborhood if signed_in else None,
             )
         )
 
