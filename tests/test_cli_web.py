@@ -624,3 +624,91 @@ def test_the_page_has_an_attach_control_that_keeps_nothing():
     assert "readAsDataURL" in page
     assert "attachments: files" in page
     assert "MAX_PER_FILE" in page, "the browser refuses an oversized file before uploading it"
+
+
+# --- saved conversations ----------------------------------------------------------------
+
+
+def _ask(client, session_id, message, browser="b1"):
+    headers = {"X-Browser-Id": browser} if browser else {}
+    with client.stream(
+        "POST", "/api/chat", json={"session_id": session_id, "message": message}, headers=headers
+    ) as response:
+        response.read()
+    return response
+
+
+def test_an_answer_is_saved_and_can_be_reopened(settings, store):
+    client = _client(settings, store, FakeAdvisor("45 days in Chicago."))
+    _ask(client, "t1", "How long for a deposit?")
+
+    listed = client.get("/api/threads", headers={"X-Browser-Id": "b1"}).json()["threads"]
+    assert [t["title"] for t in listed] == ["How long for a deposit"]
+    assert "messages" not in listed[0], "the sidebar does not download every transcript"
+
+    thread = client.get("/api/threads/t1", headers={"X-Browser-Id": "b1"}).json()
+    assert [m["role"] for m in thread["messages"]] == ["user", "assistant"]
+    assert thread["messages"][1]["content"] == "45 days in Chicago."
+
+
+def test_another_browser_gets_its_own_list(settings, store):
+    client = _client(settings, store)
+    _ask(client, "t1", "Mine", browser="b1")
+
+    assert client.get("/api/threads", headers={"X-Browser-Id": "b2"}).json() == {"threads": []}
+    assert client.get("/api/threads/t1", headers={"X-Browser-Id": "b2"}).status_code == 404
+    assert client.get("/api/threads").json() == {"threads": []}, "and no header sees nothing"
+
+
+def test_without_a_browser_id_nothing_is_saved(settings, store):
+    client = _client(settings, store)
+    _ask(client, "t1", "How long for a deposit?", browser=None)
+    assert client.get("/api/threads", headers={"X-Browser-Id": "b1"}).json() == {"threads": []}
+
+
+def test_a_deleted_conversation_is_gone(settings, store):
+    client = _client(settings, store)
+    _ask(client, "t1", "First question")
+    _ask(client, "t2", "Second question")
+
+    gone = client.delete("/api/threads/t1", headers={"X-Browser-Id": "b1"})
+    assert gone.json() == {"deleted": True}
+    assert [
+        t["id"]
+        for t in client.get("/api/threads", headers={"X-Browser-Id": "b1"}).json()["threads"]
+    ] == ["t2"]
+    assert client.delete("/api/threads/t1", headers={"X-Browser-Id": "b1"}).json() == {
+        "deleted": False
+    }
+
+
+def test_the_conversation_list_is_gated_by_the_access_code(settings, store):
+    settings = settings.model_copy(update={"web_access_code": "letmein"})
+    client = _client(settings, store)
+    assert client.get("/api/threads", headers={"X-Browser-Id": "b1"}).status_code == 401
+    assert client.delete("/api/threads/t1", headers={"X-Browser-Id": "b1"}).status_code == 401
+    assert (
+        client.get(
+            "/api/threads", headers={"X-Browser-Id": "b1", "X-Access-Code": "letmein"}
+        ).status_code
+        == 200
+    )
+
+
+def test_a_failed_answer_is_not_saved(settings, store):
+    advisor = FakeAdvisor()
+    advisor.error = "Overloaded"
+    client = _client(settings, store, advisor)
+    _ask(client, "t1", "How long for a deposit?")
+    assert client.get("/api/threads", headers={"X-Browser-Id": "b1"}).json() == {"threads": []}
+
+
+def test_the_page_lists_saved_conversations_on_the_side():
+    from pathlib import Path
+
+    page = Path("markai/web/static/index.html").read_text(encoding="utf-8")
+    assert 'id="side"' in page and 'id="threads"' in page
+    assert "X-Browser-Id" in page, "the list is keyed by a browser id the page sends"
+    assert "/api/threads" in page
+    assert "startNew" in page, "a new conversation gets a new id instead of reusing the old one"
+    assert ".innerHTML" not in page, "titles are landlord text; they go in as text nodes"

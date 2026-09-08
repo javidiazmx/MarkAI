@@ -17,6 +17,7 @@
     --user: #eef2f7;
     --warn-bg: #fdf6e3;
     --warn-ink: #6b5518;
+    --side: 268px;
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -120,13 +121,65 @@
   }
   button.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); }
   button:disabled { opacity: .55; cursor: default; }
+  /* Saved conversations. Hidden off-canvas on a phone, always there on a desktop.
+     Hidden by transform rather than [hidden] on purpose: a display rule beat [hidden]
+     once already and left an invisible sheet over the page. */
+  #side {
+    position: fixed; top: 0; bottom: 0; left: 0; width: var(--side); z-index: 25;
+    background: var(--panel); border-right: 1px solid var(--line);
+    display: flex; flex-direction: column; transform: translateX(-100%);
+    transition: transform .18s ease;
+  }
+  #side.open { transform: none; }
+  @media (prefers-reduced-motion: reduce) { #side { transition: none; } }
+  .side-top {
+    display: flex; align-items: center; gap: 6px; padding: 11px 12px;
+    border-bottom: 1px solid var(--line);
+  }
+  .side-top h2 {
+    margin: 0; flex: 1; font-size: 12px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .06em; color: var(--muted);
+  }
+  .side-top button { padding: 5px 11px; font-size: 13px; border-radius: 8px; }
+  #threads { flex: 1; overflow-y: auto; padding: 8px; }
+  .thread { display: flex; align-items: center; }
+  .thread .pick {
+    flex: 1; min-width: 0; background: none; border: 0; color: inherit; font: inherit;
+    font-size: 14px; text-align: left; padding: 8px 9px; border-radius: 8px;
+    cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .thread .pick:hover, .thread .pick:focus-visible { background: var(--user); }
+  .thread.on .pick { background: var(--user); font-weight: 600; }
+  .thread .drop {
+    background: none; border: 0; color: var(--muted); cursor: pointer;
+    font-size: 13px; padding: 4px 7px; opacity: 0;
+  }
+  .thread:hover .drop, .thread .drop:focus-visible { opacity: 1; }
+  .side-empty { color: var(--muted); font-size: 13px; padding: 10px 9px; line-height: 1.5; }
+  .burger, .side-close { padding: 0 11px; font-size: 17px; line-height: 1; }
+  @media (min-width: 900px) {
+    body { padding-left: var(--side); }
+    #side { transform: none; }
+    footer { left: var(--side); }
+    .burger, .side-close { display: none; }
+  }
   .gate { max-width: 780px; margin: 0 auto 8px; display: none; gap: 8px; }
   .gate input { flex: 1; padding: 9px 11px; border: 1px solid var(--line); border-radius: 9px; background: var(--bg); color: var(--ink); font: inherit; }
   .err { color: #b3261e; }
 </style>
 </head>
 <body>
+<aside id="side">
+  <div class="side-top">
+    <h2>Conversations</h2>
+    <button id="new-thread" type="button" title="Start a new conversation">+ New</button>
+    <button class="ghost side-close" id="side-close" type="button" title="Close">✕</button>
+  </div>
+  <div id="threads"></div>
+</aside>
+
 <header>
+  <button class="ghost burger" id="burger" type="button" title="Saved conversations">☰</button>
   <h1>Jay</h1>
   <div class="tag">Your Chicagoland AI Advisor</div>
   <div class="sub" id="sub"></div>
@@ -165,7 +218,7 @@
     <button class="ghost attach" id="attach" type="button" title="Attach photos or a PDF">📎</button>
     <textarea id="q" placeholder="Ask about screening, deposits, leases, a deal you're looking at…"></textarea>
     <button id="send" type="button">Ask</button>
-    <button class="ghost" id="reset" type="button">Reset</button>
+    <button class="ghost" id="reset" type="button">New</button>
   </div>
 </footer>
 
@@ -180,10 +233,29 @@
   var codeInput = document.getElementById("code");
   var busy = false;
 
-  var sessionId = localStorage.getItem("mark_session");
+  function newId(prefix) {
+    return prefix + Math.random().toString(36).slice(2) + Date.now().toString(36);
+  }
+
+  function remember(key, value) {
+    try { localStorage.setItem(key, value); } catch (e) { /* private window */ }
+  }
+
+  function recall(key) {
+    try { return localStorage.getItem(key); } catch (e) { return null; }
+  }
+
+  // One id per conversation, one per browser. The browser id is what groups saved
+  // conversations together; it is unguessable, not a login, so nothing secret rides on it.
+  var sessionId = recall("mark_session");
   if (!sessionId) {
-    sessionId = "s-" + Math.random().toString(36).slice(2) + Date.now().toString(36);
-    localStorage.setItem("mark_session", sessionId);
+    sessionId = newId("s-");
+    remember("mark_session", sessionId);
+  }
+  var browserId = recall("jay_browser");
+  if (!browserId) {
+    browserId = newId("b-");
+    remember("jay_browser", browserId);
   }
 
   function accessCode() { return sessionStorage.getItem("mark_code") || ""; }
@@ -192,6 +264,7 @@
     var h = { "Content-Type": "application/json" };
     var code = accessCode();
     if (code) h["X-Access-Code"] = code;
+    if (browserId) h["X-Browser-Id"] = browserId;
     return h;
   }
 
@@ -453,6 +526,7 @@
               (data.model || "") + " · coverage " + (data.coverage || "?") +
               " · " + (usage.output_tokens || 0) + " tokens out");
             slot.wrap.appendChild(meta);
+            loadThreads();  // the thread and its title exist only once an answer landed
           } else if (name === "error") {
             slot.bubble.classList.add("err");
             slot.bubble.textContent = data.message;
@@ -620,13 +694,116 @@
     if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); }
   });
 
-  resetBtn.addEventListener("click", async function () {
-    await fetch("/api/reset", {
-      method: "POST", headers: headers(), body: JSON.stringify({ session_id: sessionId })
+  // Saved conversations -------------------------------------------------------------
+  // The list is the server's, keyed by this browser. Titles come from the first question,
+  // so one appears the moment an answer lands without a second call to Claude.
+  var side = document.getElementById("side");
+  var threadRow = document.getElementById("threads");
+
+  function closeSide() { side.classList.remove("open"); }
+
+  document.getElementById("burger").addEventListener("click", function () {
+    side.classList.toggle("open");
+  });
+  document.getElementById("side-close").addEventListener("click", closeSide);
+
+  async function loadThreads() {
+    var data;
+    try {
+      var response = await fetch("/api/threads", { headers: headers() });
+      if (!response.ok) return;  // no access code yet, or history is off
+      data = await response.json();
+    } catch (error) {
+      return;  // the list is a convenience, never a reason to break the chat
+    }
+    drawThreads(data.threads || []);
+  }
+
+  function drawThreads(threads) {
+    threadRow.textContent = "";
+    if (!threads.length) {
+      threadRow.appendChild(el("div", "side-empty",
+        "Your past conversations show up here, named after what you asked."));
+      return;
+    }
+    threads.forEach(function (thread) {
+      var row = el("div", "thread" + (thread.id === sessionId ? " on" : ""));
+      var pick = el("button", "pick", thread.title);
+      pick.type = "button";
+      pick.title = thread.title;
+      pick.addEventListener("click", function () { openThread(thread.id); });
+      var drop = el("button", "drop", "✕");
+      drop.type = "button";
+      drop.title = "Delete this conversation";
+      drop.addEventListener("click", function (event) {
+        event.stopPropagation();
+        forgetThread(thread.id, thread.title);
+      });
+      row.appendChild(pick);
+      row.appendChild(drop);
+      threadRow.appendChild(row);
     });
+  }
+
+  async function openThread(id) {
+    if (busy) return;
+    var data;
+    try {
+      var response = await fetch("/api/threads/" + encodeURIComponent(id), { headers: headers() });
+      if (!response.ok) { loadThreads(); return; }
+      data = await response.json();
+    } catch (error) {
+      return;
+    }
+    sessionId = id;
+    remember("mark_session", id);
+    log.textContent = "";
+    showStarters(false);
+    (data.messages || []).forEach(function (turn) {
+      var slot = addMessage(turn.role === "user" ? "you" : "mark",
+                            turn.role === "user" ? "You" : "Jay");
+      if (turn.role === "user") slot.bubble.textContent = turn.content;
+      else renderRich(slot.bubble, turn.content);
+    });
+    closeSide();
+    loadThreads();
+    window.scrollTo(0, document.body.scrollHeight);
+  }
+
+  async function forgetThread(id, title) {
+    if (!window.confirm("Delete \"" + title + "\"?")) return;
+    try {
+      await fetch("/api/threads/" + encodeURIComponent(id), {
+        method: "DELETE", headers: headers()
+      });
+    } catch (error) {
+      return;
+    }
+    if (id === sessionId) startNew();
+    else loadThreads();
+  }
+
+  // A new conversation gets a new id, so the old one keeps its saved turns instead of
+  // having the next question appended to it.
+  async function startNew() {
+    if (busy) return;
+    var old = sessionId;
+    sessionId = newId("s-");
+    remember("mark_session", sessionId);
     log.textContent = "";
     showStarters(true);
-  });
+    closeSide();
+    loadThreads();
+    box.focus();
+    try {
+      await fetch("/api/reset", {
+        method: "POST", headers: headers(), body: JSON.stringify({ session_id: old })
+      });
+    } catch (error) { /* the id is already gone from this page either way */ }
+  }
+
+  resetBtn.addEventListener("click", startNew);
+  document.getElementById("new-thread").addEventListener("click", startNew);
 
   async function loadStatus() {
     try {
@@ -659,6 +836,7 @@
   }
 
   loadStatus();
+  loadThreads();
 })();
 </script>
 </body>

@@ -282,7 +282,11 @@ reads, question after question, means the TTL is shorter than the gaps between q
 - What leaves the machine: your question, the conversation so far, the retrieved passages, and
   tool results, sent to Anthropic. Passage and query text go to Voyage only if you set that key.
 - No telemetry, no analytics, no crash reporting.
-- Conversations are held in memory and disappear when the process stops.
+- Conversations are held in memory and disappear when the process stops. The web page also
+  saves its chat list to `data/conversations.db` so a landlord can reopen an earlier
+  conversation: question and answer text, grouped by an id the browser keeps. It never
+  leaves the machine, and deleting a conversation in the sidebar deletes the row.
+  `mark chat` writes nothing.
 - Questions are logged locally (text, coverage, token counts) so `mark gaps` can show you what
   material to add. Answers are not logged. Nothing above DEBUG level records question content.
 

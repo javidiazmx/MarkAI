@@ -11,7 +11,7 @@ import json
 import logging
 import threading
 from collections import OrderedDict
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -105,7 +105,12 @@ def create_app(
     settings = settings or get_settings()
     app = FastAPI(title="Mark", docs_url=None, redoc_url=None)
 
-    state: dict[str, Any] = {"advisor": advisor, "store": store, "advisor_error": None}
+    state: dict[str, Any] = {
+        "advisor": advisor,
+        "store": store,
+        "advisor_error": None,
+        "history": None,
+    }
     sessions = _Sessions(settings.max_sessions)
     daily = _DailyCounter()
 
@@ -115,6 +120,18 @@ def create_app(
             return
         if not x_access_code or not hmac.compare_digest(x_access_code, expected):
             raise HTTPException(status_code=401, detail="Access code required.")
+
+    def browser_of(x_browser_id: str | None = Header(default=None)) -> str:
+        """Which browser is asking. Sent as a header so ids stay out of the request log."""
+        return (x_browser_id or "").strip()[:128]
+
+    def get_history() -> Any:
+        if state["history"] is None:
+            from markai.web.history import History
+
+            settings.ensure_dirs()
+            state["history"] = History(settings.data_dir / "conversations.db")
+        return state["history"]
 
     def get_store() -> Any:
         if state["store"] is None:
@@ -196,13 +213,42 @@ def create_app(
     def gaps(limit: int = 20, _: None = Depends(require_access)) -> dict[str, Any]:
         return {"gaps": get_store().list_gaps(min(max(limit, 1), 200))}
 
+    @app.get("/api/threads")
+    def threads(
+        browser: str = Depends(browser_of), _: None = Depends(require_access)
+    ) -> dict[str, Any]:
+        return {"threads": [t.to_dict() for t in get_history().list(browser)]}
+
+    @app.get("/api/threads/{thread_id}")
+    def thread(
+        thread_id: str,
+        browser: str = Depends(browser_of),
+        _: None = Depends(require_access),
+    ) -> dict[str, Any]:
+        found = get_history().get(browser, thread_id)
+        if found is None:
+            raise HTTPException(status_code=404, detail="No such conversation.")
+        return found.to_dict(with_messages=True)
+
+    @app.delete("/api/threads/{thread_id}")
+    def forget_thread(
+        thread_id: str,
+        browser: str = Depends(browser_of),
+        _: None = Depends(require_access),
+    ) -> dict[str, Any]:
+        return {"deleted": get_history().delete(browser, thread_id)}
+
     @app.post("/api/reset")
     def reset(payload: ResetRequest, _: None = Depends(require_access)) -> dict[str, Any]:
         sessions.reset(payload.session_id)
         return {"status": "reset"}
 
     @app.post("/api/chat")
-    def chat(payload: ChatRequest, _: None = Depends(require_access)) -> EventSourceResponse:
+    def chat(
+        payload: ChatRequest,
+        browser: str = Depends(browser_of),
+        _: None = Depends(require_access),
+    ) -> EventSourceResponse:
         from markai.advisor.attachments import AttachmentError, decode_all
 
         message = (payload.message or "").strip()
@@ -236,7 +282,15 @@ def create_app(
             raise HTTPException(status_code=409, detail="This conversation is still answering.")
         entry[2] = asked + 1
 
-        return EventSourceResponse(_events(get_advisor, conversation, message, lock, files))
+        record: Callable[[str, str], None] | None = None
+        if browser:
+            history = get_history()
+            thread_id = payload.session_id
+
+            def record(question: str, answer: str) -> None:
+                history.record(browser, thread_id, question, answer)
+
+        return EventSourceResponse(_events(get_advisor, conversation, message, lock, files, record))
 
     return app
 
@@ -247,6 +301,7 @@ def _events(
     message: str,
     lock: threading.Lock,
     attachments: list[Any] | None = None,
+    record: Callable[[str, str], None] | None = None,
 ) -> Iterator[dict]:
     from markai.advisor.mark import MissingApiKeyError
 
@@ -275,6 +330,9 @@ def _events(
         if response is None:
             yield {"event": "error", "data": json.dumps({"message": "No answer was produced."})}
             return
+
+        if record is not None:
+            record(message, response.text)
 
         yield {
             "event": "citations",
