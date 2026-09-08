@@ -8,8 +8,10 @@ model or the network.
 - **Guest** is read off the title. Titles are written by people, so the parser is tolerant
   and refuses rather than guesses: a name it is not confident about comes back as ``None``.
 - **Topics** are the terms that set the episode apart from the rest of the corpus, scored
-  with the BM25 index's own idf. That is why "yeah" and "chicago" do not show up as topics
-  without a hand-kept stoplist to remove them.
+  with the BM25 index's own idf inside a band on how many documents use the term at all. The
+  band is what separates a subject from trivia: a word in one document is a name or a brand,
+  a word in a quarter of them is furniture like the show's own footer. Words already on
+  screen, the title and the guest, are excluded rather than repeated.
 - **Timestamp** is the start of the passage that matched, which is what makes the answer
   useful: the episode plus the minute, not just the episode.
 """
@@ -32,6 +34,9 @@ HOSTS: frozenset[str] = frozenset({"mark ainley"})
 
 MAX_TOPICS = 6
 MAX_QUOTE_CHARS = 220
+
+# Caption tracks mark a change of speaker with ">>", which reads as noise inside a quote.
+_SPEAKER = re.compile(r"\s*>>+\s*")
 
 # "Ep. 214:", "Episode 214 -", "#214", "214." at the front of a title.
 _EPISODE_PREFIX = re.compile(
@@ -97,6 +102,10 @@ def deep_link(document: Document, start_time: float | None) -> str | None:
 
 
 def _singular(term: str) -> str:
+    """Enough of a stem to see that "porch" and "porches" are one word, not two."""
+    for suffix, replacement in (("ies", "y"), ("ches", "ch"), ("shes", "sh"), ("sses", "ss")):
+        if len(term) > 4 and term.endswith(suffix):
+            return term[: -len(suffix)] + replacement
     return term[:-1] if len(term) > 4 and term.endswith("s") else term
 
 
@@ -196,20 +205,36 @@ def _timestamp(seconds: float | None) -> str | None:
     return None if seconds is None else format_timestamp(seconds)
 
 
+def _already_shown(document: Any, guest: str | None) -> set[str]:
+    """Words the reader can already see. A topic list that repeats them wastes its slots."""
+    from markai.knowledge.retriever import tokenize
+
+    return set(tokenize(f"{document.title} {guest or ''} {document.channel or ''}"))
+
+
+def clean_quote(text: str) -> str:
+    """One line of transcript, without the caption track's speaker markers."""
+    return _SPEAKER.sub(" ", " ".join((text or "").split())).strip()[:MAX_QUOTE_CHARS]
+
+
 def _moment(retriever: Any, rc: RetrievedChunk) -> EpisodeMoment:
     doc = rc.document
+    guest = guest_from_title(doc.title)
+    terms = retriever.distinctive_terms(
+        doc.id, limit=MAX_TOPICS + 4, exclude=_already_shown(doc, guest)
+    )
     return EpisodeMoment(
         kind=doc.kind,
         title=doc.title,
         number=doc.episode,
-        guest=guest_from_title(doc.title),
+        guest=guest,
         url=deep_link(doc, rc.chunk.start_time),
         timestamp=_timestamp(rc.chunk.start_time),
         start_time=rc.chunk.start_time,
         published_at=doc.published_at,
         channel=doc.channel,
-        topics=dedupe_terms(retriever.distinctive_terms(doc.id, limit=MAX_TOPICS + 2))[:MAX_TOPICS],
-        quote=" ".join(rc.chunk.text.split())[:MAX_QUOTE_CHARS],
+        topics=dedupe_terms(terms)[:MAX_TOPICS],
+        quote=clean_quote(rc.chunk.text),
         score=rc.score,
     )
 

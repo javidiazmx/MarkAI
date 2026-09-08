@@ -31,6 +31,13 @@ RRF_K = 60
 OVERLAP_COVERAGE_RATIO = 0.6
 MAX_VECTOR_CANDIDATES = 200
 
+# Topic extraction. A term has to be said a few times in the episode, and appear in more
+# than a couple of documents but well short of all of them, to count as a subject.
+MIN_TOPIC_COUNT = 3
+MIN_TOPIC_DOC_FREQ = 3
+MAX_TOPIC_DOC_SHARE = 0.25
+TOPIC_BAND_MIN_CORPUS = 50
+
 _TOKEN = re.compile(r"[a-z0-9']+")
 
 STOPWORDS: frozenset[str] = frozenset(
@@ -116,6 +123,19 @@ class Retriever:
             if any(corpus):  # never build BM25 on an empty (or all-stopword) corpus
                 self._bm25 = BM25Okapi(corpus)
 
+        # How many documents each term appears in. The BM25 index counts chunks, and a word
+        # one guest says forty times in one episode lands in forty chunks, which reads as a
+        # common word when it is the opposite. Topics need the document count.
+        self._doc_freq: Counter[str] = Counter()
+        self._doc_count = 0
+        if chunks:
+            per_doc: dict[str, set[str]] = {}
+            for index, chunk in enumerate(chunks):
+                per_doc.setdefault(chunk.doc_id, set()).update(self._chunk_tokens[index])
+            for terms in per_doc.values():
+                self._doc_freq.update(terms)
+            self._doc_count = len(per_doc)
+
         self._matrix = None
         self._matrix_ids = []
         if self.embedder is not None and chunks:
@@ -140,13 +160,25 @@ class Retriever:
     def is_empty(self) -> bool:
         return not self._chunks
 
-    def distinctive_terms(self, doc_id: str, limit: int = 6, min_count: int = 2) -> list[str]:
-        """The terms that set one document apart from the rest of the corpus.
+    def distinctive_terms(
+        self,
+        doc_id: str,
+        limit: int = 6,
+        min_count: int = MIN_TOPIC_COUNT,
+        exclude: frozenset[str] | set[str] = frozenset(),
+    ) -> list[str]:
+        """The terms that set one document apart, as topics rather than trivia.
 
-        Frequency inside the document weighted by the BM25 index's own idf, which is why a
-        transcript's "yeah" and "chicago" fall away without a hand-kept stoplist. Terms the
-        index scores at or below zero (they are in most of the corpus) are dropped, so a
-        small corpus can legitimately produce no topics at all.
+        Frequency inside the document times the BM25 index's idf, inside a band on how many
+        documents the term appears in at all. The band is what makes these read as topics:
+
+        - a term in only one or two documents is a name, a brand or a one-off ("klemm",
+          "spybar"), interesting to nobody looking for a subject;
+        - a term in a large share of them is furniture ("brother", or the show's own domain
+          out of the podcast footer), which high idf alone does not catch.
+
+        ``exclude`` is for words already shown next to the topics, like the title and the
+        guest's name: repeating them costs a slot and tells the reader nothing.
         """
         if self._bm25 is None or not doc_id:
             return []
@@ -159,12 +191,22 @@ class Retriever:
             )
         if not counts:
             return []
+        # A real corpus can afford to demand three documents. A handful of them cannot, and
+        # the floor would exclude everything, so it relaxes rather than returning nothing.
+        floor = MIN_TOPIC_DOC_FREQ if self._doc_count >= TOPIC_BAND_MIN_CORPUS else 1
+        ceiling = max(floor, int(self._doc_count * MAX_TOPIC_DOC_SHARE))
         idf = getattr(self._bm25, "idf", {}) or {}
-        scored = [
-            ((1.0 + math.log(count)) * idf.get(term, 0.0), term)
-            for term, count in counts.items()
-            if count >= min_count and idf.get(term, 0.0) > 0.0
-        ]
+        scored = []
+        for term, count in counts.items():
+            if count < min_count or term in exclude:
+                continue
+            weight = idf.get(term, 0.0)
+            if weight <= 0.0:
+                continue
+            spread = self._doc_freq.get(term, 0)
+            if spread < floor or spread > ceiling:
+                continue
+            scored.append(((1.0 + math.log(count)) * weight, term))
         scored.sort(key=lambda pair: (-pair[0], pair[1]))
         return [term for _, term in scored[: max(limit, 0)]]
 

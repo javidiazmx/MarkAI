@@ -217,3 +217,80 @@ def test_a_broken_search_is_an_error_not_a_crash():
 
     result = run_episode_tool(Broken(), {"topic": "boilers", "limit": 3})
     assert result == {"error": "The episode index could not be searched."}
+
+
+# --- topics on a corpus big enough to have a middle ------------------------------------
+
+
+@pytest.fixture
+def wide_store(settings):
+    """60 episodes: one subject shared by ten of them, one name, and a footer on all."""
+    from markai.knowledge.chunking import chunk_document
+    from markai.knowledge.store import KnowledgeStore
+
+    settings.ensure_dirs()
+    store = KnowledgeStore(settings.db_path)
+    for index in range(60):
+        body = ["subscribe to straightupchicagoinvestor every week for the show footer"] * 3
+        if index < 10:
+            # A real subject: ten episodes touch it, and the first one is about it.
+            body += ["the boiler and the radiator carry the heating load"] * 3
+            body += ["klemm walked the building with us and priced the work"] * 3
+        if index == 0:
+            body += ["boiler boiler radiator radiator condensate condensate"] * 2
+            body += ["spybar came up once and never again in this corpus"] * 3
+        doc = Document(
+            id=Document.make_id(SourceKind.PODCAST, f"episode:{index}"),
+            kind=SourceKind.PODCAST,
+            title=f"Ep. {index}: Heating systems with Jonathan Klemm",
+            locator=f"episode:{index}",
+            text=" ".join(body),
+            episode=str(index),
+            link=f"https://example.com/{index}",
+        )
+        doc.ensure_hash()
+        store.upsert_document(doc, chunk_document(doc, target_words=60, overlap_words=10))
+    yield store
+    store.close()
+
+
+def test_a_word_from_the_footer_is_not_a_topic(wide_store, settings):
+    terms = Retriever(wide_store, None, settings).distinctive_terms(
+        Document.make_id(SourceKind.PODCAST, "episode:0")
+    )
+    assert "straightupchicagoinvestor" not in terms
+    assert "subscribe" not in terms, "in every episode, so it distinguishes none of them"
+
+
+def test_a_word_used_in_one_episode_only_is_not_a_topic(wide_store, settings):
+    terms = Retriever(wide_store, None, settings).distinctive_terms(
+        Document.make_id(SourceKind.PODCAST, "episode:0")
+    )
+    assert "spybar" not in terms, "a one-off is a name or a brand, not a subject"
+    assert "boiler" in terms, "and the subject ten episodes share is"
+
+
+def test_the_guests_name_is_not_repeated_as_a_topic(wide_store, settings):
+    retriever = Retriever(wide_store, None, settings)
+    doc_id = Document.make_id(SourceKind.PODCAST, "episode:0")
+    # "klemm" is spread over ten episodes and said often enough to score, so only the
+    # exclusion keeps it out: it is already on screen as the guest.
+    assert "klemm" in retriever.distinctive_terms(doc_id, exclude=frozenset())
+    moment = find_moments(retriever, "boiler radiator heating load", limit=1)[0]
+    assert moment.guest == "Jonathan Klemm"
+    assert "klemm" not in moment.topics and "jonathan" not in moment.topics
+    assert "heating" not in moment.topics, "it is in the title, which the reader can see"
+
+
+def test_a_plural_and_its_singular_are_one_topic():
+    assert dedupe_terms(["porches", "porch", "gutters", "gutter"]) == ["porches", "gutters"]
+    assert dedupe_terms(["policy", "policies"]) == ["policy"]
+
+
+def test_a_quote_loses_the_caption_speaker_markers():
+    from markai.knowledge.episodes import clean_quote
+
+    assert clean_quote(">> Good stuff here. >>  I got nothing else, man.") == (
+        "Good stuff here. I got nothing else, man."
+    )
+    assert clean_quote("  line one\n\nline two  ") == "line one line two"
