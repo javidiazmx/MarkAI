@@ -30,12 +30,30 @@ an answer in Mark's voice     grounded in those passages, citations optional
 bash setup.sh                 # creates .venv, installs, runs mark init
 ```
 
-Or by hand:
+Or by hand, on macOS and Linux:
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 mark init                     # asks for your Anthropic API key, writes .env
+```
+
+On Windows, in `cmd`:
+
+```bat
+python -m venv .venv
+.venv\Scripts\activate
+pip install -e ".[dev]"
+mark init
+```
+
+`source` is a shell builtin that Windows does not have, and until the venv is active
+Windows answers `'mark' is not recognized`. Two ways out, both fine:
+
+```bat
+.venv\Scripts\activate     :: then `mark ...` works for the rest of the session
+.venv\Scripts\mark ...     :: or call it by path, no activation needed
+python -m markai ...         :: or through the module, which never needs the PATH
 ```
 
 Then:
@@ -368,7 +386,7 @@ tests/                214 tests, no network required
 ## Development
 
 ```bash
-source .venv/bin/activate
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
 ruff check . && ruff format --check .
 pytest -q
 ```

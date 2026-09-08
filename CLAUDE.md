@@ -17,11 +17,14 @@ episodes, and podcast. If it is not in `sources/sources.yaml`, Mark does not kno
 ## Commands
 
 ```bash
-source .venv/bin/activate
+source .venv/bin/activate        # Windows cmd: .venv\Scripts\activate
 ruff check . && ruff format --check .
 pytest -q
-mark --help
+mark --help                      # or `python -m markai --help`, no PATH needed
 ```
+
+The owner runs this on Windows. Commands you hand over go in `cmd` form, or through
+`python -m markai`, which works with or without the venv active.
 
 ## Fixed decisions
 
