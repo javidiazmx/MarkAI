@@ -535,3 +535,92 @@ def test_the_page_no_longer_shows_the_corpus_counts():
     assert "passages · " not in page
     assert "keyword + semantic search" not in page
     assert "Your Chicagoland AI Advisor" in page
+
+
+# --- attaching files to a question ---------------------------------------------------------
+
+
+def _tiny_png_b64() -> str:
+    import base64
+
+    return base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100).decode("ascii")
+
+
+def _attach_client(tmp_path):
+    settings = Settings(_env_file=None, data_dir=tmp_path / "data")
+    settings.ensure_dirs()
+    advisor = FakeAdvisor("The staining pattern suggests a supply line, not the roof.")
+    return TestClient(create_app(settings=settings, advisor=advisor)), advisor
+
+
+def test_a_photo_reaches_the_advisor(tmp_path):
+    client, advisor = _attach_client(tmp_path)
+    response = client.post(
+        "/api/chat",
+        json={
+            "session_id": "s1",
+            "message": "What is causing this?",
+            "attachments": [
+                {"name": "ceiling.png", "media_type": "image/png", "data": _tiny_png_b64()}
+            ],
+        },
+    )
+    assert response.status_code == 200
+    body = response.text
+    assert "supply line" in body
+    assert len(advisor.attachments) == 1
+    assert advisor.attachments[0].name == "ceiling.png"
+
+
+def test_a_photo_with_no_question_still_asks_something(tmp_path):
+    """Dragging in a photo and hitting send is a real thing people do."""
+    client, advisor = _attach_client(tmp_path)
+    response = client.post(
+        "/api/chat",
+        json={
+            "session_id": "s1",
+            "attachments": [
+                {"name": "ceiling.png", "media_type": "image/png", "data": _tiny_png_b64()}
+            ],
+        },
+    )
+    assert response.status_code == 200
+    assert advisor.questions[0], "a question was supplied on their behalf"
+
+
+def test_a_file_type_that_cannot_be_read_is_rejected_before_any_api_call(tmp_path):
+    client, advisor = _attach_client(tmp_path)
+    import base64
+
+    response = client.post(
+        "/api/chat",
+        json={
+            "session_id": "s1",
+            "message": "Have a look",
+            "attachments": [
+                {
+                    "name": "setup.exe",
+                    "media_type": "application/x-msdownload",
+                    "data": base64.b64encode(b"MZ\x90\x00").decode("ascii"),
+                }
+            ],
+        },
+    )
+    assert response.status_code == 400
+    assert "setup.exe" in response.json()["detail"]
+    assert advisor.questions == [], "nothing was billed"
+
+
+def test_no_message_and_no_file_is_still_refused(tmp_path):
+    client, _ = _attach_client(tmp_path)
+    assert client.post("/api/chat", json={"session_id": "s1"}).status_code == 400
+
+
+def test_the_page_has_an_attach_control_that_keeps_nothing():
+    from pathlib import Path
+
+    page = Path("markai/web/static/index.html").read_text(encoding="utf-8")
+    assert 'id="attach"' in page and 'id="file"' in page
+    assert "readAsDataURL" in page
+    assert "attachments: files" in page
+    assert "MAX_PER_FILE" in page, "the browser refuses an oversized file before uploading it"

@@ -20,6 +20,7 @@ from typing import Any, Literal
 
 import anthropic
 
+from markai.advisor.attachments import to_content_blocks
 from markai.advisor.calculators import TOOL_DEFINITIONS, dispatch_tool
 from markai.advisor.guardrails import (
     FLAG_FOLLOW_UP,
@@ -126,11 +127,16 @@ class MarkAdvisor:
 
     # -- public API ---------------------------------------------------------------------
 
-    def ask(self, question: str, conversation: Conversation | None = None) -> AdvisorResponse:
+    def ask(
+        self,
+        question: str,
+        conversation: Conversation | None = None,
+        attachments: list[Any] | None = None,
+    ) -> AdvisorResponse:
         """Answer a question, draining the stream. Errors come back as an AdvisorResponse."""
         response: AdvisorResponse | None = None
         error: str | None = None
-        for event in self.stream(question, conversation):
+        for event in self.stream(question, conversation, attachments):
             if event.type == "final":
                 response = event.response
             elif event.type == "error":
@@ -139,7 +145,12 @@ class MarkAdvisor:
             return response
         return AdvisorResponse(text=error or "Something went wrong.", stop_reason="error")
 
-    def stream(self, question: str, conversation: Conversation | None = None):
+    def stream(
+        self,
+        question: str,
+        conversation: Conversation | None = None,
+        attachments: list[Any] | None = None,
+    ):
         """Yield text deltas, tool notices, then exactly one ``final`` (or ``error``)."""
         flags = detect_flags(question)
         query = question
@@ -164,7 +175,15 @@ class MarkAdvisor:
 
         user_text = build_user_message(question, retrieval, self.tools, flags, carried)
         api_messages: list[Any] = list(conversation.messages) if conversation else []
-        api_messages.append({"role": "user", "content": user_text})
+        if attachments:
+            # Files first, then the knowledge base and the question, which is the order the
+            # API documentation asks for and reads naturally to the model.
+            content: list[Any] = to_content_blocks(attachments)
+            content.append({"type": "text", "text": user_text})
+            api_messages.append({"role": "user", "content": content})
+            logger.info("question with %d attachment(s)", len(attachments))
+        else:
+            api_messages.append({"role": "user", "content": user_text})
 
         usage = {
             "input_tokens": 0,

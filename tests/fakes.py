@@ -198,11 +198,12 @@ class FakeAdvisor:
         self.citations = citations or []
         self.questions: list[str] = []
 
-    def stream(self, question: str, conversation: Any = None):
+    def stream(self, question: str, conversation: Any = None, attachments: Any = None):
         from markai.advisor.mark import StreamEvent
         from markai.models import AdvisorResponse
 
         self.questions.append(question)
+        self.attachments = list(attachments or [])
         yield StreamEvent("text", self.text)
         yield StreamEvent(
             "final",

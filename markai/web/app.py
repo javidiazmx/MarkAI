@@ -28,9 +28,18 @@ logger = logging.getLogger(__name__)
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
+class Attachment(BaseModel):
+    """One file on its way into a single question. Never stored."""
+
+    name: str = Field(default="file", max_length=200)
+    media_type: str = Field(default="", max_length=100)
+    data: str = Field(default="", max_length=30_000_000)  # base64, checked in the decoder
+
+
 class ChatRequest(BaseModel):
     session_id: str = Field(default="default", max_length=128)
     message: str = Field(default="")
+    attachments: list[Attachment] = Field(default_factory=list, max_length=10)
 
 
 class ResetRequest(BaseModel):
@@ -194,9 +203,18 @@ def create_app(
 
     @app.post("/api/chat")
     def chat(payload: ChatRequest, _: None = Depends(require_access)) -> EventSourceResponse:
+        from markai.advisor.attachments import AttachmentError, decode_all
+
         message = (payload.message or "").strip()
-        if not message:
+        try:
+            files = decode_all([a.model_dump() for a in payload.attachments])
+        except AttachmentError as exc:
+            # The message names the file and the limit, so it is safe and useful to show.
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if not message and not files:
             raise HTTPException(status_code=400, detail="Ask a question first.")
+        if not message:
+            message = "Take a look at this and tell me what you see."
         if len(message) > settings.max_question_chars:
             raise HTTPException(
                 status_code=413,
@@ -218,12 +236,18 @@ def create_app(
             raise HTTPException(status_code=409, detail="This conversation is still answering.")
         entry[2] = asked + 1
 
-        return EventSourceResponse(_events(get_advisor, conversation, message, lock))
+        return EventSourceResponse(_events(get_advisor, conversation, message, lock, files))
 
     return app
 
 
-def _events(get_advisor, conversation: Any, message: str, lock: threading.Lock) -> Iterator[dict]:
+def _events(
+    get_advisor,
+    conversation: Any,
+    message: str,
+    lock: threading.Lock,
+    attachments: list[Any] | None = None,
+) -> Iterator[dict]:
     from markai.advisor.mark import MissingApiKeyError
 
     try:
@@ -237,7 +261,7 @@ def _events(get_advisor, conversation: Any, message: str, lock: threading.Lock) 
             return
 
         response = None
-        for event in advisor.stream(message, conversation):
+        for event in advisor.stream(message, conversation, attachments):
             if event.type == "text":
                 yield {"event": "text", "data": json.dumps({"text": event.text})}
             elif event.type == "tool_call":

@@ -60,6 +60,16 @@
   .bubble .bullets li { margin: 3px 0; }
   .bubble strong { font-weight: 640; }
   .bubble a.link { color: var(--accent); text-decoration: underline; word-break: break-word; }
+  .files { max-width: 780px; margin: 0 auto 8px; display: flex; flex-wrap: wrap; gap: 6px; }
+  .file {
+    display: flex; align-items: center; gap: 6px; font-size: 13px; padding: 4px 8px;
+    border: 1px solid var(--line); border-radius: 16px; background: var(--panel);
+  }
+  .file button {
+    border: 0; background: none; color: var(--muted); cursor: pointer; font: inherit;
+    padding: 0 2px;
+  }
+  .attach { padding: 0 12px; font-size: 18px; line-height: 1; }
   .dots { color: var(--muted); letter-spacing: 2px; animation: pulse 1.2s ease-in-out infinite; }
   @keyframes pulse { 0%, 100% { opacity: .25; } 50% { opacity: .9; } }
   @media (prefers-reduced-motion: reduce) { .dots { animation: none; opacity: .5; } }
@@ -148,7 +158,11 @@
     <input id="code" type="password" placeholder="Access code" autocomplete="off" />
     <button class="ghost" id="save-code" type="button">Save</button>
   </div>
+  <div class="files" id="files" hidden></div>
   <div class="row">
+    <input id="file" type="file" multiple hidden
+           accept="image/jpeg,image/png,image/gif,image/webp,application/pdf,text/plain,text/csv" />
+    <button class="ghost attach" id="attach" type="button" title="Attach photos or a PDF">📎</button>
     <textarea id="q" placeholder="Ask about screening, deposits, leases, a deal you're looking at…"></textarea>
     <button id="send" type="button">Ask</button>
     <button class="ghost" id="reset" type="button">Reset</button>
@@ -378,13 +392,21 @@
 
   async function send() {
     var question = box.value.trim();
-    if (!question || busy) return;
+    if ((!question && !pending.length) || busy) return;
     busy = true;
     sendBtn.disabled = true;
     box.value = "";
+    var files = pending;
+    pending = [];
+    drawFiles();
 
     showStarters(false);
-    addMessage("you", "You").bubble.textContent = question;
+    var mine = addMessage("you", "You");
+    mine.bubble.textContent = question;
+    if (files.length) {
+      var names = files.map(function (f) { return f.name; }).join(", ");
+      mine.wrap.appendChild(el("div", "meta", "📎 " + names));
+    }
     var slot = addMessage("mark", "Jay");
     // Opus 5 thinks before it writes, so without this the bubble sits blank for seconds
     // and the page looks broken - which is exactly how it looked.
@@ -396,7 +418,9 @@
       var response = await fetch("/api/chat", {
         method: "POST",
         headers: headers(),
-        body: JSON.stringify({ session_id: sessionId, message: question })
+        body: JSON.stringify({
+          session_id: sessionId, message: question, attachments: files
+        })
       });
       if (!response.ok) {
         var detail = "Request failed (" + response.status + ").";
@@ -515,6 +539,81 @@
 
   buildStarters();
   showStarters(true);
+
+  // Attachments. Held in memory for one message and never uploaded anywhere but the
+  // question itself, so there is no storage to secure and nothing to leak afterwards.
+  var MAX_FILES = 5;
+  var MAX_PER_FILE = 8000000;
+  var pending = [];
+  var fileInput = document.getElementById("file");
+  var fileRow = document.getElementById("files");
+
+  function drawFiles() {
+    fileRow.textContent = "";
+    fileRow.hidden = pending.length === 0;
+    pending.forEach(function (item, index) {
+      var chip = el("div", "file");
+      chip.appendChild(document.createTextNode(item.name));
+      var drop = el("button", null, "✕");
+      drop.type = "button";
+      drop.title = "Remove";
+      drop.addEventListener("click", function () {
+        pending.splice(index, 1);
+        drawFiles();
+      });
+      chip.appendChild(drop);
+      fileRow.appendChild(chip);
+    });
+  }
+
+  function readFile(file) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onerror = function () { reject(new Error("Could not read " + file.name)); };
+      reader.onload = function () {
+        // A data URL is "data:<type>;base64,<payload>"; the API wants the payload only.
+        var text = String(reader.result);
+        resolve({
+          name: file.name,
+          media_type: file.type || "application/octet-stream",
+          data: text.slice(text.indexOf(",") + 1)
+        });
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  document.getElementById("attach").addEventListener("click", function () {
+    fileInput.click();
+  });
+
+  fileInput.addEventListener("change", async function () {
+    var chosen = Array.prototype.slice.call(fileInput.files || []);
+    fileInput.value = "";
+    for (var i = 0; i < chosen.length; i++) {
+      var file = chosen[i];
+      if (pending.length >= MAX_FILES) {
+        note("Up to " + MAX_FILES + " files at a time.");
+        break;
+      }
+      if (file.size > MAX_PER_FILE) {
+        note(file.name + " is too big. The limit is 8 MB per file.");
+        continue;
+      }
+      try {
+        pending.push(await readFile(file));
+      } catch (error) {
+        note(String(error.message || error));
+      }
+    }
+    drawFiles();
+  });
+
+  function note(text) {
+    var slot = addMessage("mark", "Jay");
+    slot.bubble.classList.add("err");
+    slot.bubble.textContent = text;
+  }
 
   sendBtn.addEventListener("click", send);
   box.addEventListener("keydown", function (event) {
