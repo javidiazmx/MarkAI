@@ -296,3 +296,22 @@ def test_the_disclaimer_is_said_once_per_conversation():
 def test_a_first_legal_answer_still_gets_it_after_small_talk():
     assert LEGAL_DISCLAIMER not in ensure_disclaimer("Rents are up on the north side.", [])
     assert LEGAL_DISCLAIMER in ensure_disclaimer("The RLTO says 45 days.", [FLAG_LEGAL])
+
+
+def test_plain_punctuation_replaces_dashes_the_owner_does_not_want():
+    from markai.advisor.guardrails import plain_punctuation
+
+    assert plain_punctuation("45 days — and 30 in the suburbs.") == (
+        "45 days - and 30 in the suburbs."
+    )
+    assert plain_punctuation("A range of 30–45 days.") == "A range of 30 - 45 days."
+    assert plain_punctuation("Nothing to change here.") == "Nothing to change here."
+
+
+def test_the_prompt_does_not_teach_the_habit_it_forbids():
+    """It asked for plain punctuation while using em dashes eight times, one as an example."""
+    from pathlib import Path
+
+    prompt = Path("prompts/mark_system_prompt.md").read_text(encoding="utf-8")
+    assert "—" not in prompt and "–" not in prompt
+    assert "No em dashes or en dashes" in prompt

@@ -81,6 +81,14 @@ websites:
     exclude_patterns: ["/wp-admin", "/wp-login", "/feed", "/cart", "/checkout", "/_system/listings"]
     notes: Notas de cada episodio. La portada del dominio se omite a proposito.
 
+  # Directorio de oficios de la comunidad del podcast. Como fuente para que Jay sepa que
+  # hay ahi, y como tool arriba para mandarlos a la pagina.
+  - url: https://www.straightupchicagoinvestor.com/build-your-team
+    title: Build Your Team (directorio de vendors)
+    crawl: true
+    max_pages: 60
+    include_patterns: ["build-your-team", "/team", "/vendor"]
+
   # --- Condados de Chicagoland ---------------------------------------------------------
   - url: https://www.cookcountyil.gov/
     title: Cook County
@@ -263,11 +271,29 @@ podcast:
 # ---------------------------------------------------------------------------------------
 # TOOLS Mark can recommend when they fit the question.
 # ---------------------------------------------------------------------------------------
-tools: []
-  # - name: Rental property ROI calculator
-  #   description: Cash flow, cap rate and cash-on-cash for a Chicago two-flat or three-flat.
-  #   url: https://example.com/roi-calculator
-  #   when_to_recommend: When someone is comparing two buildings or sizing a down payment.
+tools:
+  - name: Free Rental Analysis
+    description: GC Realty corre el analisis de renta de la unidad y te manda el numero.
+    url: https://www.gcrealtyinc.com/free-rental-analysis
+    when_to_recommend: >
+      Cuando preguntan cuanto renta una unidad o un edificio en concreto. Jay no tiene
+      comparables en vivo, asi que esta es la respuesta honesta a "cuanto vale mi renta".
+
+  - name: Build Your Team
+    description: >
+      Directorio de la comunidad Straight Up Chicago Investor: plomeros, techeros,
+      calderas, abogados, contadores y demas oficios que trabajan en Chicagoland.
+    url: https://www.straightupchicagoinvestor.com/build-your-team
+    when_to_recommend: >
+      Cuando piden un contacto de un oficio o especialidad - caldera, alcantarillado,
+      board-up, un abogado de arrendamiento - y no hay un nombre en las fuentes.
+
+  - name: Llamada de 20 minutos con Russell
+    description: Property manager de GC Realty. Revisa el caso contigo por telefono.
+    url: https://calendly.com/russell-wedge-gcrealtyinc/20min
+    when_to_recommend: >
+      Solo cuando el caso se paso de lo que un chat resuelve. En una pregunta rutinaria se
+      lee como que lo estas quitando de encima.
 
 # ---------------------------------------------------------------------------------------
 # YOUR BUSINESS. This is added to Mark's instructions, so keep it short and factual.

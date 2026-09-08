@@ -59,6 +59,7 @@
   .bubble .bullets { margin: 0 0 10px; padding-left: 20px; }
   .bubble .bullets li { margin: 3px 0; }
   .bubble strong { font-weight: 640; }
+  .bubble a.link { color: var(--accent); text-decoration: underline; word-break: break-word; }
   .dots { color: var(--muted); letter-spacing: 2px; animation: pulse 1.2s ease-in-out infinite; }
   @keyframes pulse { 0%, 100% { opacity: .25; } 50% { opacity: .9; } }
   @media (prefers-reduced-motion: reduce) { .dots { animation: none; opacity: .5; } }
@@ -67,6 +68,20 @@
   .badge { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 20px; background: var(--accent); color: var(--accent-ink); margin-right: 6px; text-transform: uppercase; letter-spacing: .04em; }
   .meta { color: var(--muted); font-size: 12px; margin-top: 6px; }
   sup a { color: var(--accent); text-decoration: none; font-weight: 600; }
+  .scrim {
+    position: fixed; inset: 0; z-index: 20; display: flex; align-items: center;
+    justify-content: center; padding: 20px; background: rgba(20, 20, 18, .55);
+  }
+  /* `display: flex` above beats the browser's own [hidden] rule, so hiding the card left
+     an invisible sheet over the whole page swallowing every click. */
+  .scrim[hidden] { display: none; }
+  .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    padding: 22px; max-width: 46rem; box-shadow: 0 10px 40px rgba(0, 0, 0, .25);
+  }
+  .card h2 { margin: 0 0 10px; font-size: 17px; }
+  .card p { margin: 0 0 18px; font-size: 14px; line-height: 1.6; color: var(--ink); }
+  .card button { padding: 10px 18px; font: inherit; font-weight: 600; }
   .start { padding: 8px 4px 4px; }
   .start h2 { margin: 0 0 4px; font-size: 17px; font-weight: 600; }
   .start p { margin: 0 0 18px; color: var(--muted); font-size: 14px; max-width: 52ch; }
@@ -103,9 +118,17 @@
 <body>
 <header>
   <h1>Jay</h1>
-  <div class="tag">Chicagoland landlord advisor · AI, not a lawyer</div>
-  <div class="sub" id="sub">Loading…</div>
+  <div class="tag">Your Chicagoland AI Advisor</div>
+  <div class="sub" id="sub"></div>
 </header>
+
+<div class="scrim" id="welcome" hidden>
+  <div class="card">
+    <h2>Before you start</h2>
+    <p id="welcome-text"></p>
+    <button id="welcome-ok" type="button">I understand</button>
+  </div>
+</div>
 
 <main>
 <section class="start" id="start" hidden>
@@ -213,12 +236,44 @@
     if (!target.childNodes.length) target.textContent = text;
   }
 
-  // **bold** only. Everything else stays literal, which is the safe direction to err.
+  // **bold** and links. Everything else stays literal, which is the safe direction to err.
+  var URL_RE = /(https?:\/\/[^\s<>()\[\]"']+[^\s<>()\[\]"'.,;:!?])/g;
+
   function inline(parent, text) {
     text.split(/\*\*/).forEach(function (piece, index) {
       if (!piece) return;
-      parent.appendChild(index % 2 ? el("strong", null, piece) : document.createTextNode(piece));
+      if (index % 2) {
+        parent.appendChild(el("strong", null, piece));
+        return;
+      }
+      linkify(parent, piece);
     });
+  }
+
+  // A bare URL in an answer was rendered as text, so a landlord had to select and copy a
+  // Calendly link by hand. Anchors are built with createElement and the href set from the
+  // matched text, never from markup, so nothing in an answer can forge one.
+  function linkify(parent, text) {
+    var last = 0;
+    var match;
+    URL_RE.lastIndex = 0;
+    while ((match = URL_RE.exec(text)) !== null) {
+      if (match.index > last) {
+        parent.appendChild(document.createTextNode(text.slice(last, match.index)));
+      }
+      var href = match[0];
+      if (/^https?:\/\//i.test(href)) {
+        var link = el("a", "link", href.replace(/^https?:\/\//, ""));
+        link.href = href;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        parent.appendChild(link);
+      } else {
+        parent.appendChild(document.createTextNode(href));
+      }
+      last = match.index + href.length;
+    }
+    if (last < text.length) parent.appendChild(document.createTextNode(text.slice(last)));
   }
 
   function addMessage(who, label) {
@@ -411,6 +466,33 @@
 
   var start = document.getElementById("start");
 
+  // Shown on a first visit and then remembered, so it is read once rather than becoming
+  // furniture under every answer.
+  var STANDING_NOTICE =
+    "The information provided on this site/platform is for general informational and " +
+    "educational purposes only and does not constitute legal advice. The author/operator " +
+    "is not a licensed attorney. Reading or interacting with this content does not create " +
+    "an attorney-client relationship. You should consult a qualified professional in your " +
+    "local jurisdiction before taking any action if needed.";
+
+  (function welcome() {
+    var scrim = document.getElementById("welcome");
+    document.getElementById("welcome-text").textContent = STANDING_NOTICE;
+    var seen = false;
+    try {
+      seen = localStorage.getItem("jay_notice") === "1";
+    } catch (e) { /* private window: show it, which is the safe direction */ }
+    if (seen) return;
+    scrim.hidden = false;
+    document.getElementById("welcome-ok").addEventListener("click", function () {
+      scrim.hidden = true;
+      try {
+        localStorage.setItem("jay_notice", "1");
+      } catch (e) { /* nothing to do */ }
+      box.focus();
+    });
+  })();
+
   function buildStarters() {
     Object.keys(STARTERS).forEach(function (id) {
       var row = document.getElementById(id);
@@ -457,11 +539,8 @@
       }
       var data = await response.json();
       gate.style.display = data.access_code_required && !accessCode() ? "flex" : "none";
-      var kinds = data.documents_by_kind || {};
-      var total = Object.keys(kinds).reduce(function (sum, k) { return sum + kinds[k]; }, 0);
-      document.getElementById("sub").textContent =
-        total + " sources · " + data.chunks + " passages · " +
-        (data.embeddings_enabled ? "keyword + semantic search" : "keyword search");
+      // Corpus counts are operator diagnostics, not something a landlord needs to read.
+      // `mark status` and `mark audit` are where they belong.
       // The identity notice is no longer permanent - it rides with a legal answer. A
       // missing key is different: nothing works at all, so it is said up front.
       if (!data.api_key_set) {

@@ -132,6 +132,15 @@ class Settings(BaseSettings):
         ),
     )
 
+    legal_disclaimer_in_answers: bool = Field(
+        default=False,
+        description=(
+            "Append the legal disclaimer to a legal answer. Off: the browser page shows "
+            "the full notice once on a first visit, which is where a standing disclaimer "
+            "belongs. `mark ask` has no such screen, so it always appends it."
+        ),
+    )
+
     show_citations: bool = Field(
         default=False,
         description=(

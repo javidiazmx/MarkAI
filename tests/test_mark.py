@@ -120,6 +120,7 @@ def test_the_prompt_stays_frozen_with_citations_off(settings, store):
 
 
 def test_legal_disclaimer_is_appended_and_streamed(settings, store):
+    settings = settings.model_copy(update={"legal_disclaimer_in_answers": True})
     advisor, _ = build_advisor(
         settings, store, [text_message("You owe deposit interest every year.")]
     )
@@ -315,6 +316,7 @@ def test_the_prefix_ttl_is_configurable(settings, store):
 def test_the_disclaimer_does_not_repeat_through_a_conversation(settings, store):
     from markai.advisor.guardrails import LEGAL_DISCLAIMER
 
+    settings = settings.model_copy(update={"legal_disclaimer_in_answers": True})
     advisor, _ = build_advisor(
         settings,
         store,

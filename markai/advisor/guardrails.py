@@ -705,6 +705,16 @@ def _contains_disclaimer(answer: str) -> bool:
     return prefix in _norm(answer)
 
 
+def plain_punctuation(answer: str) -> str:
+    """Turn em and en dashes into plain punctuation, per the owner's house style.
+
+    The prompt asks for it; this is the backstop, since the habit is strong enough that
+    asking alone does not settle it.
+    """
+    text = re.sub(r"\s*[\u2014\u2013]\s*", " - ", answer)
+    return re.sub(r"[ \t]{2,}", " ", text)
+
+
 def ensure_disclaimer(answer: str, flags: list[str], already_given: bool = False) -> str:
     """Append the verbatim disclaimer when the question or answer is legal.
 

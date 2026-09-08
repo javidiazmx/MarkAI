@@ -115,6 +115,12 @@ def _store(settings: Any) -> Any:
 
 
 def _advisor(settings: Any, manifest: Any, store: Any) -> Any:
+    """Build the advisor for a terminal session.
+
+    The terminal has no welcome screen to carry a standing notice, so a legal answer here
+    always ends with the disclaimer regardless of the setting the browser page relies on.
+    """
+    settings = settings.model_copy(update={"legal_disclaimer_in_answers": True})
     from markai.advisor.mark import MarkAdvisor, MissingApiKeyError
     from markai.advisor.prompt_builder import load_system_prompt
     from markai.knowledge.embeddings import build_embedder

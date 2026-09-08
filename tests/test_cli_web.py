@@ -477,7 +477,11 @@ def test_the_page_carries_no_disclaimer_box_at_all():
     page = Path("markai/web/static/index.html").read_text(encoding="utf-8")
     assert '<div class="banner" id="banner">' not in page, "no permanent banner"
     assert "IDENTITY_NOTICE" not in page, "and no notice box under answers"
-    assert "AI, not a lawyer" in page, "the header still says what it is, always"
+    # The standing notice moved to a card shown once on a first visit, which is where the
+    # owner wanted it: read once, rather than furniture under every reply.
+    assert 'id="welcome"' in page and "STANDING_NOTICE" in page
+    assert "does not constitute legal advice" in page
+    assert "jay_notice" in page, "and remembered, so it is not shown again"
 
 
 def test_the_page_and_the_notice_call_the_assistant_jay():
@@ -511,3 +515,23 @@ def test_the_status_call_does_not_touch_the_removed_banner():
     page = Path("markai/web/static/index.html").read_text(encoding="utf-8")
     status = page[page.index("async function loadStatus") :]
     assert 'getElementById("banner")' not in status
+
+
+def test_a_url_in_an_answer_becomes_a_link():
+    """A Calendly link rendered as text made the landlord select and copy it by hand."""
+    from pathlib import Path
+
+    page = Path("markai/web/static/index.html").read_text(encoding="utf-8")
+    assert "function linkify" in page
+    assert 'link.rel = "noopener noreferrer"' in page
+    assert "link.href = href" in page, "built from the matched text, never from markup"
+
+
+def test_the_page_no_longer_shows_the_corpus_counts():
+    """Sources and passages are operator diagnostics, not something a landlord reads."""
+    from pathlib import Path
+
+    page = Path("markai/web/static/index.html").read_text(encoding="utf-8")
+    assert "passages · " not in page
+    assert "keyword + semantic search" not in page
+    assert "Your Chicagoland AI Advisor" in page

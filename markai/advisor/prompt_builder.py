@@ -165,7 +165,7 @@ def build_user_message(
     if tools:
         parts.append("<recommended_tools>")
         for tool in tools:
-            line = f"- {escape_text(tool.name)} — {escape_text(tool.description)}"
+            line = f"- {escape_text(tool.name)} - {escape_text(tool.description)}"
             if tool.url:
                 line += f" ({escape_text(tool.url)})"
             if tool.when_to_recommend:

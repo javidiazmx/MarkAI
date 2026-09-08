@@ -32,6 +32,7 @@ from markai.advisor.guardrails import (
     is_follow_up,
     is_legal_topic,
     is_not_covered_answer,
+    plain_punctuation,
 )
 from markai.advisor.prompt_builder import (
     build_business_block,
@@ -55,7 +56,7 @@ EMPTY_STORE_TEXT = (
     "My knowledge base is empty, so I've got nothing to work from yet. "
     "Add your sources to sources/sources.yaml and run `mark ingest`."
 )
-TRUNCATED_NOTE = "(My answer got cut off — ask a narrower question or raise MARKAI_MAX_TOKENS.)"
+TRUNCATED_NOTE = "(My answer got cut off. Ask a narrower question, or raise MARKAI_MAX_TOKENS.)"
 TOOL_LIMIT_NOTE = "(That took too many calculation steps; here's what I have.)"
 
 
@@ -311,11 +312,15 @@ class MarkAdvisor:
         else:
             total_chunks = len(retrieval.chunks) + len(carried)
             valid = {f"S{i}" for i in range(1, total_chunks + 1)}
-            text = strip_unused_markers(streamed, valid)
+            text = plain_punctuation(strip_unused_markers(streamed, valid))
             text = ensure_high_risk_response(text, flags)
             if FLAG_LEGAL not in flags and is_legal_topic(text):
                 flags = sorted({*flags, FLAG_LEGAL})
-            already = bool(conversation and conversation.disclaimer_given)
+            # A conversation carries the notice once at most; where the surface shows a
+            # standing notice of its own, not at all.
+            already = bool(conversation and conversation.disclaimer_given) or not (
+                self.settings.legal_disclaimer_in_answers
+            )
             text = ensure_disclaimer(text, flags, already_given=already)
             if conversation is not None and LEGAL_DISCLAIMER in text:
                 conversation.disclaimer_given = True

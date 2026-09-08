@@ -207,3 +207,17 @@ def test_the_live_manifest_has_somewhere_to_hand_a_hard_case():
     block = build_business_block(business)
     assert business.escalation_url in block
     assert "only when it is genuinely warranted" in block
+
+
+def test_the_live_manifest_offers_the_three_links_the_owner_named():
+    from pathlib import Path
+
+    from markai.sources.manifest import load_manifest
+
+    tools = load_manifest(Path("sources/sources.yaml")).tools
+    urls = {t.url for t in tools}
+    assert "https://www.gcrealtyinc.com/free-rental-analysis" in urls
+    assert "https://www.straightupchicagoinvestor.com/build-your-team" in urls
+    assert "https://calendly.com/russell-wedge-gcrealtyinc/20min" in urls
+    for tool in tools:
+        assert tool.when_to_recommend, f"{tool.name} needs to say when it fits"
