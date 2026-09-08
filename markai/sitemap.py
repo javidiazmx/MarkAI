@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from urllib.parse import urlsplit
 
 import httpx
@@ -25,6 +26,32 @@ MAX_SITEMAPS = 50
 
 _LOC_RE = re.compile(r"<loc>\s*([^<\s]+)\s*</loc>", re.IGNORECASE)
 _SITEMAP_TAG = re.compile(r"<sitemap>", re.IGNORECASE)
+
+
+def reasons_from_last_run(details_path: Path, urls: list[str]) -> dict[str, str]:
+    """Why each URL is absent, read out of the last run's own record.
+
+    "Missing" without a reason sends the owner grepping a log by hand every time, and most
+    of the time the answer is that the page was deliberately dropped - nothing but the
+    site's footer, or a copy of another page.
+    """
+    try:
+        lines = details_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return {}
+
+    wanted = {url.rstrip("/") for url in urls}
+    found: dict[str, str] = {}
+    current: str | None = None
+    for line in lines:
+        stripped = line.strip()
+        if line.startswith("[website] "):
+            locator = stripped.removeprefix("[website] ").rstrip("/")
+            current = locator if locator in wanted else None
+        elif current and stripped and not stripped.startswith("->"):
+            found.setdefault(current, stripped)
+            current = None
+    return found
 
 
 @dataclass

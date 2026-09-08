@@ -107,3 +107,48 @@ def test_a_site_with_no_sitemap_reports_nothing_listed(respx_mock):
     with httpx.Client() as client:
         diff = diff_against_store("https://bare.test", {}, client)
     assert diff.listed == [] and diff.missing == []
+
+
+# --- saying why, not just that -------------------------------------------------------------
+
+
+def test_the_reason_a_page_is_absent_comes_from_the_last_run(tmp_path):
+    """ "Missing" alone sends the owner grepping a log; most of the time it was on purpose."""
+    from markai.sitemap import reasons_from_last_run
+
+    details = tmp_path / "last-ingest.txt"
+    details.write_text(
+        "Ingest run t0 -> t1\n"
+        "added 675, updated 0, unchanged 0, removed 0, failed 4\n"
+        "\n"
+        "FAILURES\n"
+        "       4 x Nothing but the site's own menus and footer\n"
+        "\n"
+        "[website] https://gc.test/blog/operation-keep-me-warm\n"
+        "    Nothing but the site's own menus and footer\n"
+        "    -> Listing and gallery pages usually look like this.\n"
+        "[website] https://gc.test/blog/charitable-events\n"
+        "    HTTP 404 for https://gc.test/blog/charitable-events\n"
+        "[youtube] https://www.youtube.com/watch?v=x\n"
+        "    No captions available.\n",
+        encoding="utf-8",
+    )
+
+    reasons = reasons_from_last_run(
+        details,
+        [
+            "https://gc.test/blog/operation-keep-me-warm",
+            "https://gc.test/blog/charitable-events",
+            "https://gc.test/blog/never-attempted",
+        ],
+    )
+    assert reasons["https://gc.test/blog/operation-keep-me-warm"].startswith("Nothing but")
+    assert "404" in reasons["https://gc.test/blog/charitable-events"]
+    assert "https://gc.test/blog/never-attempted" not in reasons, "silence is its own answer"
+    assert not any("youtube" in k for k in reasons), "only the URLs asked about"
+
+
+def test_a_missing_details_file_is_not_an_error(tmp_path):
+    from markai.sitemap import reasons_from_last_run
+
+    assert reasons_from_last_run(tmp_path / "nope.txt", ["https://x.test/a"]) == {}

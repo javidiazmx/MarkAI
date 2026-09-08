@@ -498,10 +498,22 @@ def sources_missing(
         console.print("[green]✓[/green] Everything the site lists is in the knowledge base.")
         return
 
+    from markai.sitemap import reasons_from_last_run
+
+    reasons = reasons_from_last_run(settings.data_dir / "last-ingest.txt", diff.missing)
     for missing in diff.missing[:25]:
         console.print(f"  [red]-[/red] {escape(missing)}")
+        reason = reasons.get(missing.rstrip("/"))
+        if reason:
+            console.print(f"      [dim]{escape(reason)}[/dim]")
     if len(diff.missing) > 25:
         console.print(f"  [dim]… and {len(diff.missing) - 25:,} more[/dim]")
+    unexplained = len(diff.missing) - sum(1 for m in diff.missing if m.rstrip("/") in reasons)
+    if reasons and unexplained:
+        console.print(
+            f"  [dim]{unexplained:,} of them were never attempted - the last run did not "
+            f"reach them at all.[/dim]"
+        )
 
     if write:
         path = Path(write)
