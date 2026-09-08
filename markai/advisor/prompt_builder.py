@@ -183,6 +183,29 @@ def build_facts_block(
     return "\n".join(parts)
 
 
+def build_portfolio_block(properties: list[Any]) -> str:
+    """What the landlord owns, so the answer can be about their building.
+
+    Short by design: it rides along with every question, so the store caps the list rather
+    than letting a portfolio quietly become the biggest part of each request.
+    """
+    if not properties:
+        return ""
+    parts = [f'<portfolio count="{len(properties)}">']
+    for item in properties:
+        attrs = [f'label="{escape_attr(item.label, 80)}"']
+        if item.units:
+            attrs.append(f'units="{int(item.units)}"')
+        if item.city:
+            attrs.append(f'city="{escape_attr(item.city, 60)}"')
+        parts.append("<property " + " ".join(attrs) + ">")
+        if item.notes:
+            parts.append(escape_text(item.notes.strip()))
+        parts.append("</property>")
+    parts.append("</portfolio>")
+    return "\n".join(parts)
+
+
 def build_user_message(
     question: str,
     retrieval,  # RetrievalResult (imported lazily to keep this module light)
@@ -190,6 +213,7 @@ def build_user_message(
     flags: list[str],
     carried: list[RetrievedChunk] | None = None,
     facts: str = "",
+    portfolio: str = "",
 ) -> str:
     """The complete user turn: the owner's facts, knowledge base, tools, flags, question."""
     chunks = _ordered_chunks(list(retrieval.chunks), carried)
@@ -197,6 +221,8 @@ def build_user_message(
     # First in the turn on purpose: it is the part that outranks everything after it.
     if facts:
         parts.append(facts)
+    if portfolio:
+        parts.append(portfolio)
     parts.append(f'<knowledge_base retrieval_status="{retrieval.coverage}" chunks="{len(chunks)}">')
     for index, rc in enumerate(chunks, start=1):
         parts.append(_source_tag(f"S{index}", rc))

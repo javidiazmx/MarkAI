@@ -293,6 +293,11 @@ reads, question after question, means the TTL is shorter than the gaps between q
   conversation: question and answer text, grouped by an id the browser keeps. It never
   leaves the machine, and deleting a conversation in the sidebar deletes the row.
   `mark chat` writes nothing.
+- Properties a landlord adds in the sidebar go to `data/portfolio.db`, on the same machine
+  and under the same browser id, and ride along with each of their questions so an answer
+  can be about their building. Removing one deletes the row. Both files sit under `data/`,
+  which is excluded from version control, and both are worth knowing about before this page
+  goes in front of anyone but you.
 - Questions are logged locally (text, coverage, token counts) so `mark gaps` can show you what
   material to add. Answers are not logged. Nothing above DEBUG level records question content.
 

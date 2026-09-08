@@ -846,3 +846,102 @@ def test_facts_probe_says_when_nothing_matches(tmp_path, monkeypatch):
     result = runner.invoke(app, ["facts", "probe", "what about parking permits"])
     assert result.exit_code == 0
     assert "keywords" in result.stdout
+
+
+# --- properties and the handoff ---------------------------------------------------------
+
+
+def test_a_property_is_saved_and_reaches_the_advisor(settings, store):
+    advisor = FakeAdvisor()
+    client = _client(settings, store, advisor)
+    headers = {"X-Browser-Id": "b1"}
+
+    saved = client.post(
+        "/api/properties",
+        json={"label": "2145 W Division", "units": "6", "city": "Chicago", "notes": "boiler"},
+        headers=headers,
+    )
+    assert saved.status_code == 200
+    assert saved.json()["property"]["units"] == 6
+    assert [
+        p["label"] for p in client.get("/api/properties", headers=headers).json()["properties"]
+    ] == ["2145 W Division"]
+
+    _ask(client, "t1", "Is the boiler worth fixing?")
+    assert [p.label for p in advisor.portfolio] == ["2145 W Division"]
+
+
+def test_a_property_with_no_name_is_refused(settings, store):
+    client = _client(settings, store)
+    bad = client.post("/api/properties", json={"units": "6"}, headers={"X-Browser-Id": "b1"})
+    assert bad.status_code == 400
+    assert "address" in bad.json()["detail"]
+
+
+def test_another_browser_sees_no_properties(settings, store):
+    client = _client(settings, store)
+    client.post("/api/properties", json={"label": "Mine"}, headers={"X-Browser-Id": "b1"})
+    assert client.get("/api/properties", headers={"X-Browser-Id": "b2"}).json() == {
+        "properties": []
+    }
+
+
+def test_a_property_can_be_deleted(settings, store):
+    client = _client(settings, store)
+    headers = {"X-Browser-Id": "b1"}
+    saved = client.post("/api/properties", json={"label": "Mine"}, headers=headers).json()
+    gone = client.delete(f"/api/properties/{saved['property']['id']}", headers=headers)
+    assert gone.json() == {"deleted": True}
+    assert client.get("/api/properties", headers=headers).json() == {"properties": []}
+
+
+def test_the_handoff_uses_the_conversation_and_the_owners_contact(tmp_path, settings, store):
+    manifest = tmp_path / "sources.yaml"
+    manifest.write_text(
+        "websites: []\nbusiness:\n  name: GC Realty\n  escalation_name: Russell\n"
+        "  escalation_url: https://calendly.com/example/20min\n",
+        encoding="utf-8",
+    )
+    settings = settings.model_copy(update={"sources_file": manifest})
+    client = _client(settings, store, FakeAdvisor("Start with a five day notice."))
+    headers = {"X-Browser-Id": "b1"}
+
+    client.post("/api/properties", json={"label": "2145 W Division"}, headers=headers)
+    _ask(client, "t1", "My tenant stopped paying.")
+
+    notes = client.post("/api/handoff", json={"session_id": "t1"}, headers=headers).json()
+    assert notes["name"] == "Russell"
+    assert notes["url"] == "https://calendly.com/example/20min"
+    assert "2145 W Division" in notes["text"]
+    assert "My tenant stopped paying." in notes["text"]
+    assert "five day notice" in notes["text"]
+
+
+def test_the_handoff_still_works_with_no_manifest(settings, store, tmp_path):
+    settings = settings.model_copy(update={"sources_file": tmp_path / "missing.yaml"})
+    client = _client(settings, store)
+    notes = client.post(
+        "/api/handoff", json={"session_id": "t1"}, headers={"X-Browser-Id": "b1"}
+    ).json()
+    assert notes["url"] is None
+    assert "property manager" in notes["text"]
+
+
+def test_properties_and_the_handoff_are_gated_by_the_access_code(settings, store):
+    settings = settings.model_copy(update={"web_access_code": "letmein"})
+    client = _client(settings, store)
+    headers = {"X-Browser-Id": "b1"}
+    assert client.get("/api/properties", headers=headers).status_code == 401
+    assert client.post("/api/properties", json={"label": "x"}, headers=headers).status_code == 401
+    assert client.delete("/api/properties/x", headers=headers).status_code == 401
+    assert client.post("/api/handoff", json={"session_id": "t"}, headers=headers).status_code == 401
+
+
+def test_the_page_has_a_properties_panel_and_a_handoff():
+    from pathlib import Path
+
+    page = Path("markai/web/static/index.html").read_text(encoding="utf-8")
+    assert 'id="props"' in page and 'id="prop-form"' in page
+    assert "/api/properties" in page and "/api/handoff" in page
+    assert 'id="handoff-text"' in page
+    assert ".innerHTML" not in page, "an address is landlord text; it goes in as a text node"

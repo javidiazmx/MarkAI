@@ -46,6 +46,16 @@ class ResetRequest(BaseModel):
     session_id: str = Field(default="default", max_length=128)
 
 
+class PropertyRequest(BaseModel):
+    """One building as typed into the page. Lengths are trimmed again in the store."""
+
+    id: str = Field(default="", max_length=64)
+    label: str = Field(default="", max_length=200)
+    units: str = Field(default="", max_length=10)
+    city: str = Field(default="", max_length=120)
+    notes: str = Field(default="", max_length=1000)
+
+
 class _Sessions:
     """LRU map of session id to (conversation, lock, question count)."""
 
@@ -111,6 +121,7 @@ def create_app(
         "advisor_error": None,
         "history": None,
         "retriever": None,
+        "portfolio": None,
     }
     sessions = _Sessions(settings.max_sessions)
     daily = _DailyCounter()
@@ -133,6 +144,14 @@ def create_app(
             settings.ensure_dirs()
             state["history"] = History(settings.data_dir / "conversations.db")
         return state["history"]
+
+    def get_portfolio() -> Any:
+        if state["portfolio"] is None:
+            from markai.web.portfolio import Portfolio
+
+            settings.ensure_dirs()
+            state["portfolio"] = Portfolio(settings.data_dir / "portfolio.db")
+        return state["portfolio"]
 
     def get_store() -> Any:
         if state["store"] is None:
@@ -264,6 +283,63 @@ def create_app(
     ) -> dict[str, Any]:
         return {"deleted": get_history().delete(browser, thread_id)}
 
+    @app.get("/api/properties")
+    def properties(
+        browser: str = Depends(browser_of), _: None = Depends(require_access)
+    ) -> dict[str, Any]:
+        return {"properties": [p.to_dict() for p in get_portfolio().list(browser)]}
+
+    @app.post("/api/properties")
+    def add_property(
+        payload: PropertyRequest,
+        browser: str = Depends(browser_of),
+        _: None = Depends(require_access),
+    ) -> dict[str, Any]:
+        from markai.web.portfolio import PropertyError
+
+        try:
+            saved = get_portfolio().add(browser, payload.model_dump())
+        except PropertyError as exc:
+            # The message names the field and the limit, so it is useful to show.
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"property": saved.to_dict()}
+
+    @app.delete("/api/properties/{property_id}")
+    def forget_property(
+        property_id: str,
+        browser: str = Depends(browser_of),
+        _: None = Depends(require_access),
+    ) -> dict[str, Any]:
+        return {"deleted": get_portfolio().delete(browser, property_id)}
+
+    @app.post("/api/handoff")
+    def handoff(
+        payload: ResetRequest,
+        browser: str = Depends(browser_of),
+        _: None = Depends(require_access),
+    ) -> dict[str, Any]:
+        """Case notes for the property manager, built from what is already stored."""
+        from markai.sources.manifest import load_manifest
+        from markai.web.handoff import build_handoff
+
+        name, url = None, None
+        try:
+            business = load_manifest(settings.sources_file).business
+            name, url = business.escalation_name, business.escalation_url
+        except (FileNotFoundError, ValueError) as exc:
+            logger.warning("no escalation contact available: %s", exc)
+
+        return {
+            "text": build_handoff(
+                get_history().get(browser, payload.session_id),
+                get_portfolio().list(browser),
+                name=name,
+                url=url,
+            ),
+            "name": name,
+            "url": url,
+        }
+
     @app.post("/api/reset")
     def reset(payload: ResetRequest, _: None = Depends(require_access)) -> dict[str, Any]:
         sessions.reset(payload.session_id)
@@ -316,7 +392,17 @@ def create_app(
             def record(question: str, answer: str) -> None:
                 history.record(browser, thread_id, question, answer)
 
-        return EventSourceResponse(_events(get_advisor, conversation, message, lock, files, record))
+        return EventSourceResponse(
+            _events(
+                get_advisor,
+                conversation,
+                message,
+                lock,
+                files,
+                record,
+                get_portfolio().list(browser) if browser else None,
+            )
+        )
 
     return app
 
@@ -328,6 +414,7 @@ def _events(
     lock: threading.Lock,
     attachments: list[Any] | None = None,
     record: Callable[[str, str], None] | None = None,
+    portfolio: list[Any] | None = None,
 ) -> Iterator[dict]:
     from markai.advisor.mark import MissingApiKeyError
 
@@ -342,7 +429,7 @@ def _events(
             return
 
         response = None
-        for event in advisor.stream(message, conversation, attachments):
+        for event in advisor.stream(message, conversation, attachments, portfolio):
             if event.type == "text":
                 yield {"event": "text", "data": json.dumps({"text": event.text})}
             elif event.type == "tool_call":

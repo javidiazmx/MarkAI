@@ -33,6 +33,10 @@
     }
   }
   * { box-sizing: border-box; }
+  /* Any `display` rule of ours beats the browser's own [hidden], and the failure is
+     invisible: a card that still covers the page and swallows clicks, a form that will
+     not close. Settle it once, here, for everything. */
+  [hidden] { display: none !important; }
   body {
     margin: 0; background: var(--bg); color: var(--ink);
     font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -83,8 +87,8 @@
     position: fixed; inset: 0; z-index: 20; display: flex; align-items: center;
     justify-content: center; padding: 20px; background: rgba(20, 20, 18, .55);
   }
-  /* `display: flex` above beats the browser's own [hidden] rule, so hiding the card left
-     an invisible sheet over the whole page swallowing every click. */
+  /* This one is why the rule above exists: hiding the card used to leave an invisible
+     sheet over the whole page, swallowing every click. */
   .scrim[hidden] { display: none; }
   .card {
     background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
@@ -141,7 +145,42 @@
     letter-spacing: .06em; color: var(--muted);
   }
   .side-top button { padding: 5px 11px; font-size: 13px; border-radius: 8px; }
-  #threads { flex: 1; overflow-y: auto; padding: 8px; }
+  #threads { flex: 1; overflow-y: auto; padding: 8px; min-height: 60px; }
+  .side-section { border-top: 1px solid var(--line); padding: 8px; }
+  .side-section .side-head {
+    display: flex; align-items: center; gap: 6px; padding: 2px 4px 6px;
+  }
+  .side-section h3 {
+    margin: 0; flex: 1; font-size: 12px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .06em; color: var(--muted);
+  }
+  .side-section .side-head button {
+    background: none; border: 1px solid var(--line); color: inherit; font: inherit;
+    font-size: 12px; padding: 3px 9px; border-radius: 7px; cursor: pointer;
+  }
+  #props { max-height: 30vh; overflow-y: auto; }
+  .prop { display: flex; align-items: flex-start; gap: 4px; padding: 4px 4px 4px 9px; }
+  .prop .what { flex: 1; min-width: 0; font-size: 13px; line-height: 1.4; }
+  .prop .what small { color: var(--muted); display: block; }
+  .prop .drop {
+    background: none; border: 0; color: var(--muted); cursor: pointer; font-size: 12px;
+    padding: 2px 5px;
+  }
+  #prop-form { padding: 4px 4px 8px 4px; display: grid; gap: 6px; }
+  #prop-form input, #prop-form textarea {
+    width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px;
+    background: var(--bg); color: var(--ink); font: inherit; font-size: 13px; resize: vertical;
+  }
+  #prop-form .pair { display: flex; gap: 6px; }
+  #prop-form button { padding: 7px 12px; font-size: 13px; border-radius: 7px; }
+  .side-foot { border-top: 1px solid var(--line); padding: 9px; }
+  .side-foot button { width: 100%; padding: 9px 10px; font-size: 13px; border-radius: 8px; }
+  #handoff-text {
+    width: 100%; min-height: 42vh; padding: 10px; border: 1px solid var(--line);
+    border-radius: 8px; background: var(--bg); color: var(--ink);
+    font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; resize: vertical;
+  }
+  .card .row-buttons { display: flex; gap: 8px; align-items: center; margin-top: 14px; }
   .thread { display: flex; align-items: center; }
   .thread .pick {
     flex: 1; min-width: 0; background: none; border: 0; color: inherit; font: inherit;
@@ -176,7 +215,45 @@
     <button class="ghost side-close" id="side-close" type="button" title="Close">✕</button>
   </div>
   <div id="threads"></div>
+
+  <div class="side-section">
+    <div class="side-head">
+      <h3>Your properties</h3>
+      <button id="add-prop" type="button" title="Add a property">+ Add</button>
+    </div>
+    <form id="prop-form" hidden>
+      <input id="prop-label" type="text" maxlength="80" placeholder="Address or name" />
+      <div class="pair">
+        <input id="prop-units" type="number" min="1" max="5000" placeholder="Units" />
+        <input id="prop-city" type="text" maxlength="60" placeholder="City" />
+      </div>
+      <textarea id="prop-notes" rows="2" maxlength="400"
+                placeholder="Anything that matters: heat type, vouchers, year built"></textarea>
+      <div class="pair">
+        <button type="submit">Save</button>
+        <button class="ghost" id="prop-cancel" type="button">Cancel</button>
+      </div>
+    </form>
+    <div id="props"></div>
+  </div>
+
+  <div class="side-foot">
+    <button class="ghost" id="handoff" type="button">Hand this to a manager</button>
+  </div>
 </aside>
+
+<div class="scrim" id="handoff-card" hidden>
+  <div class="card">
+    <h2 id="handoff-title">Case notes</h2>
+    <p>Yours to read first. Copy it into the booking form so nothing gets retold.</p>
+    <textarea id="handoff-text" readonly></textarea>
+    <div class="row-buttons">
+      <button id="handoff-copy" type="button">Copy</button>
+      <a class="link" id="handoff-link" target="_blank" rel="noopener noreferrer" hidden>Book</a>
+      <button class="ghost" id="handoff-close" type="button">Close</button>
+    </div>
+  </div>
+</div>
 
 <header>
   <button class="ghost burger" id="burger" type="button" title="Saved conversations">☰</button>
@@ -805,6 +882,157 @@
   resetBtn.addEventListener("click", startNew);
   document.getElementById("new-thread").addEventListener("click", startNew);
 
+  // Your properties ------------------------------------------------------------------
+  // Typed once, then carried into every question so an answer can be about their six
+  // flat instead of a generic one. Stored on the server this page came from, nowhere else.
+  var propRow = document.getElementById("props");
+  var propForm = document.getElementById("prop-form");
+  var propLabel = document.getElementById("prop-label");
+
+  function propFields() {
+    return {
+      label: propLabel.value,
+      units: document.getElementById("prop-units").value,
+      city: document.getElementById("prop-city").value,
+      notes: document.getElementById("prop-notes").value
+    };
+  }
+
+  function clearPropForm() {
+    ["prop-label", "prop-units", "prop-city", "prop-notes"].forEach(function (id) {
+      document.getElementById(id).value = "";
+    });
+  }
+
+  document.getElementById("add-prop").addEventListener("click", function () {
+    propForm.hidden = !propForm.hidden;
+    if (!propForm.hidden) propLabel.focus();
+  });
+
+  document.getElementById("prop-cancel").addEventListener("click", function () {
+    propForm.hidden = true;
+    clearPropForm();
+  });
+
+  propForm.addEventListener("submit", async function (event) {
+    event.preventDefault();
+    var fields = propFields();
+    if (!fields.label.trim()) { propLabel.focus(); return; }
+    try {
+      var response = await fetch("/api/properties", {
+        method: "POST", headers: headers(), body: JSON.stringify(fields)
+      });
+      if (!response.ok) {
+        var detail = "Could not save that.";
+        try { detail = (await response.json()).detail || detail; } catch (e) {}
+        note(detail);
+        return;
+      }
+    } catch (error) {
+      note("Could not save that: " + error);
+      return;
+    }
+    clearPropForm();
+    propForm.hidden = true;
+    loadProperties();
+  });
+
+  async function loadProperties() {
+    var data;
+    try {
+      var response = await fetch("/api/properties", { headers: headers() });
+      if (!response.ok) return;
+      data = await response.json();
+    } catch (error) {
+      return;
+    }
+    drawProperties(data.properties || []);
+  }
+
+  function drawProperties(items) {
+    propRow.textContent = "";
+    if (!items.length) {
+      propRow.appendChild(el("div", "side-empty",
+        "Add a building and Jay answers about that one instead of a generic one."));
+      return;
+    }
+    items.forEach(function (item) {
+      var row = el("div", "prop");
+      var what = el("div", "what");
+      what.appendChild(document.createTextNode(item.label));
+      var bits = [];
+      if (item.units) bits.push(item.units + (item.units === 1 ? " unit" : " units"));
+      if (item.city) bits.push(item.city);
+      if (item.notes) bits.push(item.notes);
+      if (bits.length) what.appendChild(el("small", null, bits.join(" · ")));
+      var drop = el("button", "drop", "✕");
+      drop.type = "button";
+      drop.title = "Remove";
+      drop.addEventListener("click", async function () {
+        try {
+          await fetch("/api/properties/" + encodeURIComponent(item.id), {
+            method: "DELETE", headers: headers()
+          });
+        } catch (error) { return; }
+        loadProperties();
+      });
+      row.appendChild(what);
+      row.appendChild(drop);
+      propRow.appendChild(row);
+    });
+  }
+
+  // Handing it to a person -----------------------------------------------------------
+  // Built on the server from the saved conversation and the properties, so it costs
+  // nothing and says the same thing every time.
+  var handoffCard = document.getElementById("handoff-card");
+  var handoffText = document.getElementById("handoff-text");
+  var handoffLink = document.getElementById("handoff-link");
+
+  document.getElementById("handoff").addEventListener("click", async function () {
+    var data;
+    try {
+      var response = await fetch("/api/handoff", {
+        method: "POST", headers: headers(), body: JSON.stringify({ session_id: sessionId })
+      });
+      if (!response.ok) { note("Could not put the case notes together."); return; }
+      data = await response.json();
+    } catch (error) {
+      note("Could not put the case notes together: " + error);
+      return;
+    }
+    handoffText.value = data.text || "";
+    document.getElementById("handoff-title").textContent =
+      data.name ? "Case notes for " + data.name : "Case notes";
+    if (data.url) {
+      handoffLink.href = data.url;
+      handoffLink.textContent = "Book " + (data.name ? "with " + data.name : "a call");
+      handoffLink.hidden = false;
+    } else {
+      handoffLink.hidden = true;
+    }
+    handoffCard.hidden = false;
+    closeSide();
+  });
+
+  document.getElementById("handoff-close").addEventListener("click", function () {
+    handoffCard.hidden = true;
+  });
+
+  document.getElementById("handoff-copy").addEventListener("click", function () {
+    var button = document.getElementById("handoff-copy");
+    handoffText.focus();
+    handoffText.select();
+    function done(ok) { button.textContent = ok ? "Copied" : "Select and copy"; }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(handoffText.value).then(function () { done(true); },
+                                                            function () { done(false); });
+      return;
+    }
+    // An older browser, or a page not served over https: the text is already selected.
+    try { done(document.execCommand("copy")); } catch (e) { done(false); }
+  });
+
   async function loadStatus() {
     try {
       var response = await fetch("/api/status", { headers: headers() });
@@ -837,6 +1065,7 @@
 
   loadStatus();
   loadThreads();
+  loadProperties();
 })();
 </script>
 </body>

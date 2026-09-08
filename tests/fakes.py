@@ -201,12 +201,19 @@ class FakeAdvisor:
         # and no final response, which is what an overload or a refusal looks like.
         self.error: str | None = None
 
-    def stream(self, question: str, conversation: Any = None, attachments: Any = None):
+    def stream(
+        self,
+        question: str,
+        conversation: Any = None,
+        attachments: Any = None,
+        portfolio: Any = None,
+    ):
         from markai.advisor.mark import StreamEvent
         from markai.models import AdvisorResponse
 
         self.questions.append(question)
         self.attachments = list(attachments or [])
+        self.portfolio = list(portfolio or [])
         if self.error:
             yield StreamEvent("error", self.error)
             return

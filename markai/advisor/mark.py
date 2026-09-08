@@ -40,6 +40,7 @@ from markai.advisor.prompt_builder import (
     build_business_block,
     build_citations,
     build_facts_block,
+    build_portfolio_block,
     build_system_blocks,
     build_user_message,
     strip_all_markers,
@@ -145,11 +146,12 @@ class MarkAdvisor:
         question: str,
         conversation: Conversation | None = None,
         attachments: list[Any] | None = None,
+        portfolio: list[Any] | None = None,
     ) -> AdvisorResponse:
         """Answer a question, draining the stream. Errors come back as an AdvisorResponse."""
         response: AdvisorResponse | None = None
         error: str | None = None
-        for event in self.stream(question, conversation, attachments):
+        for event in self.stream(question, conversation, attachments, portfolio):
             if event.type == "final":
                 response = event.response
             elif event.type == "error":
@@ -163,6 +165,7 @@ class MarkAdvisor:
         question: str,
         conversation: Conversation | None = None,
         attachments: list[Any] | None = None,
+        portfolio: list[Any] | None = None,
     ):
         """Yield text deltas, tool notices, then exactly one ``final`` (or ``error``)."""
         flags = detect_flags(question)
@@ -188,7 +191,15 @@ class MarkAdvisor:
 
         selected_rules, selected_costs = select_facts(self.facts, question)
         facts_block = build_facts_block(selected_rules, selected_costs, date.today())
-        user_text = build_user_message(question, retrieval, self.tools, flags, carried, facts_block)
+        user_text = build_user_message(
+            question,
+            retrieval,
+            self.tools,
+            flags,
+            carried,
+            facts_block,
+            build_portfolio_block(list(portfolio or [])),
+        )
         api_messages: list[Any] = list(conversation.messages) if conversation else []
         if attachments:
             # Files first, then the knowledge base and the question, which is the order the
