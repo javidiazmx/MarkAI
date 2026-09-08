@@ -183,15 +183,21 @@ def build_facts_block(
     return "\n".join(parts)
 
 
-def build_portfolio_block(properties: list[Any]) -> str:
+def build_portfolio_block(properties: list[Any], neighborhood: str | None = None) -> str:
     """What the landlord owns, so the answer can be about their building.
 
     Short by design: it rides along with every question, so the store caps the list rather
-    than letting a portfolio quietly become the biggest part of each request.
+    than letting a portfolio quietly become the biggest part of each request. The
+    neighborhood comes from the signup form and is worth carrying on its own: it is often
+    the only thing known about someone who has not added a property yet, and half the
+    ordinances in Chicagoland turn on which side of a line the building is.
     """
-    if not properties:
+    if not properties and not neighborhood:
         return ""
-    parts = [f'<portfolio count="{len(properties)}">']
+    attrs = [f'count="{len(properties)}"']
+    if neighborhood:
+        attrs.append(f'neighborhood="{escape_attr(neighborhood, 80)}"')
+    parts = ["<portfolio " + " ".join(attrs) + ">"]
     for item in properties:
         attrs = [f'label="{escape_attr(item.label, 80)}"']
         if item.units:

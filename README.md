@@ -91,6 +91,8 @@ Then:
 | `mark facts validate` | Checks `sources/facts.yaml`: every ordinance cites something, the dates make sense |
 | `mark facts list` | Every rule and price you maintain, and whether each applies today |
 | `mark facts probe "..."` | Which of your facts a real question would put in front of Jay |
+| `mark accounts` | The landlords who signed up on the page |
+| `mark accounts --csv leads.csv` | The same, exported. That file holds personal data |
 | `mark ask "..."` | One question, one answer, with sources |
 | `mark chat` | A conversation in the terminal (`/reset`, `/sources`, `/quit`) |
 | `mark serve` | The browser chat page |
@@ -313,9 +315,31 @@ reads, question after question, means the TTL is shorter than the gaps between q
   `mark chat` writes nothing.
 - Properties a landlord adds in the sidebar go to `data/portfolio.db`, on the same machine
   and under the same browser id, and ride along with each of their questions so an answer
-  can be about their building. Removing one deletes the row. Both files sit under `data/`,
-  which is excluded from version control, and both are worth knowing about before this page
-  goes in front of anyone but you.
+  can be about their building. Removing one deletes the row.
+- The free account form writes a name, an email, a phone and a neighborhood to
+  `data/accounts.db`. Those fields never reach the log and go nowhere except that file;
+  `mark accounts` is how you read them. It is personal data about other people, so it comes
+  with obligations the rest of this does not: say what you will do with it, do only that,
+  and treat the export like your rent roll.
+- All of these sit under `data/`, which is excluded from version control, and all of them
+  are worth knowing about before this page goes in front of anyone but you.
+
+## The free account
+
+Two questions get answered, then the page asks for a name, an email, a phone and the
+neighborhood the rental is in. `MARKAI_FREE_QUESTIONS_BEFORE_SIGNUP` moves the line and
+`MARKAI_ACCOUNT_REQUIRED=false` removes it. The terminal is never asked.
+
+Said plainly, because it matters for what you build on top of it: this is a signup form,
+not a login. There is no password, so nothing about it proves anyone is who they say, and
+someone who clears their browser storage gets a new id and two more free questions. That
+is the normal shape of a lead wall and it does the job it is there for. It is not access
+control, and the access code (`MARKAI_WEB_ACCESS_CODE`) is still the only thing that keeps
+strangers off the page.
+
+The count is kept apart from the saved conversations on purpose: deleting a conversation
+does not hand back a free question. It is counted when an answer lands, so a question that
+failed costs nothing.
 - Questions are logged locally (text, coverage, token counts) so `mark gaps` can show you what
   material to add. Answers are not logged. Nothing above DEBUG level records question content.
 

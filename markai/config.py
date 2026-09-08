@@ -132,6 +132,23 @@ class Settings(BaseSettings):
         ),
     )
 
+    account_required: bool = Field(
+        default=True,
+        description=(
+            "Ask a landlord for a free account after their free questions are spent. Off: "
+            "the page never asks. The terminal never asks either way."
+        ),
+    )
+    free_questions_before_signup: int = Field(
+        default=2,
+        ge=0,
+        le=100,
+        description=(
+            "Questions a browser gets answered before the signup form. Two, because a "
+            "landlord who has had two real answers knows what they are signing up for."
+        ),
+    )
+
     legal_disclaimer_in_answers: bool = Field(
         default=False,
         description=(

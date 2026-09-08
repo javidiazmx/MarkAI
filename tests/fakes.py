@@ -207,6 +207,7 @@ class FakeAdvisor:
         conversation: Any = None,
         attachments: Any = None,
         portfolio: Any = None,
+        neighborhood: str | None = None,
     ):
         from markai.advisor.mark import StreamEvent
         from markai.models import AdvisorResponse
@@ -214,6 +215,7 @@ class FakeAdvisor:
         self.questions.append(question)
         self.attachments = list(attachments or [])
         self.portfolio = list(portfolio or [])
+        self.neighborhood = neighborhood
         if self.error:
             yield StreamEvent("error", self.error)
             return

@@ -181,6 +181,14 @@
     font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; resize: vertical;
   }
   .card .row-buttons { display: flex; gap: 8px; align-items: center; margin-top: 14px; }
+  #signup-card .card { max-width: 30rem; }
+  #signup-form { display: grid; gap: 9px; }
+  #signup-form input {
+    width: 100%; padding: 10px 11px; border: 1px solid var(--line); border-radius: 8px;
+    background: var(--bg); color: var(--ink); font: inherit;
+  }
+  .fineprint { color: var(--muted); font-size: 12px; line-height: 1.5; margin: 4px 0 0; }
+  .formerr { color: #b3261e; font-size: 13px; min-height: 18px; }
   .thread { display: flex; align-items: center; }
   .thread .pick {
     flex: 1; min-width: 0; background: none; border: 0; color: inherit; font: inherit;
@@ -241,6 +249,31 @@
     <button class="ghost" id="handoff" type="button">Hand this to a manager</button>
   </div>
 </aside>
+
+<div class="scrim" id="signup-card" hidden>
+  <div class="card">
+    <h2>Keep going, free</h2>
+    <p id="signup-why"></p>
+    <form id="signup-form">
+      <input id="su-name" type="text" maxlength="80" autocomplete="name"
+             placeholder="Name" required />
+      <input id="su-email" type="email" maxlength="200" autocomplete="email"
+             placeholder="Email" required />
+      <input id="su-phone" type="tel" maxlength="30" autocomplete="tel"
+             placeholder="Phone" required />
+      <input id="su-hood" type="text" maxlength="80"
+             placeholder="Neighborhood where your rental is" required />
+      <div class="formerr" id="signup-error"></div>
+      <div class="row-buttons">
+        <button type="submit" id="signup-go">Create my free account</button>
+      </div>
+      <p class="fineprint">
+        No password. This stays with GC Realty, it is not sold or shared, and the
+        neighborhood is what lets Jay answer for your side of the line.
+      </p>
+    </form>
+  </div>
+</div>
 
 <div class="scrim" id="handoff-card" hidden>
   <div class="card">
@@ -546,9 +579,79 @@
     return tail;
   }
 
+  // The free account -----------------------------------------------------------------
+  // Two questions answered, then the form. The gate is the server's: this only reacts to
+  // it, so a page reload does not hand anyone a third free question.
+  var signupCard = document.getElementById("signup-card");
+  var signupError = document.getElementById("signup-error");
+  var account = { required: true, signed_up: false, free_left: null };
+  // The question they were typing when the wall came up, asked for them after signup.
+  var heldQuestion = "";
+
+  async function loadAccount() {
+    try {
+      var response = await fetch("/api/account", { headers: headers() });
+      if (!response.ok) return;
+      account = await response.json();
+    } catch (error) { /* the gate still lives on the server */ }
+  }
+
+  function askToSignUp(why) {
+    document.getElementById("signup-why").textContent = why ||
+      "That is your free questions used up. A free account keeps Jay going.";
+    signupError.textContent = "";
+    signupCard.hidden = false;
+    document.getElementById("su-name").focus();
+  }
+
+  document.getElementById("signup-form").addEventListener("submit", async function (event) {
+    event.preventDefault();
+    var button = document.getElementById("signup-go");
+    button.disabled = true;
+    signupError.textContent = "";
+    var body = {
+      name: document.getElementById("su-name").value,
+      email: document.getElementById("su-email").value,
+      phone: document.getElementById("su-phone").value,
+      neighborhood: document.getElementById("su-hood").value
+    };
+    try {
+      var response = await fetch("/api/account", {
+        method: "POST", headers: headers(), body: JSON.stringify(body)
+      });
+      if (!response.ok) {
+        var detail = "That did not go through.";
+        try { detail = (await response.json()).detail || detail; } catch (e) {}
+        signupError.textContent = detail;
+        return;
+      }
+    } catch (error) {
+      signupError.textContent = "Could not reach the server.";
+      return;
+    } finally {
+      button.disabled = false;
+    }
+    account.signed_up = true;
+    account.free_left = 0;
+    signupCard.hidden = true;
+    // They were mid-question when the wall came up. Ask it for them.
+    if (heldQuestion) {
+      box.value = heldQuestion;
+      heldQuestion = "";
+      send();
+    } else {
+      box.focus();
+    }
+  });
+
   async function send() {
     var question = box.value.trim();
     if ((!question && !pending.length) || busy) return;
+    if (account.required && !account.signed_up && account.free_left === 0) {
+      heldQuestion = question;
+      askToSignUp();
+      return;
+    }
     busy = true;
     sendBtn.disabled = true;
     box.value = "";
@@ -580,7 +683,18 @@
       });
       if (!response.ok) {
         var detail = "Request failed (" + response.status + ").";
-        try { detail = (await response.json()).detail || detail; } catch (e) {}
+        var payload = null;
+        try { payload = (await response.json()).detail; } catch (e) {}
+        if (payload && payload.signup_required) {
+          // The server is the authority on this, so it can arrive even when the page
+          // thought there was a question left.
+          slot.wrap.remove();
+          heldQuestion = question;
+          account.free_left = 0;
+          askToSignUp(payload.message);
+          return;
+        }
+        if (typeof payload === "string") detail = payload;
         slot.bubble.classList.add("err");
         slot.bubble.textContent = detail;
         return;
@@ -610,6 +724,13 @@
               " · " + (usage.output_tokens || 0) + " tokens out");
             slot.wrap.appendChild(meta);
             loadThreads();  // the thread and its title exist only once an answer landed
+            if (account.required && !account.signed_up) {
+              account.free_left = Math.max((account.free_left || 0) - 1, 0);
+              if (account.free_left === 0) {
+                slot.wrap.appendChild(el("div", "meta",
+                  "One more question needs a free account. It takes a minute."));
+              }
+            }
           } else if (name === "error") {
             slot.bubble.classList.add("err");
             slot.bubble.textContent = data.message;
@@ -1072,6 +1193,7 @@
   loadStatus();
   loadThreads();
   loadProperties();
+  loadAccount();
 })();
 </script>
 </body>

@@ -945,3 +945,178 @@ def test_the_page_has_a_properties_panel_and_a_handoff():
     assert "/api/properties" in page and "/api/handoff" in page
     assert 'id="handoff-text"' in page
     assert ".innerHTML" not in page, "an address is landlord text; it goes in as a text node"
+
+
+# --- the free account -------------------------------------------------------------------
+
+
+def test_two_questions_are_answered_then_the_wall(settings, store):
+    client = _client(settings, store, FakeAdvisor())
+    headers = {"X-Browser-Id": "b1"}
+
+    assert client.get("/api/account", headers=headers).json()["free_left"] == 2
+    assert _ask(client, "t1", "First question").status_code == 200
+    assert client.get("/api/account", headers=headers).json()["free_left"] == 1
+    assert _ask(client, "t2", "Second question").status_code == 200
+
+    walled = client.post(
+        "/api/chat", json={"session_id": "t3", "message": "Third"}, headers=headers
+    )
+    assert walled.status_code == 403
+    assert walled.json()["detail"]["signup_required"] is True
+
+
+def test_signing_up_lets_the_third_question_through(settings, store):
+    client = _client(settings, store, FakeAdvisor())
+    headers = {"X-Browser-Id": "b1"}
+    _ask(client, "t1", "First question")
+    _ask(client, "t2", "Second question")
+
+    made = client.post(
+        "/api/account",
+        json={
+            "name": "Javier Diaz",
+            "email": "javier@example.com",
+            "phone": "312-555-0134",
+            "neighborhood": "Logan Square",
+        },
+        headers=headers,
+    )
+    assert made.json() == {"signed_up": True, "name": "Javier Diaz"}
+    assert client.get("/api/account", headers=headers).json()["signed_up"] is True
+    assert _ask(client, "t3", "Third question").status_code == 200
+
+
+def test_the_neighborhood_reaches_the_advisor(settings, store):
+    advisor = FakeAdvisor()
+    client = _client(settings, store, advisor)
+    headers = {"X-Browser-Id": "b1"}
+    client.post(
+        "/api/account",
+        json={
+            "name": "Javier Diaz",
+            "email": "javier@example.com",
+            "phone": "312-555-0134",
+            "neighborhood": "Logan Square",
+        },
+        headers=headers,
+    )
+    _ask(client, "t1", "Do I need a heat certificate?")
+    assert advisor.neighborhood == "Logan Square"
+
+
+def test_a_bad_signup_says_which_field(settings, store):
+    client = _client(settings, store)
+    bad = client.post(
+        "/api/account",
+        json={"name": "J", "email": "nope", "phone": "1", "neighborhood": ""},
+        headers={"X-Browser-Id": "b1"},
+    )
+    assert bad.status_code == 400
+    assert "name" in bad.json()["detail"].lower()
+
+
+def test_a_failed_answer_does_not_spend_a_free_question(settings, store):
+    advisor = FakeAdvisor()
+    advisor.error = "Overloaded"
+    client = _client(settings, store, advisor)
+    headers = {"X-Browser-Id": "b1"}
+    _ask(client, "t1", "First question")
+    assert client.get("/api/account", headers=headers).json()["free_left"] == 2
+
+
+def test_another_browser_still_has_its_own_free_questions(settings, store):
+    client = _client(settings, store, FakeAdvisor())
+    _ask(client, "t1", "One", browser="b1")
+    _ask(client, "t2", "Two", browser="b1")
+    assert client.get("/api/account", headers={"X-Browser-Id": "b2"}).json()["free_left"] == 2
+    assert _ask(client, "t3", "One", browser="b2").status_code == 200
+
+
+def test_deleting_the_conversations_does_not_hand_back_a_free_question(settings, store):
+    client = _client(settings, store, FakeAdvisor())
+    headers = {"X-Browser-Id": "b1"}
+    _ask(client, "t1", "One")
+    _ask(client, "t2", "Two")
+    client.delete("/api/threads/t1", headers=headers)
+    client.delete("/api/threads/t2", headers=headers)
+    assert client.get("/api/account", headers=headers).json()["free_left"] == 0
+
+
+def test_the_gate_can_be_turned_off(settings, store):
+    settings = settings.model_copy(update={"account_required": False})
+    client = _client(settings, store, FakeAdvisor())
+    headers = {"X-Browser-Id": "b1"}
+    assert client.get("/api/account", headers=headers).json()["required"] is False
+    for index in range(4):
+        assert _ask(client, f"t{index}", "Another question").status_code == 200
+
+
+def test_the_terminal_is_never_gated(settings, store):
+    """No browser id, no wall: `mark ask` and `mark chat` are the owner's own machine."""
+    client = _client(settings, store, FakeAdvisor())
+    for index in range(4):
+        assert _ask(client, f"t{index}", "Another question", browser=None).status_code == 200
+
+
+def test_the_account_routes_are_gated_by_the_access_code(settings, store):
+    settings = settings.model_copy(update={"web_access_code": "letmein"})
+    client = _client(settings, store)
+    headers = {"X-Browser-Id": "b1"}
+    assert client.get("/api/account", headers=headers).status_code == 401
+    assert client.post("/api/account", json={}, headers=headers).status_code == 401
+
+
+def test_the_page_has_the_signup_form_with_the_four_fields():
+    from pathlib import Path
+
+    page = Path("markai/web/static/index.html").read_text(encoding="utf-8")
+    for field in ("su-name", "su-email", "su-phone", "su-hood"):
+        assert f'id="{field}"' in page
+    assert "signup_required" in page, "the page reacts to the server's wall, not its own count"
+    assert "heldQuestion" in page, "the question they were typing is asked after signup"
+
+
+def test_mark_accounts_lists_and_exports_the_signups(tmp_path, monkeypatch):
+    from markai.web.accounts import Accounts
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True)
+    store = Accounts(data_dir / "accounts.db", free_questions=2)
+    store.create(
+        "b1",
+        {
+            "name": "Javier Diaz",
+            "email": "javier@example.com",
+            "phone": "312-555-0134",
+            "neighborhood": "Logan Square",
+        },
+    )
+    store.close()
+
+    manifest = tmp_path / "sources.yaml"
+    manifest.write_text("websites: []\n", encoding="utf-8")
+    monkeypatch.setenv("MARKAI_SOURCES_FILE", str(manifest))
+    monkeypatch.setenv("MARKAI_DATA_DIR", str(data_dir))
+
+    listed = runner.invoke(app, ["accounts"])
+    assert listed.exit_code == 0
+    assert "javier@example.com" in listed.stdout
+    assert "Logan Square" in listed.stdout
+
+    out = tmp_path / "leads.csv"
+    exported = runner.invoke(app, ["accounts", "--csv", str(out)])
+    assert exported.exit_code == 0
+    body = out.read_text(encoding="utf-8")
+    assert "signed_up_utc,name,email,phone,neighborhood" in body
+    assert "javier@example.com" in body
+
+
+def test_mark_accounts_says_so_when_nobody_signed_up(tmp_path, monkeypatch):
+    manifest = tmp_path / "sources.yaml"
+    manifest.write_text("websites: []\n", encoding="utf-8")
+    monkeypatch.setenv("MARKAI_SOURCES_FILE", str(manifest))
+    monkeypatch.setenv("MARKAI_DATA_DIR", str(tmp_path / "data"))
+    result = runner.invoke(app, ["accounts"])
+    assert result.exit_code == 0
+    assert "Nobody has signed up" in result.stdout

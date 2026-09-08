@@ -908,6 +908,68 @@ def search(
     store.close()
 
 
+@app.command()
+def accounts(
+    csv_path: Path = typer.Option(
+        None, "--csv", help="Write them to a CSV file instead of printing a table."
+    ),
+    limit: int = typer.Option(50, "-n", "--limit", help="How many to show."),
+) -> None:
+    """The landlords who signed up on the page: name, email, phone, neighborhood."""
+    import csv as csv_module
+    from datetime import UTC, datetime
+
+    from markai.web.accounts import Accounts
+
+    settings = _settings()
+    path = settings.data_dir / "accounts.db"
+    if not path.exists():
+        console.print(f"[yellow]Nobody has signed up yet ({path} does not exist).[/yellow]")
+        return
+    store = Accounts(path, free_questions=settings.free_questions_before_signup)
+    rows = store.all(limit=None if csv_path else limit)
+    store.close()
+    if not rows:
+        console.print("[yellow]Nobody has signed up yet.[/yellow]")
+        return
+
+    def when(stamp: float, with_time: bool = True) -> str:
+        moment = datetime.fromtimestamp(stamp, UTC)
+        return moment.strftime("%Y-%m-%d %H:%M" if with_time else "%Y-%m-%d")
+
+    if csv_path:
+        with Path(csv_path).open("w", newline="", encoding="utf-8") as handle:
+            writer = csv_module.writer(handle)
+            writer.writerow(["signed_up_utc", "name", "email", "phone", "neighborhood"])
+            for account, stamp in rows:
+                writer.writerow(
+                    [when(stamp), account.name, account.email, account.phone, account.neighborhood]
+                )
+        console.print(f"[green]✓[/green] Wrote {len(rows)} to {csv_path}.")
+        console.print("[dim]That file holds personal data. Treat it like your rent roll.[/dim]")
+        return
+
+    table = Table(show_header=True, header_style="bold", title="Free accounts")
+    table.add_column("When")
+    # An email you have to guess the end of is no use, so these wrap instead of truncating.
+    table.add_column("Name", overflow="fold")
+    table.add_column("Email", overflow="fold")
+    table.add_column("Phone", overflow="fold")
+    table.add_column("Neighborhood", overflow="fold")
+    for account, stamp in rows:
+        table.add_row(
+            # Date only here so the email fits on one line in an 80 column terminal. The
+            # exact minute is in the CSV, which is where anyone doing anything with it works.
+            when(stamp, with_time=False),
+            escape(account.name),
+            escape(account.email),
+            escape(account.phone),
+            escape(account.neighborhood),
+        )
+    console.print(table)
+    console.print(f"[dim]{len(rows)} shown · `mark accounts --csv leads.csv` to export[/dim]")
+
+
 # --------------------------------------------------------------------------------------
 # The owner's own facts
 # --------------------------------------------------------------------------------------

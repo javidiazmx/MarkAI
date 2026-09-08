@@ -46,6 +46,15 @@ class ResetRequest(BaseModel):
     session_id: str = Field(default="default", max_length=128)
 
 
+class SignupRequest(BaseModel):
+    """The free account form. Validated again in the store, which owns the rules."""
+
+    name: str = Field(default="", max_length=200)
+    email: str = Field(default="", max_length=400)
+    phone: str = Field(default="", max_length=60)
+    neighborhood: str = Field(default="", max_length=200)
+
+
 class PropertyRequest(BaseModel):
     """One building as typed into the page. Lengths are trimmed again in the store."""
 
@@ -122,6 +131,7 @@ def create_app(
         "history": None,
         "retriever": None,
         "portfolio": None,
+        "accounts": None,
     }
     sessions = _Sessions(settings.max_sessions)
     daily = _DailyCounter()
@@ -144,6 +154,17 @@ def create_app(
             settings.ensure_dirs()
             state["history"] = History(settings.data_dir / "conversations.db")
         return state["history"]
+
+    def get_accounts() -> Any:
+        if state["accounts"] is None:
+            from markai.web.accounts import Accounts
+
+            settings.ensure_dirs()
+            state["accounts"] = Accounts(
+                settings.data_dir / "accounts.db",
+                free_questions=settings.free_questions_before_signup,
+            )
+        return state["accounts"]
 
     def get_portfolio() -> Any:
         if state["portfolio"] is None:
@@ -283,6 +304,39 @@ def create_app(
     ) -> dict[str, Any]:
         return {"deleted": get_history().delete(browser, thread_id)}
 
+    @app.get("/api/account")
+    def account(
+        browser: str = Depends(browser_of), _: None = Depends(require_access)
+    ) -> dict[str, Any]:
+        """Whether this browser has an account, and how many free questions are left."""
+        if not settings.account_required:
+            return {"required": False, "signed_up": True, "free_left": None, "name": None}
+        accounts = get_accounts()
+        existing = accounts.get(browser)
+        return {
+            "required": True,
+            "signed_up": existing is not None,
+            "free_left": accounts.free_left(browser),
+            "free_questions": accounts.free_questions,
+            # The name is what the page greets them with. Nothing else comes back.
+            "name": existing.name if existing else None,
+        }
+
+    @app.post("/api/account")
+    def create_account(
+        payload: SignupRequest,
+        browser: str = Depends(browser_of),
+        _: None = Depends(require_access),
+    ) -> dict[str, Any]:
+        from markai.web.accounts import SignupError
+
+        try:
+            saved = get_accounts().create(browser, payload.model_dump())
+        except SignupError as exc:
+            # The message names the field, so it is meant to be shown.
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"signed_up": True, "name": saved.name}
+
     @app.get("/api/properties")
     def properties(
         browser: str = Depends(browser_of), _: None = Depends(require_access)
@@ -373,6 +427,20 @@ def create_app(
                 status_code=429, detail="Mark has hit today's question limit. Try again tomorrow."
             )
 
+        if settings.account_required and get_accounts().needs_signup(browser):
+            # 403 with a marker rather than 401: the page has to tell a spent free trial
+            # apart from a missing access code, and they mean different things.
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "signup_required": True,
+                    "message": (
+                        "That is your free questions used up. A free account keeps Jay "
+                        "going, and it takes a minute."
+                    ),
+                },
+            )
+
         entry = sessions.get(payload.session_id)
         conversation, lock, asked = entry
         if asked >= settings.per_session_question_limit:
@@ -387,11 +455,16 @@ def create_app(
         record: Callable[[str, str], None] | None = None
         if browser:
             history = get_history()
+            accounts = get_accounts()
             thread_id = payload.session_id
 
             def record(question: str, answer: str) -> None:
                 history.record(browser, thread_id, question, answer)
+                # Counted on the way out, not on the way in: a question that failed to
+                # produce an answer has not spent anything.
+                accounts.count_question(browser)
 
+        signed_up = get_accounts().get(browser) if browser else None
         return EventSourceResponse(
             _events(
                 get_advisor,
@@ -401,6 +474,7 @@ def create_app(
                 files,
                 record,
                 get_portfolio().list(browser) if browser else None,
+                signed_up.neighborhood if signed_up else None,
             )
         )
 
@@ -415,6 +489,7 @@ def _events(
     attachments: list[Any] | None = None,
     record: Callable[[str, str], None] | None = None,
     portfolio: list[Any] | None = None,
+    neighborhood: str | None = None,
 ) -> Iterator[dict]:
     from markai.advisor.mark import MissingApiKeyError
 
@@ -429,7 +504,7 @@ def _events(
             return
 
         response = None
-        for event in advisor.stream(message, conversation, attachments, portfolio):
+        for event in advisor.stream(message, conversation, attachments, portfolio, neighborhood):
             if event.type == "text":
                 yield {"event": "text", "data": json.dumps({"text": event.text})}
             elif event.type == "tool_call":

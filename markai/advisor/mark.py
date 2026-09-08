@@ -149,11 +149,12 @@ class MarkAdvisor:
         conversation: Conversation | None = None,
         attachments: list[Any] | None = None,
         portfolio: list[Any] | None = None,
+        neighborhood: str | None = None,
     ) -> AdvisorResponse:
         """Answer a question, draining the stream. Errors come back as an AdvisorResponse."""
         response: AdvisorResponse | None = None
         error: str | None = None
-        for event in self.stream(question, conversation, attachments, portfolio):
+        for event in self.stream(question, conversation, attachments, portfolio, neighborhood):
             if event.type == "final":
                 response = event.response
             elif event.type == "error":
@@ -168,6 +169,7 @@ class MarkAdvisor:
         conversation: Conversation | None = None,
         attachments: list[Any] | None = None,
         portfolio: list[Any] | None = None,
+        neighborhood: str | None = None,
     ):
         """Yield text deltas, tool notices, then exactly one ``final`` (or ``error``)."""
         flags = detect_flags(question)
@@ -200,7 +202,7 @@ class MarkAdvisor:
             flags,
             carried,
             facts_block,
-            build_portfolio_block(list(portfolio or [])),
+            build_portfolio_block(list(portfolio or []), neighborhood),
         )
         api_messages: list[Any] = list(conversation.messages) if conversation else []
         if attachments:
