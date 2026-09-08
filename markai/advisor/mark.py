@@ -25,6 +25,7 @@ from markai.advisor.attachments import to_content_blocks
 from markai.advisor.calculators import TOOL_DEFINITIONS, dispatch_tool
 from markai.advisor.guardrails import (
     FLAG_FOLLOW_UP,
+    FLAG_HIGH_RISK,
     FLAG_LEGAL,
     LEGAL_DISCLAIMER,
     REFUSAL_TEXT,
@@ -35,6 +36,7 @@ from markai.advisor.guardrails import (
     is_legal_topic,
     is_not_covered_answer,
     plain_punctuation,
+    strip_disclaimer,
 )
 from markai.advisor.prompt_builder import (
     build_business_block,
@@ -365,11 +367,18 @@ class MarkAdvisor:
             if FLAG_LEGAL not in flags and is_legal_topic(text):
                 flags = sorted({*flags, FLAG_LEGAL})
             # A conversation carries the notice once at most; where the surface shows a
-            # standing notice of its own, not at all.
-            already = bool(conversation and conversation.disclaimer_given) or not (
-                self.settings.legal_disclaimer_in_answers
+            # standing notice of its own, not at all. Either way the decision is made here
+            # and not by the model, which will write one under every answer given the
+            # chance - and did, until the prompt stopped asking for it.
+            wanted = self.settings.legal_disclaimer_in_answers and not (
+                conversation and conversation.disclaimer_given
             )
-            text = ensure_disclaimer(text, flags, already_given=already)
+            if wanted:
+                text = ensure_disclaimer(text, flags)
+            elif FLAG_HIGH_RISK not in flags:
+                # The fair-housing refusal is owner-approved wording that carries the
+                # notice on purpose. Nothing trims that one.
+                text = strip_disclaimer(text)
             if conversation is not None and LEGAL_DISCLAIMER in text:
                 conversation.disclaimer_given = True
 

@@ -401,7 +401,9 @@
   }
 
   // **bold** and links. Everything else stays literal, which is the safe direction to err.
-  var URL_RE = /(https?:\/\/[^\s<>()\[\]"']+[^\s<>()\[\]"'.,;:!?])/g;
+  // An address is linked too: the answer that says to email Mark for a vendor referral is
+  // worth one tap, not a copy by hand.
+  var URL_RE = /(https?:\/\/[^\s<>()\[\]"']+[^\s<>()\[\]"'.,;:!?]|[\w.+-]+@[\w-]+\.[\w.-]*[a-zA-Z])/g;
 
   function inline(parent, text) {
     text.split(/\*\*/).forEach(function (piece, index) {
@@ -432,6 +434,10 @@
         link.target = "_blank";
         link.rel = "noopener noreferrer";
         parent.appendChild(link);
+      } else if (href.indexOf("@") > 0) {
+        var mail = el("a", "link", href);
+        mail.href = "mailto:" + href;
+        parent.appendChild(mail);
       } else {
         parent.appendChild(document.createTextNode(href));
       }

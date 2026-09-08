@@ -209,7 +209,7 @@ def test_the_live_manifest_has_somewhere_to_hand_a_hard_case():
     assert "only when it is genuinely warranted" in block
 
 
-def test_the_live_manifest_offers_the_three_links_the_owner_named():
+def test_the_live_manifest_offers_what_the_owner_named():
     from pathlib import Path
 
     from markai.sources.manifest import load_manifest
@@ -217,7 +217,20 @@ def test_the_live_manifest_offers_the_three_links_the_owner_named():
     tools = load_manifest(Path("sources/sources.yaml")).tools
     urls = {t.url for t in tools}
     assert "https://www.gcrealtyinc.com/free-rental-analysis" in urls
-    assert "https://www.straightupchicagoinvestor.com/build-your-team" in urls
     assert "https://calendly.com/russell-wedge-gcrealtyinc/20min" in urls
     for tool in tools:
         assert tool.when_to_recommend, f"{tool.name} needs to say when it fits"
+
+
+def test_nobody_is_sent_to_build_your_team_for_a_vendor():
+    """It is not a vendor directory. The referral comes from Mark, by email."""
+    from pathlib import Path
+
+    from markai.sources.manifest import load_manifest
+
+    tools = load_manifest(Path("sources/sources.yaml")).tools
+    blob = " ".join(
+        f"{t.name} {t.description} {t.url or ''} {t.when_to_recommend or ''}" for t in tools
+    )
+    assert "build-your-team" not in blob
+    assert "mark@gcrealtyinc.com" in blob

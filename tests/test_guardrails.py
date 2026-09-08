@@ -315,3 +315,58 @@ def test_the_prompt_does_not_teach_the_habit_it_forbids():
     prompt = Path("prompts/mark_system_prompt.md").read_text(encoding="utf-8")
     assert "—" not in prompt and "–" not in prompt
     assert "No em dashes or en dashes" in prompt
+
+
+# --- the standing notice belongs to the platform, not to the model ----------------------
+
+
+def test_a_disclaimer_the_model_wrote_is_stripped():
+    from markai.advisor.guardrails import strip_disclaimer
+
+    answer = (
+        "Chicago gives you 45 days to return the deposit.\n\n"
+        "I'm not a lawyer, and this isn't legal advice. You should consult with an "
+        "Illinois real estate attorney to confirm this applies to your situation."
+    )
+    assert strip_disclaimer(answer) == "Chicago gives you 45 days to return the deposit."
+
+
+def test_a_disclaimer_tacked_onto_the_last_paragraph_is_stripped():
+    from markai.advisor.guardrails import strip_disclaimer
+
+    answer = (
+        "Send the notice by certified mail. Keep the receipt. I'm not a lawyer, and this "
+        "isn't legal advice."
+    )
+    assert strip_disclaimer(answer) == "Send the notice by certified mail. Keep the receipt."
+
+
+def test_a_spanish_disclaimer_is_stripped_too():
+    from markai.advisor.guardrails import strip_disclaimer
+
+    answer = "Tienes 45 dias.\n\nNo soy abogado y esto no es asesoria legal."
+    assert strip_disclaimer(answer) == "Tienes 45 dias."
+
+
+def test_an_answer_that_is_only_the_notice_is_left_alone():
+    from markai.advisor.guardrails import strip_disclaimer
+
+    answer = "I'm not a lawyer, and this isn't legal advice."
+    assert strip_disclaimer(answer) == answer, "something beats nothing"
+
+
+def test_a_sentence_about_calling_an_attorney_survives():
+    from markai.advisor.guardrails import strip_disclaimer
+
+    answer = (
+        "The 45 day window is the ordinance. Whether your lease shortens it is worth "
+        "an hour with a real estate attorney before you rely on it."
+    )
+    assert strip_disclaimer(answer) == answer
+
+
+def test_nothing_at_the_end_means_nothing_is_touched():
+    from markai.advisor.guardrails import strip_disclaimer
+
+    answer = "Chicago gives you 45 days.\n\nKeep the itemized list."
+    assert strip_disclaimer(answer) == answer

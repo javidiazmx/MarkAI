@@ -279,14 +279,16 @@ tools:
       Cuando preguntan cuanto renta una unidad o un edificio en concreto. Jay no tiene
       comparables en vivo, asi que esta es la respuesta honesta a "cuanto vale mi renta".
 
-  - name: Build Your Team
+  # No hay un directorio de vendors. La pagina Build Your Team es de otro tipo de gente,
+  # asi que no se manda a nadie para alla: la referencia la da Mark por correo.
+  - name: Referencia de vendor por correo con Mark
     description: >
-      Directorio de la comunidad Straight Up Chicago Investor: plomeros, techeros,
-      calderas, abogados, contadores y demas oficios que trabajan en Chicagoland.
-    url: https://www.straightupchicagoinvestor.com/build-your-team
+      Mark refiere al oficio adecuado cuando le escribes a mark@gcrealtyinc.com con lo que
+      necesitas y donde esta la propiedad. No hay directorio publico que consultar.
     when_to_recommend: >
       Cuando piden un contacto de un oficio o especialidad - caldera, alcantarillado,
-      board-up, un abogado de arrendamiento - y no hay un nombre en las fuentes.
+      board-up, un abogado de arrendamiento - y no hay un nombre en las fuentes. Diles que
+      le escriban a mark@gcrealtyinc.com y que Mark ve si puede referirlos.
 
   - name: Llamada de 20 minutos con Russell
     description: Property manager de GC Realty. Revisa el caso contigo por telefono.

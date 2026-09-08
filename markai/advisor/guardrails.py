@@ -705,6 +705,45 @@ def _contains_disclaimer(answer: str) -> bool:
     return prefix in _norm(answer)
 
 
+# The exact owner-approved sentence, matched with whatever whitespace it arrives in.
+_EXACT_DISCLAIMER = re.compile(r"\s*".join(re.escape(w) for w in LEGAL_DISCLAIMER.split()))
+
+# And a paraphrase of it. Narrow on purpose: "worth an hour with a real estate attorney"
+# is a real answer about one case and has to survive, while "I'm not a lawyer" is furniture.
+_STANDING_NOTICE = re.compile(
+    r"(not a lawyer|n't a lawyer|n't legal advice|not legal advice|"
+    r"should consult (with )?an? .{0,40}(attorney|lawyer)|"
+    r"no soy abogad|no es asesor[ií]a legal|esto no constituye asesor)",
+    re.IGNORECASE,
+)
+
+
+def strip_disclaimer(answer: str) -> str:
+    """Remove a standing disclaimer the model appended anyway.
+
+    The prompt asks it not to, but the habit is strong and a prompt is not a guarantee. The
+    exact sentence goes wherever it appears; a paraphrase goes only from the closing
+    paragraph, and only the sentences of it that read as the notice, so an answer that
+    genuinely says to call an attorney about this one thing keeps its point. An answer that
+    is nothing but the notice is left alone: something beats nothing.
+    """
+    text = _EXACT_DISCLAIMER.sub("", answer or "").rstrip()
+    if not text:
+        return answer
+    paragraphs = text.split("\n\n")
+    if not _STANDING_NOTICE.search(paragraphs[-1]):
+        return text
+    sentences = re.split(r"(?<=[.!?])\s+", paragraphs[-1])
+    kept = [s for s in sentences if not _STANDING_NOTICE.search(s)]
+    if kept:
+        paragraphs[-1] = " ".join(kept).strip()
+    elif len(paragraphs) > 1:
+        paragraphs.pop()
+    else:
+        return answer
+    return "\n\n".join(paragraphs).rstrip()
+
+
 def plain_punctuation(answer: str) -> str:
     """Turn em and en dashes into plain punctuation, per the owner's house style.
 

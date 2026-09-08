@@ -369,3 +369,31 @@ def test_find_episode_is_answered_from_the_knowledge_base(settings, store):
     assert block["is_error"] is False
     assert '"number": "198"' in block["content"], "the episode number came from the store"
     assert "timestamp" in block["content"], "and the minute the answer is at"
+
+
+def test_the_browser_answer_carries_no_disclaimer_even_if_the_model_writes_one(settings, store):
+    written = (
+        "Chicago gives you 45 days.\n\nI'm not a lawyer, and this isn't legal advice. "
+        "You should consult with an Illinois real estate attorney to confirm this applies "
+        "to your situation."
+    )
+    advisor, _ = build_advisor(settings, store, [text_message(written)])
+    response = advisor.ask("How long do I have to return a security deposit?")
+
+    assert "not a lawyer" not in response.text
+    assert response.text == "Chicago gives you 45 days."
+
+
+def test_the_terminal_gets_it_once_per_conversation(settings, store):
+    settings = settings.model_copy(update={"legal_disclaimer_in_answers": True})
+    advisor, _ = build_advisor(
+        settings,
+        store,
+        [text_message("Forty five days."), text_message("Itemize the damage.")],
+    )
+    conversation = Conversation(session_id="t")
+
+    first = advisor.ask("How long to return a security deposit?", conversation)
+    assert LEGAL_DISCLAIMER in first.text
+    second = advisor.ask("And if I keep part of it for damage?", conversation)
+    assert LEGAL_DISCLAIMER not in second.text, "said once, it lands; said twice, it is furniture"
