@@ -686,6 +686,36 @@ def is_follow_up(question: str) -> bool:
     return len(_WORD_RE.findall(low)) < 10
 
 
+# Hello, who are you, what is this, thanks. Real questions, none of them about a building.
+_SMALL_TALK = re.compile(
+    r"^\s*(hi|hey|hello|yo|thanks|thank you|ok|okay|test|testing|"
+    r"hola|buenas|gracias|adios|prueba|probando)\b[\s!.?]*$",
+    re.IGNORECASE,
+)
+_ABOUT_JAY = re.compile(
+    r"\b(who are you|what are you|what is this|what can you (do|help)|who is mark|"
+    r"qu[eé] eres|qui[eé]n eres|qu[eé] es esto|en qu[eé] (me )?puedes ayudar|"
+    r"qui[eé]n es mark|para qu[eé] sirves)\b",
+    re.IGNORECASE,
+)
+SMALL_TALK_MAX_WORDS = 8
+
+
+def is_small_talk(question: str) -> bool:
+    """A greeting, a thank you, or a question about Jay himself rather than a building.
+
+    Only used to keep these out of `mark gaps`. The sources do not cover "who are you", and
+    they are not supposed to: a list of content the owner should go write is worth nothing
+    if half of it is people saying hello.
+    """
+    text = (question or "").strip()
+    if not text:
+        return True
+    if _ABOUT_JAY.search(text):
+        return True
+    return bool(_SMALL_TALK.match(text)) and len(text.split()) <= SMALL_TALK_MAX_WORDS
+
+
 def detect_flags(question: str) -> list[str]:
     """All flags that apply to a question, sorted for deterministic prompts."""
     flags: set[str] = set()

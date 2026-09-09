@@ -938,14 +938,31 @@ def gaps(top: int = typer.Option(20, "--top", help="How many to show.")) -> None
     table.add_column("When")
     table.add_column("Match")
     table.add_column("Question", overflow="fold")
+    # A status code in this column reads as noise; what the row means is the point. And
+    # "covered" here means something specific worth seeing: the sources had it and Jay said
+    # they did not. Those are from before he stopped announcing gaps.
+    meaning = {
+        "none": "[red]nothing found[/red]",
+        "weak": "[yellow]thin match[/yellow]",
+        "covered": "[dim]Jay declined it[/dim]",
+    }
+    declined = 0
     for row in rows:
         coverage = str(row.get("coverage", ""))
+        if coverage == "covered":
+            declined += 1
         table.add_row(
             str(row.get("asked_at", ""))[:10],
-            "[red]none[/red]" if coverage == "none" else f"[yellow]{coverage}[/yellow]",
+            meaning.get(coverage, f"[dim]{escape(coverage)}[/dim]"),
             escape(str(row.get("question", ""))[:80]),
         )
     console.print(table)
+    if declined:
+        console.print(
+            f"[dim]{declined} say 'Jay declined it': the sources covered the question and "
+            f"he said they did not. He no longer does that, so those are history rather "
+            f"than a to-do.[/dim]"
+        )
     console.print("[dim]`mark feedback` is the other half: answers landlords marked wrong.[/dim]")
     store.close()
 

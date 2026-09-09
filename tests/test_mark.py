@@ -435,3 +435,29 @@ def test_the_prompt_does_not_ask_jay_to_narrate_what_he_lacks():
     assert "closest one to three sources" not in prompt
     assert "Do not narrate the gap" in prompt
     assert "Never fill a gap with general knowledge." in prompt, "the hard rule stays"
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Ayuda que es esto?",
+        "who is Mark Ainley?",
+        "Hola",
+        "thanks",
+        "What can you help with?",
+    ],
+)
+def test_saying_hello_is_not_a_content_gap(question, settings, store):
+    """A list of material the owner should go write is worth nothing if half of it is
+    people introducing themselves."""
+    advisor, _ = build_advisor(settings, store, [text_message("I answer landlord questions.")])
+    advisor.ask(question)
+    assert store.list_gaps(10) == []
+
+
+def test_a_real_question_the_sources_miss_still_lands_in_the_list(settings, store):
+    advisor, _ = build_advisor(settings, store, [text_message("Email Mark about that one.")])
+    advisor.ask("What are the parking permit rules in Winnetka?")
+    assert [g["question"] for g in store.list_gaps(10)] == [
+        "What are the parking permit rules in Winnetka?"
+    ]

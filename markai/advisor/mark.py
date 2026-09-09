@@ -36,6 +36,7 @@ from markai.advisor.guardrails import (
     is_follow_up,
     is_legal_topic,
     is_not_covered_answer,
+    is_small_talk,
     plain_punctuation,
     strip_disclaimer,
 )
@@ -498,8 +499,13 @@ class MarkAdvisor:
                     # announces a gap out loud, so this is the only place it is recorded,
                     # and it has to catch "weak" as well as "none": a thin match is exactly
                     # the near miss he used to explain away to the landlord and now keeps
-                    # to himself. `mark gaps` shows which of the two it was.
-                    response.coverage in ("none", "weak") or is_not_covered_answer(response.text),
+                    # to himself. `mark gaps` shows which of the two it was. Hello and
+                    # "who are you" are not content the owner should go write.
+                    not is_small_talk(question)
+                    and (
+                        response.coverage in ("none", "weak")
+                        or is_not_covered_answer(response.text)
+                    ),
                     usage,
                 )
             except Exception as exc:  # logging must never break an answer
