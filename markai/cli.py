@@ -280,6 +280,73 @@ def doctor(
     )
     store.close()
 
+    # --- the browser page: who can reach it, who signs up, where the lead goes ---------
+    if settings.access_code():
+        table.add_row("Web access code", "set")
+    else:
+        table.add_row(
+            "Web access code",
+            "[yellow]not set[/yellow] - anyone who reaches the page can ask\n"
+            "[dim]Set MARKAI_WEB_ACCESS_CODE before sharing the address.[/dim]",
+        )
+
+    if settings.account_required:
+        how = "required at signup" if settings.password_required else "offered, not required"
+        table.add_row(
+            "Accounts",
+            f"{settings.free_questions_before_signup} free question(s), then a signup "
+            f"· password {how}",
+        )
+    else:
+        table.add_row("Accounts", "off, nobody is ever asked to sign up")
+
+    accounts_path = settings.data_dir / "accounts.db"
+    if accounts_path.exists():
+        from markai.web.accounts import Accounts
+
+        signups = Accounts(accounts_path, free_questions=settings.free_questions_before_signup)
+        total = len(signups.all())
+        with_password = sum(1 for account, _ in signups.all() if account.has_password)
+        legacy = signups.legacy_signups()
+        signups.close()
+        note = f"{total} account(s), {with_password} with a password"
+        if legacy:
+            note += f"\n[dim]{legacy} pre-password signup(s) kept in signups_v1[/dim]"
+        table.add_row("Signups so far", note)
+
+    if settings.crm_webhook_url:
+        from markai.web.crm import Crm
+
+        queue = Crm(settings.data_dir / "leads.db")
+        counts = queue.counts()
+        queue.close()
+        note = (
+            f"{settings.crm_webhook_url}\n"
+            f"[dim]{counts['delivered']} delivered · {counts['waiting']} waiting · "
+            f"{counts['gave_up']} gave up[/dim]"
+        )
+        if counts["waiting"] or counts["gave_up"]:
+            note += "\n[dim]`mark leads send` pushes them.[/dim]"
+        table.add_row("CRM webhook", note)
+    else:
+        table.add_row(
+            "CRM webhook",
+            "[yellow]not set[/yellow] - leads are queued and go nowhere\n"
+            "[dim]MARKAI_CRM_WEBHOOK_URL, then `mark leads test`.[/dim]",
+        )
+
+    host = settings.web_host
+    if settings.cookie_secure:
+        table.add_row("Sign-in cookie", "https only")
+    elif host in LOOPBACK:
+        table.add_row("Sign-in cookie", f"plain http, fine on {host}")
+    else:
+        table.add_row(
+            "Sign-in cookie",
+            "[red]plain http on a public host[/red]\n"
+            "[dim]Set MARKAI_COOKIE_SECURE=true once this is behind https.[/dim]",
+        )
+
     try:
         import faster_whisper  # noqa: F401
 

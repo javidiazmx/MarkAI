@@ -1343,3 +1343,124 @@ def test_mark_leads_lists_and_sends(tmp_path, monkeypatch):
     blocked = runner.invoke(app, ["leads", "send"])
     assert blocked.exit_code == 1
     assert "MARKAI_CRM_WEBHOOK_URL" in blocked.stdout + str(blocked.stderr)
+
+
+def test_doctor_reports_on_the_page_the_accounts_and_the_crm(tmp_path, monkeypatch):
+    manifest = tmp_path / "sources.yaml"
+    manifest.write_text("websites: []\n", encoding="utf-8")
+    monkeypatch.setenv("MARKAI_SOURCES_FILE", str(manifest))
+    monkeypatch.setenv("MARKAI_DATA_DIR", str(tmp_path / "data"))
+
+    bare = runner.invoke(app, ["doctor"])
+    assert bare.exit_code == 0
+    assert "Web access code" in bare.stdout and "not set" in bare.stdout
+    assert "2 free question" in bare.stdout
+    assert "MARKAI_CRM_WEBHOOK_URL" in bare.stdout
+    assert "fine on 127.0.0.1" in bare.stdout
+
+    monkeypatch.setenv("MARKAI_WEB_ACCESS_CODE", "letmein")
+    monkeypatch.setenv("MARKAI_CRM_WEBHOOK_URL", "https://hooks.example.com/catch")
+    monkeypatch.setenv("MARKAI_WEB_HOST", "0.0.0.0")
+    wired = runner.invoke(app, ["doctor"])
+    assert wired.exit_code == 0
+    assert "hooks.example.com" in wired.stdout
+    assert "plain http on a public host" in wired.stdout, "the cookie warning has to be loud"
+
+
+def test_doctor_never_prints_a_secret(tmp_path, monkeypatch):
+    manifest = tmp_path / "sources.yaml"
+    manifest.write_text("websites: []\n", encoding="utf-8")
+    monkeypatch.setenv("MARKAI_SOURCES_FILE", str(manifest))
+    monkeypatch.setenv("MARKAI_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MARKAI_CRM_WEBHOOK_TOKEN", "crm-secret-value")
+    monkeypatch.setenv("MARKAI_WEB_ACCESS_CODE", "access-secret-value")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-secret-value")
+
+    result = runner.invoke(app, ["doctor"])
+    for secret in ("crm-secret-value", "access-secret-value", "sk-ant-secret-value"):
+        assert secret not in result.stdout
+
+
+def test_old_databases_load_and_keep_what_they_hold(tmp_path):
+    """The owner's machine has databases from before accounts existed.
+
+    They are migrated in place on first open. If this ever breaks, `mark serve` dies on
+    the first request and a landlord's saved conversations go with it.
+    """
+    import json
+    import sqlite3
+    import time
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True)
+
+    old = sqlite3.connect(data_dir / "conversations.db")
+    old.executescript(
+        "CREATE TABLE threads (id TEXT PRIMARY KEY, browser_id TEXT NOT NULL,"
+        " title TEXT NOT NULL, created_at REAL NOT NULL, updated_at REAL NOT NULL,"
+        " turns INTEGER NOT NULL DEFAULT 0, messages TEXT NOT NULL DEFAULT '[]');"
+        "CREATE INDEX threads_by_browser ON threads(browser_id, updated_at DESC);"
+    )
+    old.execute(
+        "INSERT INTO threads VALUES (?,?,?,?,?,?,?)",
+        (
+            "t-old",
+            "b-javid",
+            "Cuanto tiempo para el deposito",
+            time.time(),
+            time.time(),
+            2,
+            json.dumps([{"role": "user", "content": "Cuanto?"}]),
+        ),
+    )
+    old.commit()
+    old.close()
+
+    old = sqlite3.connect(data_dir / "portfolio.db")
+    old.executescript(
+        "CREATE TABLE properties (id TEXT PRIMARY KEY, browser_id TEXT NOT NULL,"
+        " label TEXT NOT NULL, units INTEGER, city TEXT NOT NULL DEFAULT '',"
+        " notes TEXT NOT NULL DEFAULT '', created_at REAL NOT NULL);"
+    )
+    old.execute(
+        "INSERT INTO properties VALUES ('p1','b-javid','2145 W Division',6,'Chicago','',?)",
+        (time.time(),),
+    )
+    old.commit()
+    old.close()
+
+    old = sqlite3.connect(data_dir / "accounts.db")
+    old.executescript(
+        "CREATE TABLE accounts (browser_id TEXT PRIMARY KEY, name TEXT, email TEXT,"
+        " phone TEXT, neighborhood TEXT, created_at REAL);"
+        "CREATE TABLE usage (browser_id TEXT PRIMARY KEY, questions INTEGER);"
+    )
+    old.execute(
+        "INSERT INTO accounts VALUES ('b-javid','Javier','javier@example.com','312','Logan',1.0)"
+    )
+    old.execute("INSERT INTO usage VALUES ('b-javid', 2)")
+    old.commit()
+    old.close()
+
+    manifest = tmp_path / "sources.yaml"
+    manifest.write_text("websites: []\n", encoding="utf-8")
+    settings = Settings(_env_file=None, data_dir=data_dir, sources_file=manifest)
+    client = TestClient(create_app(settings=settings, advisor=FakeAdvisor()))
+    headers = {"X-Browser-Id": "b-javid"}
+
+    threads = client.get("/api/threads", headers=headers).json()["threads"]
+    assert [t["title"] for t in threads] == ["Cuanto tiempo para el deposito"]
+    properties = client.get("/api/properties", headers=headers).json()["properties"]
+    assert [p["label"] for p in properties] == ["2145 W Division"]
+
+    # The two questions already spent still count, so the wall stays where it was.
+    assert client.get("/api/account", headers=headers).json()["free_left"] == 0
+    walled = client.post("/api/chat", json={"session_id": "x", "message": "third"}, headers=headers)
+    assert walled.status_code == 403
+
+    # And the old email is free to become a real account, which claims the old rows.
+    made = client.post("/api/account", json={**SIGNUP, "password": ""}, headers=headers)
+    assert made.status_code == 200
+    assert [t["title"] for t in client.get("/api/threads", headers=headers).json()["threads"]] == [
+        "Cuanto tiempo para el deposito"
+    ]
