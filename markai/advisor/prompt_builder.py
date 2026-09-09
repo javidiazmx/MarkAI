@@ -220,11 +220,16 @@ def build_user_message(
     carried: list[RetrievedChunk] | None = None,
     facts: str = "",
     portfolio: str = "",
+    today: date | None = None,
 ) -> str:
-    """The complete user turn: the owner's facts, knowledge base, tools, flags, question."""
+    """The complete user turn: the date, the owner's facts, the passages, the question."""
     chunks = _ordered_chunks(list(retrieval.chunks), carried)
     parts: list[str] = []
-    # First in the turn on purpose: it is the part that outranks everything after it.
+    # A landlord asking whether they are inside the heat season, or how many days are left
+    # on a notice, needs Jay to know what day it is. It goes in the user turn and never in
+    # the system prompt: a date up there would change the cached prefix every midnight.
+    parts.append(f"<today>{(today or date.today()).isoformat()}</today>")
+    # First after it on purpose: the facts outrank everything that follows.
     if facts:
         parts.append(facts)
     if portfolio:

@@ -1421,3 +1421,103 @@ def test_leads_setup_refuses_a_bad_password_and_writes_nothing(tmp_path, monkeyp
     assert result.exit_code == 1
     assert "app password" in result.stdout + str(result.stderr), "it says what to fix"
     assert env_path.read_text(encoding="utf-8") == "ANTHROPIC_API_KEY=sk-ant-keep-me\n"
+
+
+# --- what a landlord thought of the answer ------------------------------------------------
+
+
+def test_a_thumbs_down_is_recorded_against_the_question(settings, store):
+    client = _client(settings, store, FakeAdvisor("45 days."))
+    headers = {"X-Browser-Id": "b1"}
+    _ask(client, "t1", "How long do I have to return a deposit?")
+
+    saved = client.post(
+        "/api/feedback",
+        json={"session_id": "t1", "rating": "down", "note": "It never mentions the interest"},
+        headers=headers,
+    )
+    assert saved.json() == {"saved": True}
+
+    from markai.web.history import History
+
+    store_ = History(settings.data_dir / "conversations.db")
+    rows = store_.ratings()
+    store_.close()
+    assert rows[0]["rating"] == "down"
+    assert rows[0]["question"] == "How long do I have to return a deposit?"
+    assert rows[0]["note"] == "It never mentions the interest"
+
+
+def test_a_rating_on_a_thread_that_is_not_theirs_saves_nothing(settings, store):
+    client = _client(settings, store, FakeAdvisor())
+    _ask(client, "t1", "Mine", browser="b1")
+    other = client.post(
+        "/api/feedback",
+        json={"session_id": "t1", "rating": "down"},
+        headers={"X-Browser-Id": "b2"},
+    )
+    assert other.json() == {"saved": False}
+
+
+def test_a_rating_that_is_not_a_thumb_is_refused(settings, store):
+    client = _client(settings, store, FakeAdvisor())
+    _ask(client, "t1", "A question")
+    assert client.post(
+        "/api/feedback",
+        json={"session_id": "t1", "rating": "sideways"},
+        headers={"X-Browser-Id": "b1"},
+    ).json() == {"saved": False}
+
+
+def test_mark_feedback_lists_what_they_said(tmp_path, monkeypatch):
+    from markai.web.history import History
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True)
+    history = History(data_dir / "conversations.db")
+    history.record("account:a1", "t1", "How long for a deposit?", "45 days.")
+    history.rate("account:a1", "t1", "down", "It never mentions the interest")
+    history.close()
+
+    manifest = tmp_path / "sources.yaml"
+    manifest.write_text("websites: []\n", encoding="utf-8")
+    monkeypatch.setenv("MARKAI_SOURCES_FILE", str(manifest))
+    monkeypatch.setenv("MARKAI_DATA_DIR", str(data_dir))
+
+    result = runner.invoke(app, ["feedback"])
+    assert result.exit_code == 0
+    assert "0 up · 1 down" in result.stdout
+    assert "How long for a deposit" in result.stdout
+    assert "mentions the interest" in result.stdout
+
+
+def test_the_page_shows_the_reasoning_the_stop_and_the_thumbs():
+    from pathlib import Path
+
+    page = Path("markai/web/static/index.html").read_text(encoding="utf-8")
+    assert '"thinking"' in page, "the reasoning is streamed while Jay works"
+    assert "foldReasoning" in page, "and folds away once the answer starts"
+    assert 'id="stop"' in page and "AbortController" in page
+    assert "/api/feedback" in page
+    assert 'el("div", "related")' in page
+    assert ".innerHTML" not in page
+
+
+def test_the_corpus_is_loaded_before_anyone_asks(settings, store, caplog):
+    """The first question is the worst moment to pay for building the BM25 index."""
+    import time
+
+    settings = settings.model_copy(update={"anthropic_api_key": "sk-ant-test"})
+    manifest = settings.data_dir / "sources.yaml"
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text("websites: []\n", encoding="utf-8")
+    settings = settings.model_copy(update={"sources_file": manifest})
+
+    with caplog.at_level("INFO"):
+        with TestClient(create_app(settings, store=store)) as client:
+            assert client.get("/api/health").json() == {"status": "ok"}
+            for _ in range(50):
+                if "warm:" in caplog.text:
+                    break
+                time.sleep(0.05)
+    assert "warm:" in caplog.text, "the warm-up ran on startup, not on the first question"

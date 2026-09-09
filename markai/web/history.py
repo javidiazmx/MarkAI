@@ -43,7 +43,20 @@ CREATE TABLE IF NOT EXISTS threads (
     messages    TEXT NOT NULL DEFAULT '[]'
 );
 CREATE INDEX IF NOT EXISTS threads_by_owner ON threads(owner_id, updated_at DESC);
+CREATE TABLE IF NOT EXISTS ratings (
+    owner_id   TEXT NOT NULL,
+    thread_id  TEXT NOT NULL,
+    turn       INTEGER NOT NULL,
+    rating     TEXT NOT NULL,
+    note       TEXT NOT NULL DEFAULT '',
+    question   TEXT NOT NULL DEFAULT '',
+    created_at REAL NOT NULL,
+    PRIMARY KEY (owner_id, thread_id, turn)
+);
+CREATE INDEX IF NOT EXISTS ratings_by_time ON ratings(created_at DESC);
 """
+
+MAX_NOTE_CHARS = 500
 
 _FILLER = re.compile(
     r"^(hola|hi|hey|hello|oye|por favor|please|quiero saber|i want to know|"
@@ -159,6 +172,77 @@ class History:
         except sqlite3.Error as exc:
             # A conversation that cannot be filed is not a reason to lose the answer.
             logger.warning("could not save conversation %s: %s", thread_id, exc)
+
+    def rate(
+        self,
+        owner_id: str,
+        thread_id: str,
+        rating: str,
+        note: str = "",
+        turn: int | None = None,
+    ) -> bool:
+        """Record what a landlord thought of the last answer in a thread.
+
+        A thumbs down is the most valuable thing this product collects: it names a question
+        the sources answered badly, which is a content decision the owner can act on. The
+        question is copied in beside it so `mark feedback` reads as a list of problems
+        rather than a list of thread ids.
+        """
+        if rating not in ("up", "down") or not owner_id or not thread_id:
+            return False
+        thread = self.get(owner_id, thread_id)
+        if thread is None:
+            return False
+        asked = [m.get("content", "") for m in thread.messages if m.get("role") == "user"]
+        index = thread.turns if turn is None else max(1, int(turn))
+        try:
+            with self._lock, self._conn:
+                self._conn.execute(
+                    "INSERT OR REPLACE INTO ratings (owner_id, thread_id, turn, rating, note,"
+                    " question, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        owner_id,
+                        thread_id,
+                        index,
+                        rating,
+                        (note or "").strip()[:MAX_NOTE_CHARS],
+                        asked[-1] if asked else "",
+                        time.time(),
+                    ),
+                )
+        except sqlite3.Error as exc:
+            logger.warning("could not save that rating: %s", exc)
+            return False
+        return True
+
+    def ratings(self, limit: int = 50, only: str = "") -> list[dict]:
+        """Every rating, newest first. ``only`` narrows it to "up" or "down"."""
+        clause = " WHERE rating = ?" if only in ("up", "down") else ""
+        params: tuple = (only, limit) if clause else (limit,)
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT rating, note, question, created_at FROM ratings"
+                + clause
+                + " ORDER BY created_at DESC LIMIT ?",
+                params,
+            ).fetchall()
+        return [
+            {
+                "rating": r["rating"],
+                "note": r["note"],
+                "question": r["question"],
+                "created_at": float(r["created_at"]),
+            }
+            for r in rows
+        ]
+
+    def rating_counts(self) -> dict[str, int]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT rating, COUNT(*) AS n FROM ratings GROUP BY rating"
+            ).fetchall()
+        counts = {row["rating"]: int(row["n"]) for row in rows}
+        return {"up": counts.get("up", 0), "down": counts.get("down", 0)}
 
     def _prune(self, owner_id: str) -> None:
         self._conn.execute(

@@ -64,6 +64,11 @@ The owner runs this on Windows. Commands you hand over go in `cmd` form, or thro
   `browser:<id>` when not. Nothing stores anything against a bare browser id.
 - **Never log an email, a phone, or a question.** `accounts.py` logs a signup id prefix and
   nothing else, and `crm.py` records an error class, never the payload it failed to send.
+- **Thinking is streamed with `display: "summarized"`.** The Opus 5 default is `omitted`,
+  which the page renders as a blank bubble for several seconds. Never drop the display.
+- **Effort is per question** (`effort_for` in `mark.py`), top-level rather than the
+  per-message beta: a mid-conversation change costs one small message-cache rewrite, which
+  beats a beta parameter that would 400 every request if its shape is ever wrong.
 - **The lead form has no password on purpose.** Identity is the device, through an HttpOnly
   cookie. One device never inherits another's conversations, because nothing here proves
   who anyone is.

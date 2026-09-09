@@ -76,6 +76,35 @@
   }
   .attach { padding: 0 12px; font-size: 18px; line-height: 1; }
   .dots { color: var(--muted); letter-spacing: 2px; animation: pulse 1.2s ease-in-out infinite; }
+  /* What Jay is working through, while he is working through it. Muted and smaller than
+     the answer, because it is not the answer. */
+  .reasoning {
+    color: var(--muted); font-size: 13.5px; line-height: 1.5; font-style: italic;
+    border-left: 2px solid var(--line); padding-left: 10px; margin-bottom: 10px;
+  }
+  .thought { margin-bottom: 8px; }
+  .thought summary {
+    color: var(--muted); font-size: 12.5px; cursor: pointer; list-style: none;
+  }
+  .thought summary::-webkit-details-marker { display: none; }
+  .thought summary::before { content: "▸ "; }
+  .thought[open] summary::before { content: "▾ "; }
+  .thought .reasoning { margin: 8px 0 0; font-style: normal; }
+  .acts { display: flex; gap: 4px; align-items: center; margin-top: 6px; }
+  .acts button {
+    background: none; border: 1px solid transparent; color: var(--muted); cursor: pointer;
+    font: inherit; font-size: 12px; padding: 3px 8px; border-radius: 7px;
+  }
+  .acts button:hover { border-color: var(--line); color: var(--ink); }
+  .acts button.on { border-color: var(--accent); color: var(--accent); }
+  .acts .said { color: var(--muted); font-size: 12px; }
+  .related { margin-top: 10px; display: grid; gap: 6px; }
+  .related a {
+    display: block; padding: 8px 10px; border: 1px solid var(--line); border-radius: 9px;
+    color: inherit; text-decoration: none; font-size: 13px; line-height: 1.4;
+  }
+  .related a:hover { border-color: var(--accent); }
+  .related .where { color: var(--muted); font-size: 12px; }
   @keyframes pulse { 0%, 100% { opacity: .25; } 50% { opacity: .9; } }
   @media (prefers-reduced-motion: reduce) { .dots { animation: none; opacity: .5; } }
   .cites { margin-top: 8px; font-size: 13px; }
@@ -341,6 +370,7 @@
     <button class="ghost attach" id="attach" type="button" title="Attach photos or a PDF">📎</button>
     <textarea id="q" placeholder="Ask about screening, deposits, leases, a deal you're looking at…"></textarea>
     <button id="send" type="button">Ask</button>
+    <button class="ghost" id="stop" type="button" hidden>Stop</button>
     <button class="ghost" id="reset" type="button">New</button>
   </div>
 </footer>
@@ -352,6 +382,7 @@
   var box = document.getElementById("q");
   var sendBtn = document.getElementById("send");
   var resetBtn = document.getElementById("reset");
+  var stopBtn = document.getElementById("stop");
   var gate = document.getElementById("gate");
   var codeInput = document.getElementById("code");
   var busy = false;
@@ -490,6 +521,71 @@
       last = match.index + href.length;
     }
     if (last < text.length) parent.appendChild(document.createTextNode(text.slice(last)));
+  }
+
+  // Everything under an answer once it has landed: copy it, say whether it helped, and
+  // hear Mark say it himself.
+  function addActions(slot, data) {
+    var row = el("div", "acts");
+    var copy = el("button", null, "Copy");
+    copy.type = "button";
+    copy.addEventListener("click", function () {
+      var text = slot.bubble.textContent || "";
+      function done(ok) { copy.textContent = ok ? "Copied" : "Select and copy"; }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function () { done(true); },
+                                                 function () { done(false); });
+        return;
+      }
+      done(false);
+    });
+    row.appendChild(copy);
+
+    var said = el("span", "said", "");
+    function rate(value, button, other) {
+      return async function () {
+        button.classList.add("on");
+        other.classList.remove("on");
+        said.textContent = value === "up" ? "Thanks." : "Noted. Mark reads these.";
+        try {
+          await fetch("/api/feedback", {
+            method: "POST",
+            headers: headers(),
+            body: JSON.stringify({ session_id: sessionId, rating: value })
+          });
+        } catch (error) { /* a rating is never worth an error in their face */ }
+      };
+    }
+    var up = el("button", null, "👍");
+    var down = el("button", null, "👎");
+    up.type = down.type = "button";
+    up.title = "This helped";
+    down.title = "This missed";
+    up.addEventListener("click", rate("up", up, down));
+    down.addEventListener("click", rate("down", down, up));
+    row.appendChild(up);
+    row.appendChild(down);
+    row.appendChild(said);
+    slot.wrap.appendChild(row);
+
+    var related = (data && data.related) || [];
+    if (!related.length) return;
+    var box = el("div", "related");
+    related.forEach(function (item) {
+      if (!/^https?:\/\//i.test(item.url || "")) return;
+      var link = el("a", null, "");
+      link.href = item.url;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.appendChild(document.createTextNode(item.title || "Listen to this"));
+      var bits = [];
+      if (item.number) bits.push("Ep. " + item.number);
+      if (item.timestamp) bits.push("at " + item.timestamp);
+      bits.push(item.kind === "youtube" ? "video" : "podcast");
+      link.appendChild(el("div", "where", "Mark on this · " + bits.join(" · ")));
+      box.appendChild(link);
+    });
+    if (box.childNodes.length) slot.wrap.appendChild(box);
   }
 
   function addMessage(who, label) {
@@ -678,6 +774,8 @@
     }
   });
 
+  var inFlight = null;  // the AbortController for the answer being streamed
+
   async function send() {
     var question = box.value.trim();
     if ((!question && !pending.length) || busy) return;
@@ -701,16 +799,35 @@
       mine.wrap.appendChild(el("div", "meta", "📎 " + names));
     }
     var slot = addMessage("mark", "Jay");
-    // Opus 5 thinks before it writes, so without this the bubble sits blank for seconds
-    // and the page looks broken - which is exactly how it looked.
-    slot.bubble.appendChild(el("span", "dots", "●●●"));
+    // Opus 5 thinks before it writes. The reasoning is streamed into this line while it
+    // does, so the wait shows work instead of a blank bubble.
+    var reasoning = el("div", "reasoning", "");
+    reasoning.appendChild(el("span", "dots", "●●●"));
+    slot.wrap.insertBefore(reasoning, slot.bubble);
+    var thought = "";
     var streamed = "";
     var citations = [];
+    var startedAt = Date.now();
+    stopBtn.hidden = false;
 
+    // Once the answer starts, the reasoning folds away into something they can open.
+    function foldReasoning() {
+      if (!reasoning || !reasoning.parentNode) return;
+      var seconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
+      var box2 = el("details", "thought");
+      var head = el("summary", null, "Thought for " + seconds + "s");
+      box2.appendChild(head);
+      if (thought) box2.appendChild(el("div", "reasoning", thought));
+      slot.wrap.replaceChild(box2, reasoning);
+      reasoning = null;
+    }
+
+    inFlight = new AbortController();
     try {
       var response = await fetch("/api/chat", {
         method: "POST",
         headers: headers(),
+        signal: inFlight.signal,
         body: JSON.stringify({
           session_id: sessionId, message: question, attachments: files
         })
@@ -741,17 +858,29 @@
         if (step.done) break;
         buffer += decoder.decode(step.value, { stream: true });
         buffer = parseSse(buffer, function (name, data) {
-          if (name === "text") {
+          if (name === "thinking") {
+            thought += data.text;
+            if (reasoning) {
+              // The tail of it: a wall of reasoning above the answer is its own problem.
+              reasoning.textContent = thought.length > 260
+                ? "…" + thought.slice(-260)
+                : thought;
+              window.scrollTo(0, document.body.scrollHeight);
+            }
+          } else if (name === "text") {
+            foldReasoning();
             streamed += data.text;
-            slot.bubble.textContent = streamed;  // clears the waiting dots
+            slot.bubble.textContent = streamed;
             window.scrollTo(0, document.body.scrollHeight);
           } else if (name === "tool") {
-            slot.bubble.textContent = streamed + "\n[running " + data.name + "…]";
+            if (reasoning) reasoning.textContent = "Working out the numbers…";
           } else if (name === "citations") {
             citations = data.citations || [];
           } else if (name === "done") {
+            foldReasoning();
             renderAnswer(slot.bubble, data.text || streamed, citations);
             renderCitations(slot.wrap, citations);
+            addActions(slot, data);
             var usage = data.usage || {};
             var meta = el("div", "meta",
               (data.model || "") + " · coverage " + (data.coverage || "?") +
@@ -766,15 +895,24 @@
               }
             }
           } else if (name === "error") {
+            foldReasoning();
             slot.bubble.classList.add("err");
             slot.bubble.textContent = data.message;
           }
         });
       }
     } catch (error) {
-      slot.bubble.classList.add("err");
-      slot.bubble.textContent = "Lost the connection: " + error;
+      foldReasoning();
+      if (error && error.name === "AbortError") {
+        slot.bubble.textContent = streamed || "Stopped.";
+      } else {
+        slot.bubble.classList.add("err");
+        slot.bubble.textContent = "Lost the connection: " + error;
+      }
     } finally {
+      foldReasoning();
+      inFlight = null;
+      stopBtn.hidden = true;
       busy = false;
       sendBtn.disabled = false;
       window.scrollTo(0, document.body.scrollHeight);
@@ -926,6 +1064,12 @@
     slot.bubble.classList.add("err");
     slot.bubble.textContent = text;
   }
+
+  // Stopping is theirs to do: an answer going the wrong way should not have to be read
+  // to the end, and the tokens after the click are not spent on the page's behalf.
+  stopBtn.addEventListener("click", function () {
+    if (inFlight) inFlight.abort();
+  });
 
   sendBtn.addEventListener("click", send);
   box.addEventListener("keydown", function (event) {

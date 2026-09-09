@@ -1380,6 +1380,53 @@ def facts_probe(
 
 
 @app.command()
+def feedback(
+    limit: int = typer.Option(30, "-n", "--limit", help="How many to show."),
+    only: str = typer.Option("", "--only", help="down or up. Down is the list worth reading."),
+) -> None:
+    """What landlords thought of Jay's answers on the page.
+
+    A thumbs down names a question the sources answered badly, which is a content decision:
+    a blog post to write, an episode to point at, a rule to add to facts.yaml.
+    """
+    from datetime import UTC, datetime
+
+    from markai.web.history import History
+
+    settings = _settings()
+    path = settings.data_dir / "conversations.db"
+    if not path.exists():
+        console.print("[yellow]No conversations yet, so nothing has been rated.[/yellow]")
+        return
+    store = History(path)
+    counts = store.rating_counts()
+    rows = store.ratings(limit=limit, only=only.strip().lower())
+    store.close()
+
+    console.print(f"[dim]{counts['up']} up · {counts['down']} down[/dim]")
+    if not rows:
+        console.print("[yellow]Nothing rated yet.[/yellow]")
+        return
+    table = Table(show_header=True, header_style="bold", title="What landlords said")
+    table.add_column("When")
+    table.add_column("")
+    table.add_column("Question", overflow="fold")
+    table.add_column("What they said", overflow="fold")
+    for row in rows:
+        table.add_row(
+            datetime.fromtimestamp(row["created_at"], UTC).strftime("%Y-%m-%d"),
+            "[green]up[/green]" if row["rating"] == "up" else "[red]down[/red]",
+            escape(row["question"][:70]),
+            escape(row["note"][:70]),
+        )
+    console.print(table)
+    if counts["down"]:
+        console.print(
+            "[dim]`mark gaps` is the other half: questions the sources never covered.[/dim]"
+        )
+
+
+@app.command()
 def episodes(
     query: str = typer.Argument("", help="A topic to look for. Omit to list the catalog."),
     guest: str = typer.Option("", "--guest", help="Only episodes whose title names this person."),

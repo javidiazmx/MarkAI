@@ -84,6 +84,7 @@ Then:
 | `mark audit` | Checks the knowledge base is usable: silent sources, duplicated text, missing embeddings, and whether real questions find anything. Calls Claude never |
 | `mark embed` | Adds semantic search to material already ingested, no re-download |
 | `mark gaps` | Questions Mark could not answer, so you know what to add |
+| `mark feedback` | What landlords thought of the answers. A thumbs down is a content decision |
 | `mark search "deposits"` | Searches the knowledge base directly, without calling Claude |
 | `mark search --scores` | Same, showing the keyword and semantic scores behind the coverage verdict |
 | `mark episodes "boilers"` | Which episodes cover a topic: number, guest, topics, and a link that lands on the minute |
@@ -330,6 +331,29 @@ reads, question after question, means the TTL is shorter than the gaps between q
   roll.
 - All of these sit under `data/`, which is excluded from version control, and all of them
   are worth knowing about before this page goes in front of anyone but you.
+
+## How an answer feels
+
+Three things decide whether Jay reads as a person thinking or a machine stalling, and all
+three are settings on one request:
+
+- **The reasoning is streamed.** Opus 5 thinks before it writes, and the API's default
+  (`display: "omitted"`) means a blank bubble for as long as that takes. With
+  `display: "summarized"` the page shows the reasoning as it happens and folds it into
+  "Thought for 4s" once the answer starts. It costs nothing: thinking is billed either way.
+- **Effort is routed per question.** "How long do I have to return a deposit" is a lookup
+  the sources answer outright, and it runs at `low`: faster to the first word and cheaper.
+  Anything with money in it, a photo to read, or a request that has to be refused carefully
+  runs at `high`. Everything else keeps `MARKAI_EFFORT`. The routing is in `effort_for`,
+  and the test file is the specification.
+- **The corpus is loaded at startup**, not inside the first question. Building the BM25
+  index over every passage takes seconds, and paying that in the first question is the
+  worst possible moment: it is the one where somebody decides whether this works.
+
+Under every answer: copy it, rate it, and the episodes it leaned on with a link that lands
+on the minute. `mark feedback` is where the thumbs go, and a thumbs down is worth more than
+a thumbs up: it names a question the sources answered badly, which is a blog post to write
+or a rule to add to `facts.yaml`.
 
 ## The lead form
 

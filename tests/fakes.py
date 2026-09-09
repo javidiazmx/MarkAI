@@ -10,7 +10,16 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
-from anthropic.types.beta import BetaMessage, BetaTextBlock, BetaToolUseBlock, BetaUsage
+from anthropic.types.beta import (
+    BetaMessage,
+    BetaRawContentBlockDeltaEvent,
+    BetaTextBlock,
+    BetaTextDelta,
+    BetaThinkingBlock,
+    BetaThinkingDelta,
+    BetaToolUseBlock,
+    BetaUsage,
+)
 
 
 def text_message(
@@ -31,6 +40,27 @@ def text_message(
         usage=BetaUsage(
             input_tokens=usage.get("input_tokens", 10), output_tokens=usage.get("output_tokens", 5)
         ),
+    )
+
+
+def thinking_message(
+    thinking: str,
+    text: str,
+    model: str = "claude-opus-5",
+) -> BetaMessage:
+    """An answer that thought first, which is what Opus 5 actually returns."""
+    return BetaMessage(
+        id="msg_thinking",
+        type="message",
+        role="assistant",
+        model=model,
+        content=[
+            BetaThinkingBlock(type="thinking", thinking=thinking, signature="sig"),
+            BetaTextBlock(type="text", text=text),
+        ],
+        stop_reason="end_turn",
+        stop_sequence=None,
+        usage=BetaUsage(input_tokens=10, output_tokens=5),
     )
 
 
@@ -78,6 +108,11 @@ def refusal_message(model: str = "claude-opus-5") -> BetaMessage:
     )
 
 
+def _in_pieces(text: str, size: int = 12):
+    for start in range(0, len(text), size):
+        yield text[start : start + size]
+
+
 class FakeStream:
     """Context manager mirroring ``client.beta.messages.stream(...)``."""
 
@@ -90,12 +125,34 @@ class FakeStream:
     def __exit__(self, *exc_info: object) -> bool:
         return False
 
+    def __iter__(self):
+        """Raw delta events, thinking first, the way the real stream arrives.
+
+        Real SDK event types on purpose: the advisor reads `.delta.type` off these, and a
+        wrong field name has to fail here rather than in front of a landlord.
+        """
+        for index, block in enumerate(self._final.content):
+            kind = getattr(block, "type", None)
+            if kind == "thinking" and block.thinking:
+                for piece in _in_pieces(block.thinking):
+                    yield BetaRawContentBlockDeltaEvent(
+                        type="content_block_delta",
+                        index=index,
+                        delta=BetaThinkingDelta(type="thinking_delta", thinking=piece),
+                    )
+            elif kind == "text" and block.text:
+                for piece in _in_pieces(block.text):
+                    yield BetaRawContentBlockDeltaEvent(
+                        type="content_block_delta",
+                        index=index,
+                        delta=BetaTextDelta(type="text_delta", text=piece),
+                    )
+
     @property
     def text_stream(self):
         for block in self._final.content:
             if getattr(block, "type", None) == "text" and block.text:
-                for i in range(0, len(block.text), 12):
-                    yield block.text[i : i + 12]
+                yield from _in_pieces(block.text)
 
     def get_final_message(self) -> BetaMessage:
         return self._final

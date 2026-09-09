@@ -12,6 +12,7 @@ import logging
 import threading
 from collections import OrderedDict
 from collections.abc import Callable, Iterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -54,6 +55,14 @@ class SignupRequest(BaseModel):
     email: str = Field(default="", max_length=400)
     phone: str = Field(default="", max_length=60)
     neighborhood: str = Field(default="", max_length=200)
+
+
+class FeedbackRequest(BaseModel):
+    """What a landlord thought of the last answer in a thread."""
+
+    session_id: str = Field(default="default", max_length=128)
+    rating: str = Field(default="", max_length=8)
+    note: str = Field(default="", max_length=1000)
 
 
 class PropertyRequest(BaseModel):
@@ -123,7 +132,19 @@ def create_app(
     from markai.config import get_settings
 
     settings = settings or get_settings()
-    app = FastAPI(title="Mark", docs_url=None, redoc_url=None)
+
+    # Filled in below, once the loaders it needs exist. Lifespan has to be handed to the
+    # constructor, and the constructor comes first.
+    warm: dict[str, Any] = {}
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        start = warm.get("start")
+        if start:
+            start()
+        yield
+
+    app = FastAPI(title="Mark", docs_url=None, redoc_url=None, lifespan=lifespan)
 
     state: dict[str, Any] = {
         "advisor": advisor,
@@ -241,6 +262,31 @@ def create_app(
             facts=load_facts(facts_path(settings.sources_file)),
         )
         return state["advisor"]
+
+    def warm_up() -> None:
+        """Load the corpus before anyone asks, not during their first question.
+
+        Building the BM25 index over every passage and normalising the embedding matrix
+        takes seconds on a real knowledge base, and paying that inside the first question
+        is the worst possible moment: it is the one where somebody is deciding whether this
+        thing works. On a background thread so the server still answers immediately, and
+        failures are logged and left alone: the lazy path still runs, so a warm-up problem
+        delays an answer rather than preventing one.
+        """
+        if advisor is not None:  # a test injected one; there is nothing to load
+            return
+
+        def load() -> None:
+            try:
+                get_retriever()
+                get_advisor()
+                logger.info("warm: the knowledge base is loaded and the advisor is built")
+            except Exception as exc:  # missing key, empty store: the first ask will say so
+                logger.info("warm-up skipped: %s", exc)
+
+        threading.Thread(target=load, name="markai-warmup", daemon=True).start()
+
+    warm["start"] = warm_up
 
     # -- routes -------------------------------------------------------------------------
 
@@ -443,6 +489,16 @@ def create_app(
     ) -> dict[str, Any]:
         return {"deleted": get_portfolio().delete(owner, property_id)}
 
+    @app.post("/api/feedback")
+    def feedback(
+        payload: FeedbackRequest,
+        owner: str = Depends(owner_of),
+        _: None = Depends(require_access),
+    ) -> dict[str, Any]:
+        """A thumb on the last answer. A down is a content gap the owner can act on."""
+        saved = get_history().rate(owner, payload.session_id, payload.rating, payload.note)
+        return {"saved": saved}
+
     @app.post("/api/handoff")
     def handoff(
         payload: ResetRequest,
@@ -584,6 +640,8 @@ def _events(
         for event in advisor.stream(message, conversation, attachments, portfolio, neighborhood):
             if event.type == "text":
                 yield {"event": "text", "data": json.dumps({"text": event.text})}
+            elif event.type == "thinking":
+                yield {"event": "thinking", "data": json.dumps({"text": event.text})}
             elif event.type == "tool_call":
                 yield {"event": "tool", "data": json.dumps({"name": event.text})}
             elif event.type == "error":
@@ -608,6 +666,7 @@ def _events(
             "data": json.dumps(
                 {
                     "text": response.text,
+                    "related": response.related,
                     "coverage": response.coverage,
                     "flags": response.flags,
                     "usage": response.usage,

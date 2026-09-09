@@ -241,7 +241,8 @@ def test_a_user_message_without_facts_is_unchanged(store, settings):
 
     retrieval = Retriever(store, None, settings).retrieve("security deposit")
     message = build_user_message("How long?", retrieval, [], [])
-    assert message.startswith("<knowledge_base")
+    assert message.startswith("<today>"), "the date rides along with every question"
+    assert "<knowledge_base" in message
     assert "authoritative_facts" not in message
 
 
@@ -272,3 +273,18 @@ def test_an_empty_fact_book_adds_nothing_to_the_request(settings, store):
     sent = client.calls[0]["messages"][-1]["content"]
     text = sent if isinstance(sent, str) else sent[-1]["text"]
     assert "authoritative_facts" not in text
+
+
+def test_the_date_is_in_the_turn_and_never_in_the_system_prompt(store, settings):
+    """A date in the system prompt would move the cached prefix every midnight."""
+    from pathlib import Path
+
+    from markai.knowledge.retriever import Retriever
+
+    retrieval = Retriever(store, None, settings).retrieve("security deposit")
+    message = build_user_message("Am I in the heat season?", retrieval, [], [], today=TODAY)
+    assert "<today>2026-09-08</today>" in message
+
+    prompt = Path("prompts/mark_system_prompt.md").read_text(encoding="utf-8")
+    assert "<today>" in prompt, "the prompt tells Jay the date arrives with the question"
+    assert "2026" not in prompt, "but never carries a date of its own"

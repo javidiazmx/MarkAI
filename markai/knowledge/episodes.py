@@ -260,6 +260,33 @@ def _moment(retriever: Any, rc: RetrievedChunk) -> EpisodeMoment:
     )
 
 
+def related_from(chunks: list[RetrievedChunk], limit: int = 2) -> list[dict[str, Any]]:
+    """The episodes behind an answer, as the page shows them under it.
+
+    Built from the passages the answer already used, so it costs nothing: no second
+    retrieval, no second call. One entry per episode, best first, and only what a link
+    needs - the topics and the quote belong to a search, not to a footer.
+    """
+    seen: dict[str, dict[str, Any]] = {}
+    for rc in sorted(chunks, key=lambda c: -c.score):
+        doc = rc.document
+        if doc.kind not in AV_KINDS or doc.id in seen:
+            continue
+        url = deep_link(doc, rc.chunk.start_time)
+        if not url:
+            continue
+        seen[doc.id] = {
+            "kind": doc.kind.value,
+            "title": doc.title,
+            "number": doc.episode,
+            "url": url,
+            "timestamp": _timestamp(rc.chunk.start_time),
+        }
+        if len(seen) >= limit:
+            break
+    return list(seen.values())
+
+
 def find_moments(
     retriever: Any,
     query: str,

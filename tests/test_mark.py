@@ -41,7 +41,9 @@ def test_request_shape_matches_the_opus_5_contract(settings, store):
     assert call["model"] == settings.model
     assert call["betas"] == ["server-side-fallback-2026-07-01"]
     assert call["fallbacks"] == "default"
-    assert call["thinking"] == {"type": "adaptive"}
+    # "summarized", not the Opus 5 default of "omitted": the page streams the reasoning,
+    # and omitted would mean a blank screen for as long as Jay thinks.
+    assert call["thinking"] == {"type": "adaptive", "display": "summarized"}
     assert call["output_config"] == {"effort": settings.effort}
     assert call["system"][-1]["cache_control"] == {"type": "ephemeral", "ttl": settings.cache_ttl}
     assert "cache_control" not in call, (

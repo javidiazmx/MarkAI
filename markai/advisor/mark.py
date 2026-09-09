@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, Literal
@@ -49,7 +50,7 @@ from markai.advisor.prompt_builder import (
     strip_unused_markers,
 )
 from markai.config import Settings
-from markai.knowledge.episodes import EPISODE_TOOL, run_episode_tool
+from markai.knowledge.episodes import EPISODE_TOOL, related_from, run_episode_tool
 from markai.knowledge.retriever import Retriever
 from markai.models import AdvisorResponse, RetrievedChunk
 from markai.sources.facts import FactBook
@@ -73,11 +74,71 @@ class MissingApiKeyError(RuntimeError):
     """Raised when no Anthropic API key is configured and no client was injected."""
 
 
+# --- how hard to think about one question ---------------------------------------------
+
+# Words that mean the answer is arithmetic or judgement, not a lookup. "Should I" is
+# deliberately absent: half of all questions are phrased that way and most of them are
+# asking what the process is, not for a decision to be weighed.
+_ANALYSIS = re.compile(
+    r"\b(cash\s*flow|cap\s*rate|cash[- ]on[- ]cash|dscr|noi|roi|mortgage|refinanc|"
+    r"underwrit|analy[sz]e|worth it|pro\s*forma|deal|appreciat|"
+    r"vale la pena|financ|rendimiento|flujo de efectivo)\b",
+    re.IGNORECASE,
+)
+# A price in the question is the other reliable sign that something has to be worked out.
+_MONEY = re.compile(r"[$€]\s?\d|\b\d[\d,.]*\s?(k|mil|million|millones)\b", re.IGNORECASE)
+# A short question with a plain answer: "how long", "when does", "cuanto tiempo tengo".
+# Neither "how do I" nor "como" is here: "how do I evict a tenant" is a process with steps
+# to get in the right order, and that is worth thinking about.
+# The Spanish stems carry no trailing \b on purpose: "cuanto", "cuando" and "cuantos" all
+# continue into a word character, so a boundary there would match none of them.
+_LOOKUP = re.compile(
+    r"^\s*(?:(?:how (?:long|much|many)|when|what|where|who|which|is|are|does|do|can)\b"
+    r"|(?:cu[aá]nt|cu[aá]nd|qu[eé]|d[oó]nd|qui[eé]n|puedo|se puede|hay que|tengo que|"
+    r"es legal))",
+    re.IGNORECASE,
+)
+LOOKUP_MAX_WORDS = 16
+
+
+def effort_for(
+    question: str,
+    retrieval: Any,
+    flags: list[str],
+    has_attachments: bool,
+    settings: Settings,
+) -> str:
+    """Pick the thinking effort for this question.
+
+    The default earns its cost on hard questions and wastes it on "how long do I have to
+    return a deposit", which the sources answer outright. Three cases:
+
+    - **high** for anything that has to be worked out rather than looked up: money,
+      whether a deal is worth doing, a photo to read, or a request that has to be refused
+      carefully.
+    - **low** for a short lookup the knowledge base already covers. Faster to first word
+      and cheaper, and the answer is in the passages either way.
+    - the configured default for everything else, which is most of it.
+    """
+    if (
+        has_attachments
+        or FLAG_HIGH_RISK in flags
+        or _ANALYSIS.search(question)
+        or _MONEY.search(question)
+    ):
+        return "high"
+    covered = getattr(retrieval, "coverage", "") == "covered"
+    short = len(question.split()) <= LOOKUP_MAX_WORDS
+    if covered and short and _LOOKUP.match(question.strip()):
+        return "low"
+    return settings.effort
+
+
 @dataclass
 class StreamEvent:
     """One event from :meth:`MarkAdvisor.stream`."""
 
-    type: Literal["text", "tool_call", "final", "error"]
+    type: Literal["text", "thinking", "tool_call", "final", "error"]
     text: str = ""
     response: AdvisorResponse | None = None
 
@@ -203,6 +264,7 @@ class MarkAdvisor:
             carried,
             facts_block,
             build_portfolio_block(list(portfolio or []), neighborhood),
+            date.today(),
         )
         api_messages: list[Any] = list(conversation.messages) if conversation else []
         if attachments:
@@ -239,6 +301,12 @@ class MarkAdvisor:
         # speed rather than failing it. Kept per-question, so one 429 does not disable it.
         fast = self.settings.fast_mode
 
+        # How hard to think about this one. Top-level rather than the per-message beta: a
+        # change mid-conversation costs one rewrite of the (small) message cache, and that
+        # is a better trade than a beta parameter that would 400 every request if its shape
+        # is ever wrong.
+        effort = effort_for(question, retrieval, flags, bool(attachments), self.settings)
+
         for iteration in range(MAX_TOOL_ITERATIONS):
             cache_messages = reuses_history or iteration > 0
             try:
@@ -248,16 +316,28 @@ class MarkAdvisor:
                     system=self.system_blocks,
                     messages=api_messages,
                     tools=self.tool_definitions,
-                    thinking={"type": "adaptive"},
-                    output_config={"effort": self.settings.effort},
+                    # "summarized" instead of the default "omitted". Opus 5 thinks before
+                    # it writes, and with the reasoning hidden that is a blank screen for
+                    # several seconds. Streamed, the landlord watches Jay work through it,
+                    # which is both the honest picture and the difference between waiting
+                    # and being ignored. It costs nothing: thinking is billed either way.
+                    thinking={"type": "adaptive", "display": "summarized"},
+                    output_config={"effort": effort},
                     betas=[FALLBACK_BETA, FAST_MODE_BETA] if fast else [FALLBACK_BETA],
                     fallbacks="default",
                     **({"speed": "fast"} if fast else {}),
                     **({"cache_control": {"type": "ephemeral"}} if cache_messages else {}),
                 ) as stream:
-                    for delta in stream.text_stream:
-                        if delta:
-                            yield StreamEvent("text", delta)
+                    # Raw events rather than `text_stream`, which drops the thinking.
+                    for event in stream:
+                        if getattr(event, "type", None) != "content_block_delta":
+                            continue
+                        delta = event.delta
+                        kind = getattr(delta, "type", "")
+                        if kind == "text_delta" and delta.text:
+                            yield StreamEvent("text", delta.text)
+                        elif kind == "thinking_delta" and delta.thinking:
+                            yield StreamEvent("thinking", delta.thinking)
                     final = stream.get_final_message()
             except anthropic.AuthenticationError:
                 yield StreamEvent(
@@ -388,6 +468,7 @@ class MarkAdvisor:
                 yield StreamEvent("text", text[len(streamed) :])
 
             citations = build_citations(retrieval, text, carried)
+            related = related_from([*retrieval.chunks, *carried])
             if not self.settings.show_citations:
                 # The prompt already asks for none; this catches the stray one.
                 text = strip_all_markers(text)
@@ -396,6 +477,7 @@ class MarkAdvisor:
             response = AdvisorResponse(
                 text=text,
                 citations=citations,
+                related=related,
                 coverage=retrieval.coverage,
                 flags=flags,
                 usage=usage,
