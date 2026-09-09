@@ -324,6 +324,11 @@ reads, question after question, means the TTL is shorter than the gaps between q
 - Properties a landlord adds in the sidebar go to `data/portfolio.db`, on the same machine
   and under the same owner, and ride along with each of their questions so an answer can be
   about their building. Removing one deletes the row.
+- Their property log - expenses, bills, rent in, maintenance, visits, notes - goes to
+  `data/ledger.db` under the same owner. It is what they told Jay about their own buildings,
+  including amounts and vendors, so it is the most personal thing here after the lead form.
+  It never reaches the log file and never leaves the machine except inside their own
+  questions. Deleting an entry in the sidebar deletes the row.
 - A new lead is queued in `data/leads.db` and POSTed to `MARKAI_CRM_WEBHOOK_URL` if one is
   set. That is the one place any of this leaves the machine on purpose, so whatever you
   point it at is where a landlord's contact details end up.
@@ -362,6 +367,27 @@ Three things make it safe to run over the whole corpus:
 It only reads passages with a number and a binding word in them, because the rest is
 commentary and reading it costs money for nothing. It tells you the estimated cost before
 it starts, and picks up where it left off, so a run you stop is not a run you lose.
+
+## The property log
+
+A landlord's real questions are about their own buildings: did I pay that water bill, when
+was somebody last out for the drain, how much have I put into 2145 this year. None of that
+is in a blog post, so Jay keeps the record with them.
+
+They mention something in passing - "the plumber came out Tuesday, $340" - and Jay writes it
+down and confirms it in one line. Months later they ask about it in plain language and the
+answer comes from what they said, not from a guess. Money is added up in code, never in the
+model's head. Maintenance starts out open, so "what is still outstanding at the Berwyn
+place?" has an answer, and the handoff to a property manager carries the open items with it.
+
+The same log is a panel in the sidebar, under **What's going on**, so nothing is only
+knowable by asking: add an entry by hand, tick one done, delete one. Jay can add, search,
+total and close. Jay cannot delete - a model quietly dropping a landlord's records is not a
+risk worth taking, so that stays a button on their page.
+
+Six kinds cover what people say out loud: expense, bill, rent in, maintenance, visit, note.
+Entries live in `data/ledger.db` under the same owner as their conversations, which means an
+account when they have signed up and the browser before that.
 
 ## How an answer feels
 
@@ -557,7 +583,7 @@ markai/
   web/                FastAPI app and the browser page
 prompts/              Mark's system prompt
 sources/              your manifest and its documentation
-tests/                214 tests, no network required
+tests/                no network required
 ```
 
 ## Development

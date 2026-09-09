@@ -241,6 +241,70 @@ def build_history_block(topics: list[tuple[str, float]], today: date | None = No
     return "\n".join(lines)
 
 
+MAX_LOG_OPEN = 6
+MAX_LOG_RECENT = 8
+
+
+def build_log_block(
+    recent: list[Any],
+    open_items: list[Any],
+    total: int = 0,
+    today: date | None = None,
+) -> str:
+    """The last things that happened at their buildings, and what is still outstanding.
+
+    A standing summary, not the whole log: it rides along with every question, and a
+    landlord with four years of receipts would otherwise pay for all of them on every
+    sentence. It is here so Jay knows there *is* a log and can mention the leak that is
+    still open without being asked; anything older comes back through the tool, which
+    searches on demand.
+
+    Every value is escaped. These are the landlord's own words, but they arrived through a
+    form and a model, and neither of those is a reason to trust text inside a prompt.
+    """
+    if not recent and not open_items:
+        return ""
+    now = today or date.today()
+    shown = {getattr(item, "id", "") for item in open_items[:MAX_LOG_OPEN]}
+    attrs = [f'entries="{max(total, len(recent))}"', f'open="{len(open_items)}"']
+    lines = ["<property_log " + " ".join(attrs) + ">"]
+    for item in open_items[:MAX_LOG_OPEN]:
+        lines.append("<open " + _log_attrs(item, now) + ">")
+        lines.append(escape_text(item.what))
+        lines.append("</open>")
+    for item in recent[:MAX_LOG_RECENT]:
+        if getattr(item, "id", "") in shown:
+            continue  # already up there as an open item
+        lines.append("<entry " + _log_attrs(item, now) + ">")
+        lines.append(escape_text(item.what))
+        lines.append("</entry>")
+    lines.append("</property_log>")
+    return "\n".join(lines)
+
+
+def _log_attrs(item: Any, today: date) -> str:
+    """The attributes of one log line: what sort, when, how much, who, where."""
+    attrs = [f'id="{escape_attr(str(getattr(item, "id", "")), 64)}"']
+    attrs.append(f'kind="{escape_attr(item.kind, 20)}"')
+    if item.happened_on:
+        attrs.append(f'date="{escape_attr(item.happened_on, 12)}"')
+        try:
+            days = (today - date.fromisoformat(item.happened_on)).days
+        except ValueError:
+            days = -1
+        if days > 0:
+            attrs.append(f'days_ago="{days}"')
+    if item.amount:
+        attrs.append(f'amount="{float(item.amount):.2f}"')
+    if item.vendor:
+        attrs.append(f'who="{escape_attr(item.vendor, 80)}"')
+    if getattr(item, "property_label", ""):
+        attrs.append(f'property="{escape_attr(item.property_label, 80)}"')
+    if item.status:
+        attrs.append(f'status="{escape_attr(item.status, 10)}"')
+    return " ".join(attrs)
+
+
 def build_user_message(
     question: str,
     retrieval,  # RetrievalResult (imported lazily to keep this module light)
@@ -251,6 +315,7 @@ def build_user_message(
     portfolio: str = "",
     today: date | None = None,
     history: str = "",
+    log: str = "",
 ) -> str:
     """The complete user turn: the date, the owner's facts, the passages, the question."""
     chunks = _ordered_chunks(list(retrieval.chunks), carried)
@@ -264,6 +329,9 @@ def build_user_message(
         parts.append(facts)
     if portfolio:
         parts.append(portfolio)
+    # Right after the buildings: what is going on at them is part of the same picture.
+    if log:
+        parts.append(log)
     if history:
         parts.append(history)
     parts.append(f'<knowledge_base retrieval_status="{retrieval.coverage}" chunks="{len(chunks)}">')

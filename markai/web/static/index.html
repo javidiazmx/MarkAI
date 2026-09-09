@@ -196,6 +196,28 @@
   }
   #prop-form .pair { display: flex; gap: 6px; }
   #prop-form button { padding: 7px 12px; font-size: 13px; border-radius: 7px; }
+  #log-list { max-height: 32vh; overflow-y: auto; }
+  .logline { display: flex; align-items: flex-start; gap: 4px; padding: 4px 4px 4px 9px; }
+  .logline .what { flex: 1; min-width: 0; font-size: 13px; line-height: 1.4; }
+  .logline .what small { color: var(--muted); display: block; }
+  .logline.open .what { font-weight: 600; }
+  .logline.open .what::before {
+    content: "•"; color: var(--accent); font-weight: 700; margin-right: 5px;
+  }
+  .logline button {
+    background: none; border: 0; color: var(--muted); cursor: pointer; font-size: 12px;
+    padding: 2px 5px;
+  }
+  .logtotal {
+    color: var(--muted); font-size: 12px; padding: 6px 9px 2px; line-height: 1.5;
+  }
+  #log-form { padding: 4px 4px 8px 4px; display: grid; gap: 6px; }
+  #log-form input, #log-form select {
+    width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px;
+    background: var(--bg); color: var(--ink); font: inherit; font-size: 13px;
+  }
+  #log-form .pair { display: flex; gap: 6px; }
+  #log-form button { padding: 7px 12px; font-size: 13px; border-radius: 7px; }
   .side-foot { border-top: 1px solid var(--line); padding: 9px; }
   .side-foot button { width: 100%; padding: 9px 10px; font-size: 13px; border-radius: 8px; }
   #handoff-text {
@@ -275,6 +297,39 @@
       </div>
     </form>
     <div id="props"></div>
+  </div>
+
+  <div class="side-section">
+    <div class="side-head">
+      <h3>What's going on</h3>
+      <button id="add-log" type="button" title="Log something">+ Log</button>
+    </div>
+    <form id="log-form" hidden>
+      <input id="log-what" type="text" maxlength="240"
+             placeholder="What happened? e.g. New boiler, No heat in unit 2" />
+      <div class="pair">
+        <select id="log-kind" title="What sort of thing">
+          <option value="expense">Expense</option>
+          <option value="bill">Bill</option>
+          <option value="income">Rent in</option>
+          <option value="maintenance">Maintenance</option>
+          <option value="visit">Visit</option>
+          <option value="note">Note</option>
+        </select>
+        <input id="log-amount" type="text" maxlength="12" inputmode="decimal" placeholder="$" />
+      </div>
+      <div class="pair">
+        <input id="log-vendor" type="text" maxlength="80" placeholder="Who (optional)" />
+        <input id="log-date" type="date" title="When it happened" />
+      </div>
+      <select id="log-prop" title="Which building"></select>
+      <div class="pair">
+        <button type="submit">Save</button>
+        <button class="ghost" id="log-cancel" type="button">Cancel</button>
+      </div>
+    </form>
+    <div class="logtotal" id="log-total" hidden></div>
+    <div id="log-list"></div>
   </div>
 
   <div class="side-foot">
@@ -712,6 +767,7 @@
     signupCard.hidden = true;
     loadThreads();
     loadProperties();
+    loadLog();
     if (heldQuestion) {
       box.value = heldQuestion;
       heldQuestion = "";
@@ -849,7 +905,12 @@
             slot.bubble.textContent = streamed;
             window.scrollTo(0, document.body.scrollHeight);
           } else if (name === "tool") {
-            if (reasoning) reasoning.textContent = "Working out the numbers…";
+            if (data.name === "property_log") {
+              usedTheLog = true;
+              if (reasoning) reasoning.textContent = "Checking your log…";
+            } else if (reasoning) {
+              reasoning.textContent = "Working out the numbers…";
+            }
           } else if (name === "citations") {
             citations = data.citations || [];
           } else if (name === "done") {
@@ -863,6 +924,9 @@
               " · " + (usage.output_tokens || 0) + " tokens out");
             slot.wrap.appendChild(meta);
             loadThreads();  // the thread and its title exist only once an answer landed
+            // Jay may have written something down while answering, so the panel is
+            // refreshed rather than waiting for a reload to show it.
+            if (usedTheLog) { usedTheLog = false; loadLog(); }
             if (account.required && !account.signed_in) {
               account.free_left = Math.max((account.free_left || 0) - 1, 0);
               if (account.free_left === 0) {
@@ -1232,6 +1296,7 @@
 
   function drawProperties(items) {
     propRow.textContent = "";
+    drawPropPicker(items);
     if (!items.length) {
       propRow.appendChild(el("div", "side-empty",
         "Add a building and Jay answers about that one instead of a generic one."));
@@ -1261,6 +1326,161 @@
       row.appendChild(drop);
       propRow.appendChild(row);
     });
+  }
+
+  // What's going on ------------------------------------------------------------------
+  // Their own record of the buildings: what it cost, who came out, what is still open.
+  // Jay writes to it from the conversation; this is the same log with buttons on it, so
+  // nothing is only knowable by asking.
+  var logRow = document.getElementById("log-list");
+  var logForm = document.getElementById("log-form");
+  var logWhat = document.getElementById("log-what");
+  var logTotal = document.getElementById("log-total");
+  var logProp = document.getElementById("log-prop");
+  var usedTheLog = false;
+
+  function drawPropPicker(items) {
+    var chosen = logProp.value;
+    logProp.textContent = "";
+    var any = el("option", null, items.length ? "Whole portfolio" : "No buildings added yet");
+    any.value = "";
+    logProp.appendChild(any);
+    items.forEach(function (item) {
+      var option = el("option", null, item.label);
+      option.value = item.id;
+      logProp.appendChild(option);
+    });
+    logProp.value = chosen;
+  }
+
+  function clearLogForm() {
+    ["log-what", "log-amount", "log-vendor", "log-date"].forEach(function (id) {
+      document.getElementById(id).value = "";
+    });
+  }
+
+  document.getElementById("add-log").addEventListener("click", function () {
+    logForm.hidden = !logForm.hidden;
+    if (!logForm.hidden) logWhat.focus();
+  });
+
+  document.getElementById("log-cancel").addEventListener("click", function () {
+    logForm.hidden = true;
+    clearLogForm();
+  });
+
+  logForm.addEventListener("submit", async function (event) {
+    event.preventDefault();
+    if (!logWhat.value.trim()) { logWhat.focus(); return; }
+    var fields = {
+      what: logWhat.value,
+      kind: document.getElementById("log-kind").value,
+      amount: document.getElementById("log-amount").value,
+      vendor: document.getElementById("log-vendor").value,
+      date: document.getElementById("log-date").value,
+      property_id: logProp.value
+    };
+    try {
+      var response = await fetch("/api/log", {
+        method: "POST", headers: headers(), body: JSON.stringify(fields)
+      });
+      if (!response.ok) {
+        var detail = "Could not save that.";
+        try { detail = (await response.json()).detail || detail; } catch (e) {}
+        note(detail);
+        return;
+      }
+    } catch (error) {
+      note("Could not save that: " + error);
+      return;
+    }
+    clearLogForm();
+    logForm.hidden = true;
+    loadLog();
+  });
+
+  async function loadLog() {
+    var data;
+    try {
+      var response = await fetch("/api/log", { headers: headers() });
+      if (!response.ok) return;
+      data = await response.json();
+    } catch (error) {
+      return;  // the panel is a convenience, never a reason to break the chat
+    }
+    drawLog(data);
+  }
+
+  function money(value) {
+    return "$" + Math.round(value).toLocaleString();
+  }
+
+  function drawLog(data) {
+    var entries = data.entries || [];
+    var open = data.open || [];
+    var totals = data.totals || {};
+
+    if (totals.out || totals.in) {
+      var bits = [];
+      if (totals.out) bits.push(money(totals.out) + " out");
+      if (totals.in) bits.push(money(totals.in) + " in");
+      logTotal.textContent = bits.join(" · ");
+      logTotal.hidden = false;
+    } else {
+      logTotal.hidden = true;
+    }
+
+    logRow.textContent = "";
+    if (!entries.length) {
+      logRow.appendChild(el("div", "side-empty",
+        "Tell Jay what happened - \u201cthe plumber came out, $340\u201d - and it goes here. " +
+        "Ask about it any time after."));
+      return;
+    }
+    var openIds = {};
+    open.forEach(function (item) { openIds[item.id] = true; });
+    open.concat(entries.filter(function (item) { return !openIds[item.id]; }))
+      .forEach(function (item) { logRow.appendChild(logLine(item)); });
+  }
+
+  function logLine(item) {
+    var row = el("div", "logline" + (item.status === "open" ? " open" : ""));
+    var what = el("div", "what");
+    what.appendChild(document.createTextNode(item.what));
+    var bits = [item.happened_on || "", item.kind];
+    if (item.amount) bits.push(money(item.amount));
+    if (item.vendor) bits.push(item.vendor);
+    if (item.property_label) bits.push(item.property_label);
+    what.appendChild(el("small", null, bits.filter(Boolean).join(" \u00b7 ")));
+    row.appendChild(what);
+
+    if (item.status === "open") {
+      var done = el("button", null, "\u2713");
+      done.type = "button";
+      done.title = "Mark it done";
+      done.addEventListener("click", async function () {
+        try {
+          await fetch("/api/log/" + encodeURIComponent(item.id) + "/done", {
+            method: "POST", headers: headers()
+          });
+        } catch (error) { return; }
+        loadLog();
+      });
+      row.appendChild(done);
+    }
+    var drop = el("button", null, "\u2715");
+    drop.type = "button";
+    drop.title = "Delete";
+    drop.addEventListener("click", async function () {
+      try {
+        await fetch("/api/log/" + encodeURIComponent(item.id), {
+          method: "DELETE", headers: headers()
+        });
+      } catch (error) { return; }
+      loadLog();
+    });
+    row.appendChild(drop);
+    return row;
   }
 
   // Handing it to a person -----------------------------------------------------------
@@ -1347,6 +1567,7 @@
   loadStatus();
   loadThreads();
   loadProperties();
+  loadLog();
   loadAccount();
 })();
 </script>

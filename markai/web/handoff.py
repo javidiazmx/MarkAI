@@ -27,12 +27,16 @@ def _trim(text: str, limit: int) -> str:
     return cut + "..."
 
 
+MAX_OPEN = 6
+
+
 def build_handoff(
     thread: Any | None,
     properties: list[Any] | None = None,
     name: str | None = None,
     url: str | None = None,
     today: date | None = None,
+    open_items: list[Any] | None = None,
 ) -> str:
     """A plain-text case file. Deterministic: the same conversation gives the same notes."""
     who = (name or "").strip() or "a property manager"
@@ -42,6 +46,13 @@ def build_handoff(
         lines.append("")
         lines.append("Property:" if len(properties) == 1 else "Properties:")
         lines.extend(f"- {item.one_line()}" for item in properties)
+
+    if open_items:
+        # The first thing a manager asks is what is already outstanding. It is written
+        # down, so nobody should have to remember it out loud on a phone call.
+        lines.append("")
+        lines.append("Still open:")
+        lines.extend(f"- {item.one_line()}" for item in open_items[:MAX_OPEN])
 
     messages = list(getattr(thread, "messages", None) or [])
     questions = [m.get("content", "") for m in messages if m.get("role") == "user"]
@@ -59,7 +70,7 @@ def build_handoff(
         lines.append("Where it stands:")
         lines.append(_trim(answers[-1], MAX_ANSWER_CHARS))
 
-    if not questions and not answers:
+    if not questions and not answers and not open_items:
         lines.append("")
         lines.append("I have not asked Jay anything yet in this conversation.")
 

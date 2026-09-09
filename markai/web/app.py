@@ -65,6 +65,19 @@ class FeedbackRequest(BaseModel):
     note: str = Field(default="", max_length=1000)
 
 
+class LogRequest(BaseModel):
+    """One thing that happened, as typed into the page. The store owns the rules."""
+
+    id: str = Field(default="", max_length=64)
+    kind: str = Field(default="note", max_length=40)
+    what: str = Field(default="", max_length=1000)
+    amount: str = Field(default="", max_length=20)
+    vendor: str = Field(default="", max_length=200)
+    date: str = Field(default="", max_length=20)
+    status: str = Field(default="", max_length=10)
+    property_id: str = Field(default="", max_length=64)
+
+
 class PropertyRequest(BaseModel):
     """One building as typed into the page. Lengths are trimmed again in the store."""
 
@@ -153,6 +166,7 @@ def create_app(
         "history": None,
         "retriever": None,
         "portfolio": None,
+        "ledger": None,
         "accounts": None,
         "crm": None,
     }
@@ -223,6 +237,22 @@ def create_app(
             settings.ensure_dirs()
             state["portfolio"] = Portfolio(settings.data_dir / "portfolio.db")
         return state["portfolio"]
+
+    def get_ledger() -> Any:
+        if state["ledger"] is None:
+            from markai.web.ledger import Ledger
+
+            settings.ensure_dirs()
+            state["ledger"] = Ledger(settings.data_dir / "ledger.db")
+        return state["ledger"]
+
+    def owner_log(owner: str) -> Any:
+        """The log, bound to one owner and their buildings, or None for a stranger."""
+        if not owner:
+            return None
+        from markai.web.ledger import OwnerLog
+
+        return OwnerLog(get_ledger(), owner, get_portfolio().list(owner))
 
     def get_store() -> Any:
         if state["store"] is None:
@@ -434,6 +464,7 @@ def create_app(
         anonymous = anonymous_owner(browser)
         get_history().reassign(anonymous, saved.owner_id)
         get_portfolio().reassign(anonymous, saved.owner_id)
+        get_ledger().reassign(anonymous, saved.owner_id)
         if not already_a_lead:
             # After the reassign, so the lead can carry what they already asked about.
             _queue_lead(saved)
@@ -459,6 +490,60 @@ def create_app(
             crm.deliver_soon()
         except Exception:  # a CRM problem is never a failed signup
             logger.exception("could not queue the lead")
+
+    @app.get("/api/log")
+    def read_log(
+        property_id: str = "",
+        owner: str = Depends(owner_of),
+        _: None = Depends(require_access),
+    ) -> dict[str, Any]:
+        """Their log for the panel: what happened, what is still open, what it adds up to."""
+        log = get_ledger()
+        labels = {p.id: p.label for p in get_portfolio().list(owner)}
+
+        def rendered(entry: Any) -> dict[str, Any]:
+            data = entry.to_dict()
+            data["property_label"] = labels.get(entry.property_id, "")
+            return data
+
+        return {
+            "entries": [rendered(e) for e in log.list(owner, property_id=property_id, limit=60)],
+            "open": [rendered(e) for e in log.open_items(owner, limit=20)],
+            "totals": log.totals(owner, property_id=property_id),
+            "count": log.count(owner),
+        }
+
+    @app.post("/api/log")
+    def add_log(
+        payload: LogRequest,
+        owner: str = Depends(owner_of),
+        _: None = Depends(require_access),
+    ) -> dict[str, Any]:
+        from markai.web.ledger import LogError
+
+        try:
+            saved = get_ledger().add(owner, payload.model_dump())
+        except LogError as exc:
+            # The message names the field and the limit, so it is useful to show.
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"entry": saved.to_dict()}
+
+    @app.post("/api/log/{entry_id}/done")
+    def close_log(
+        entry_id: str,
+        owner: str = Depends(owner_of),
+        _: None = Depends(require_access),
+    ) -> dict[str, Any]:
+        return {"closed": get_ledger().close(owner, entry_id)}
+
+    @app.delete("/api/log/{entry_id}")
+    def forget_log(
+        entry_id: str,
+        owner: str = Depends(owner_of),
+        _: None = Depends(require_access),
+    ) -> dict[str, Any]:
+        """Deleting is a person's decision, which is why it is here and not a tool."""
+        return {"deleted": get_ledger().delete(owner, entry_id)}
 
     @app.get("/api/properties")
     def properties(
@@ -522,6 +607,7 @@ def create_app(
                 get_portfolio().list(owner),
                 name=name,
                 url=url,
+                open_items=owner_log(owner).open_items() if owner else None,
             ),
             "name": name,
             "url": url,
@@ -611,6 +697,9 @@ def create_app(
                 # What they asked about before, in their own words. Costs nothing: the
                 # titles already exist, and this is what lets Jay say "same Berwyn unit?".
                 get_history().recent_topics(owner, exclude=payload.session_id) if owner else None,
+                # Their own record of the buildings: what it cost, who came out, what is
+                # still open. Jay can add to it and search it while answering.
+                owner_log(owner),
             )
         )
 
@@ -627,6 +716,7 @@ def _events(
     portfolio: list[Any] | None = None,
     neighborhood: str | None = None,
     remembered: list[tuple[str, float]] | None = None,
+    log: Any | None = None,
 ) -> Iterator[dict]:
     from markai.advisor.mark import MissingApiKeyError
 
@@ -642,7 +732,7 @@ def _events(
 
         response = None
         for event in advisor.stream(
-            message, conversation, attachments, portfolio, neighborhood, remembered
+            message, conversation, attachments, portfolio, neighborhood, remembered, log
         ):
             if event.type == "text":
                 yield {"event": "text", "data": json.dumps({"text": event.text})}

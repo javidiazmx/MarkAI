@@ -1698,3 +1698,73 @@ def test_facts_review_refuses_a_price_with_no_number(tmp_path, monkeypatch):
     assert "Nothing matches" in result.stdout, (
         "a $0 to $0 price is a wrong answer, not a missing one"
     )
+
+
+# --- the property log ---------------------------------------------------------------------
+
+
+def test_the_log_is_saved_and_reaches_the_advisor(settings, store):
+    advisor = FakeAdvisor()
+    client = _client(settings, store, advisor)
+    headers = {"X-Browser-Id": "b1"}
+    client.post("/api/properties", json={"label": "2145 W Division"}, headers=headers)
+
+    saved = client.post(
+        "/api/log",
+        json={"kind": "expense", "what": "New boiler", "amount": "$8,000", "vendor": "ABC Heating"},
+        headers=headers,
+    )
+    assert saved.status_code == 200
+    assert saved.json()["entry"]["amount"] == 8000
+
+    read = client.get("/api/log", headers=headers).json()
+    assert [e["what"] for e in read["entries"]] == ["New boiler"]
+    assert read["totals"]["out"] == 8000
+
+    _ask(client, "t1", "Is the boiler under warranty?")
+    assert advisor.log is not None, "Jay can read it back and add to it while answering"
+    assert [e.what for e in advisor.log.recent()] == ["New boiler"]
+
+
+def test_a_log_entry_with_nothing_in_it_is_refused(settings, store):
+    client = _client(settings, store)
+    bad = client.post("/api/log", json={"kind": "expense"}, headers={"X-Browser-Id": "b1"})
+    assert bad.status_code == 400
+    assert "what happened" in bad.json()["detail"]
+
+
+def test_another_browser_sees_no_log(settings, store):
+    client = _client(settings, store)
+    client.post("/api/log", json={"kind": "note", "what": "Mine"}, headers={"X-Browser-Id": "b1"})
+    other = client.get("/api/log", headers={"X-Browser-Id": "b2"}).json()
+    assert other["entries"] == [] and other["count"] == 0
+
+
+def test_an_open_item_can_be_closed_and_deleted(settings, store):
+    client = _client(settings, store)
+    headers = {"X-Browser-Id": "b1"}
+    entry = client.post(
+        "/api/log", json={"kind": "maintenance", "what": "No heat in unit 2"}, headers=headers
+    ).json()["entry"]
+    assert entry["status"] == "open"
+
+    assert client.post(f"/api/log/{entry['id']}/done", headers=headers).json() == {"closed": True}
+    assert client.get("/api/log", headers=headers).json()["open"] == []
+
+    assert client.delete(f"/api/log/{entry['id']}", headers=headers).json() == {"deleted": True}
+    assert client.get("/api/log", headers=headers).json()["entries"] == []
+
+
+def test_the_handoff_carries_what_is_still_open(settings, store):
+    client = _client(settings, store, FakeAdvisor("Call a plumber."))
+    headers = {"X-Browser-Id": "b1"}
+    client.post(
+        "/api/log",
+        json={"kind": "maintenance", "what": "Kitchen stack backing up", "date": "2026-08-01"},
+        headers=headers,
+    )
+    _ask(client, "t1", "The stack is backing up again.")
+
+    notes = client.post("/api/handoff", json={"session_id": "t1"}, headers=headers).json()["text"]
+    assert "Still open:" in notes
+    assert "Kitchen stack backing up" in notes

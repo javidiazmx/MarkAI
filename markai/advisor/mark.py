@@ -40,11 +40,13 @@ from markai.advisor.guardrails import (
     plain_punctuation,
     strip_disclaimer,
 )
+from markai.advisor.log_tool import LOG_TOOL, run_log_tool
 from markai.advisor.prompt_builder import (
     build_business_block,
     build_citations,
     build_facts_block,
     build_history_block,
+    build_log_block,
     build_portfolio_block,
     build_system_blocks,
     build_user_message,
@@ -102,6 +104,15 @@ _LOOKUP = re.compile(
 )
 LOOKUP_MAX_WORDS = 16
 
+# "log the $8,000 boiler, ABC Heating, yesterday" has a dollar sign in it and no thinking
+# to do: it is dictation. Without this it would route to high effort and charge for a
+# paragraph of reasoning to write one row.
+_LOGGING = re.compile(
+    r"^\s*(?:please\s+)?(?:log|note|record|write down|add|remember|apunta|anota|registra|"
+    r"gu[aá]rdame|gu[aá]rda)\b",
+    re.IGNORECASE,
+)
+
 
 def effort_for(
     question: str,
@@ -118,10 +129,13 @@ def effort_for(
     - **high** for anything that has to be worked out rather than looked up: money,
       whether a deal is worth doing, a photo to read, or a request that has to be refused
       carefully.
-    - **low** for a short lookup the knowledge base already covers. Faster to first word
+    - **low** for a short lookup the knowledge base already covers, and for "log the
+      plumber's invoice", which is dictation rather than a question. Faster to first word
       and cheaper, and the answer is in the passages either way.
     - the configured default for everything else, which is most of it.
     """
+    if _LOGGING.match(question.strip()) and not _ANALYSIS.search(question):
+        return "low"
     if (
         has_attachments
         or FLAG_HIGH_RISK in flags
@@ -185,7 +199,7 @@ class MarkAdvisor:
         self.store = store
         # Built once and never rebuilt: tools render before the system blocks, so a list
         # that changed between requests would move the cache prefix and lose the cache.
-        self.tool_definitions = [*TOOL_DEFINITIONS, EPISODE_TOOL]
+        self.tool_definitions = [*TOOL_DEFINITIONS, EPISODE_TOOL, LOG_TOOL]
         # The owner's rules and prices. They ride in the user turn, not the system prompt:
         # they are picked per question and stamped with today's date, and either of those
         # in a system block would move the cached prefix.
@@ -204,6 +218,20 @@ class MarkAdvisor:
             client = anthropic.Anthropic(api_key=key)
         self.client = client
 
+    def _log_block(self, log: Any | None) -> str:
+        """Their open items and last few entries, or nothing when there is no log.
+
+        Read here rather than in the caller so every front door gets it the moment it hands
+        over a log, and so a store that has gone away cannot take the answer with it.
+        """
+        if log is None:
+            return ""
+        try:
+            return build_log_block(log.recent(), log.open_items(), log.count(), date.today())
+        except Exception as exc:  # a log that cannot be read is not a failed answer
+            logger.warning("could not read the property log: %s", type(exc).__name__)
+            return ""
+
     # -- public API ---------------------------------------------------------------------
 
     def ask(
@@ -214,12 +242,13 @@ class MarkAdvisor:
         portfolio: list[Any] | None = None,
         neighborhood: str | None = None,
         remembered: list[tuple[str, float]] | None = None,
+        log: Any | None = None,
     ) -> AdvisorResponse:
         """Answer a question, draining the stream. Errors come back as an AdvisorResponse."""
         response: AdvisorResponse | None = None
         error: str | None = None
         for event in self.stream(
-            question, conversation, attachments, portfolio, neighborhood, remembered
+            question, conversation, attachments, portfolio, neighborhood, remembered, log
         ):
             if event.type == "final":
                 response = event.response
@@ -237,6 +266,7 @@ class MarkAdvisor:
         portfolio: list[Any] | None = None,
         neighborhood: str | None = None,
         remembered: list[tuple[str, float]] | None = None,
+        log: Any | None = None,
     ):
         """Yield text deltas, tool notices, then exactly one ``final`` (or ``error``)."""
         flags = detect_flags(question)
@@ -272,6 +302,7 @@ class MarkAdvisor:
             build_portfolio_block(list(portfolio or []), neighborhood),
             date.today(),
             build_history_block(list(remembered or [])),
+            self._log_block(log),
         )
         api_messages: list[Any] = list(conversation.messages) if conversation else []
         if attachments:
@@ -414,6 +445,8 @@ class MarkAdvisor:
                     try:
                         if name == EPISODE_TOOL["name"]:
                             result = run_episode_tool(self.retriever, dict(block.input or {}))
+                        elif name == LOG_TOOL["name"]:
+                            result = run_log_tool(log, dict(block.input or {}))
                         else:
                             result = dispatch_tool(name, dict(block.input or {}))
                     except Exception as exc:  # the dispatchers are defensive; belt and braces

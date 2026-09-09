@@ -55,6 +55,7 @@ def test_request_shape_matches_the_opus_5_contract(settings, store):
         "analyze_deal",
         "mortgage_payment",
         "find_episode",
+        "property_log",
     ]
     for banned in ("temperature", "top_p", "top_k"):
         assert banned not in call
@@ -461,3 +462,86 @@ def test_a_real_question_the_sources_miss_still_lands_in_the_list(settings, stor
     assert [g["question"] for g in store.list_gaps(10)] == [
         "What are the parking permit rules in Winnetka?"
     ]
+
+
+# --- the property log in the answer path -------------------------------------------------
+
+
+def test_the_log_is_written_to_and_read_back_through_the_tool_loop(settings, store, tmp_path):
+    from markai.web.ledger import Ledger, OwnerLog
+
+    ledger = Ledger(tmp_path / "ledger.db")
+    log = OwnerLog(ledger, "account:abc", [])
+    finals = [
+        tool_use_message(
+            "property_log",
+            {
+                "action": "add",
+                "kind": "bill",
+                "what": "Water bill",
+                "amount": 340,
+                "vendor": "",
+                "date": "2026-09-03",
+                "property": "",
+                "status": "done",
+                "search": "",
+                "since_days": 0,
+                "entry_id": "",
+            },
+        ),
+        text_message("Logged: $340 water bill, Sept 3."),
+    ]
+    advisor, client = build_advisor(settings, store, finals)
+    response = advisor.ask("The water bill was $340 on the 3rd", log=log)
+
+    assert response.tool_calls == ["property_log"]
+    assert [e.what for e in log.recent()] == ["Water bill"]
+    assert log.totals()["out"] == 340
+    ledger.close_db()
+
+
+def test_the_log_rides_along_with_the_next_question(settings, store, tmp_path):
+    from markai.web.ledger import Ledger, OwnerLog
+
+    ledger = Ledger(tmp_path / "ledger.db")
+    log = OwnerLog(ledger, "account:abc", [])
+    log.add({"kind": "maintenance", "what": "No heat in unit 2"})
+
+    advisor, client = build_advisor(settings, store, [text_message("Get the boiler looked at.")])
+    advisor.ask("What should I do about the tenant complaint?", log=log)
+
+    sent = client.calls[0]["messages"][-1]["content"]
+    assert "<property_log" in sent
+    assert "No heat in unit 2" in sent, "Jay knows it is open without being asked"
+    ledger.close_db()
+
+
+def test_a_log_that_cannot_be_read_does_not_lose_the_answer(settings, store):
+    class Broken:
+        def recent(self, limit=8):
+            raise RuntimeError("disk is gone")
+
+        def open_items(self, limit=6):
+            return []
+
+        def count(self):
+            return 0
+
+    advisor, client = build_advisor(settings, store, [text_message("45 days.")])
+    response = advisor.ask("How long for a deposit?", log=Broken())
+    assert response.text.startswith("45 days")
+    assert "<property_log" not in client.calls[0]["messages"][-1]["content"]
+
+
+def test_writing_something_down_is_not_thinking_work(settings, store):
+    from markai.advisor.mark import effort_for
+
+    class Covered:
+        coverage = "covered"
+
+    low = effort_for("Log the $8,000 boiler from ABC Heating", Covered(), [], False, settings)
+    assert low == "low", "a dollar sign in dictation should not buy a paragraph of reasoning"
+    high = effort_for(
+        "Log that and tell me if the deal still cash flows", Covered(), [], False, settings
+    )
+    assert high == "high", "unless they asked for the analysis too"

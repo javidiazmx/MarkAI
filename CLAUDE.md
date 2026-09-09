@@ -13,6 +13,8 @@ episodes, and podcast. If it is not in `sources/sources.yaml`, Mark does not kno
   embeddings fused with reciprocal rank fusion).
 - `markai/advisor/` holds the guardrails, the calculators, prompt assembly, and the Claude call.
 - `markai/cli.py` and `markai/web/` are the two front doors.
+- `markai/web/ledger.py` is the landlord's own record of their buildings; `markai/advisor/log_tool.py`
+  is the only way the model touches it.
 
 ## Commands
 
@@ -76,6 +78,10 @@ The owner runs this on Windows. Commands you hand over go in `cmd` form, or thro
 - **Effort is per question** (`effort_for` in `mark.py`), top-level rather than the
   per-message beta: a mid-conversation change costs one small message-cache rewrite, which
   beats a beta parameter that would 400 every request if its shape is ever wrong.
+- **The property log is theirs, and the tool cannot delete from it.** `log_tool` exposes
+  add, find, total and close - never delete, which stays a button on their page. Money is
+  totalled in `Ledger.totals`, never by the model, and an entry is only ever what they said:
+  nothing mined, inferred, or carried over from another owner.
 - **The lead form has no password on purpose.** Identity is the device, through an HttpOnly
   cookie. One device never inherits another's conversations, because nothing here proves
   who anyone is.
