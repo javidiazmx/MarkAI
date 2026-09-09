@@ -1,49 +1,27 @@
-"""Accounts. The email is the username, and the password is optional on purpose.
+"""Who a landlord is, and how many free questions they have left.
 
-Two questions get answered for free, then a landlord gives a name, an email, a phone and
-the neighborhood their rental is in, and keeps going. That form is the lead. A password is
-offered alongside it and not demanded, because of what each one actually buys:
+Two questions get answered, then the page asks for a name, an email and a phone. That form
+is the lead, and it is the only thing standing between a stranger and the rest of Jay.
 
-- A password does not verify an email. Neither route does, so requiring one does not raise
-  lead quality; it costs conversion at the moment somebody decides.
-- What a password buys is a **second device**. Without one, this device is remembered and
-  the wall does not come back; with one, the account signs in anywhere.
-- Without email delivery there is no reset link, so every forgotten password lands in the
-  owner's inbox. Fewer passwords, fewer of those.
+There is no password, on purpose. A password does not verify an email, so it buys no lead
+quality; what it buys is a second device, and it costs conversion at the exact moment
+somebody decides. So identity here is **the device**: filling the form issues an HttpOnly
+cookie, that device is remembered, and the wall does not come back. A landlord on a second
+device fills the short form again, which takes fifteen seconds and is not worth a password
+and its support burden.
 
-``MARKAI_PASSWORD_REQUIRED=true`` makes it mandatory for anyone who would rather have it
-that way.
+That also settles a question the password version had to be careful about: a device never
+inherits another device's conversations, because nothing here claims to prove who anyone
+is. What one person typed stays where they typed it.
 
-What is deliberate here:
-
-- **Passwords are never stored, only scrypt hashes.** The cost parameters live inside each
-  stored hash, so raising them later leaves existing accounts able to sign in.
-- **The session is an HttpOnly cookie** holding a random token, and only the token's sha256
-  is stored. A stolen database yields no usable session, and no script on the page can read
-  the cookie even if something got injected into it.
-- **Sign-in tells an unknown email and a wrong password apart to nobody.** Same message,
-  and a real hash is computed either way so the timing does not answer the question the
-  message refuses to. Repeated failures for one email are throttled.
-- **Identity is the account, not the browser.** Signed in, a landlord's conversations and
-  properties follow them to another machine; anonymous, they belong to the browser. Both
-  are an *owner id*, which is what the other stores key on.
-- **An email already taken by a passwordless account is refused, not handed over.** It
-  would be one line to issue a session to whoever types that address, and it would mean
-  anyone who knows a landlord's email can read their conversations. So they are told to get
-  a password set instead, which is the same recovery path as forgetting one.
-
-What this still does not do, and what that means: there is no email delivery, so there is
-no verification and no self-service password reset. An address is whatever they typed, and
-a landlord who needs a password set needs the owner to run ``mark accounts
-reset-password``. Anyone building on this should know that before they treat an address
-here as proof of anything.
+The fields are somebody's personal data. They live in ``data/accounts.db`` on the
+operator's own machine, they never reach the log, and the only place they go on purpose is
+the CRM, through the queue in ``crm.py``.
 """
 
 from __future__ import annotations
 
-import base64
 import hashlib
-import hmac
 import logging
 import re
 import secrets
@@ -62,21 +40,7 @@ MAX_PHONE_CHARS = 30
 MAX_NEIGHBORHOOD_CHARS = 80
 MIN_PHONE_DIGITS = 10
 
-MIN_PASSWORD_CHARS = 8
-# Long enough for any passphrase, short enough that nobody can make the server chew on a
-# megabyte of input. scrypt's cost is set by the parameters below, not by the length.
-MAX_PASSWORD_CHARS = 200
-
-# scrypt at n=2**14 is about 40ms and 16MB per hash on ordinary hardware: slow enough to
-# matter to an attacker with the database, fast enough that a sign-in feels instant.
-SCRYPT_N = 2**14
-SCRYPT_R = 8
-SCRYPT_P = 1
-SCRYPT_DKLEN = 32
-
 SESSION_DAYS = 30
-FAILED_ATTEMPTS_BEFORE_THROTTLE = 5
-THROTTLE_SECONDS = 60.0
 
 # Deliberately loose. Whether an address is theirs is not a regex's business; this catches
 # a missing @ and a trailing comma.
@@ -85,15 +49,14 @@ _DIGITS = re.compile(r"\d")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS accounts (
-    id            TEXT PRIMARY KEY,
-    email         TEXT NOT NULL UNIQUE,
-    name          TEXT NOT NULL,
-    phone         TEXT NOT NULL,
-    neighborhood  TEXT NOT NULL,
-    password_hash TEXT NOT NULL DEFAULT '',
-    created_at    REAL NOT NULL,
-    last_login_at REAL
+    id           TEXT PRIMARY KEY,
+    email        TEXT NOT NULL,
+    name         TEXT NOT NULL,
+    phone        TEXT NOT NULL,
+    neighborhood TEXT NOT NULL DEFAULT '',
+    created_at   REAL NOT NULL
 );
+CREATE INDEX IF NOT EXISTS accounts_by_email ON accounts(email);
 CREATE TABLE IF NOT EXISTS sessions (
     token_hash TEXT PRIMARY KEY,
     account_id TEXT NOT NULL,
@@ -112,84 +75,19 @@ class SignupError(ValueError):
     """The form as filled in cannot be used, with a reason worth showing."""
 
 
-class LoginError(ValueError):
-    """Sign-in failed. The message is deliberately the same for every cause."""
-
-
-WRONG_CREDENTIALS = "That email and password do not match an account."
-
-
-# --- passwords ---------------------------------------------------------------------------
-
-
-def hash_password(password: str) -> str:
-    """``scrypt$n$r$p$salt$hash``, so the cost used is remembered with the hash."""
-    salt = secrets.token_bytes(16)
-    digest = hashlib.scrypt(
-        password.encode("utf-8"),
-        salt=salt,
-        n=SCRYPT_N,
-        r=SCRYPT_R,
-        p=SCRYPT_P,
-        dklen=SCRYPT_DKLEN,
-        maxmem=132 * SCRYPT_N * SCRYPT_R,
-    )
-    parts = (
-        "scrypt",
-        SCRYPT_N,
-        SCRYPT_R,
-        SCRYPT_P,
-        base64.b64encode(salt).decode(),
-        base64.b64encode(digest).decode(),
-    )
-    return "$".join(str(part) for part in parts)
-
-
-def verify_password(password: str, stored: str) -> bool:
-    """Check a password against a stored hash. A malformed hash is a failure, not a crash."""
-    try:
-        scheme, n, r, p, salt_b64, hash_b64 = stored.split("$")
-        if scheme != "scrypt":
-            return False
-        salt = base64.b64decode(salt_b64)
-        expected = base64.b64decode(hash_b64)
-        digest = hashlib.scrypt(
-            password.encode("utf-8"),
-            salt=salt,
-            n=int(n),
-            r=int(r),
-            p=int(p),
-            dklen=len(expected),
-            maxmem=132 * int(n) * int(r),
-        )
-    except (ValueError, TypeError, MemoryError):
-        return False
-    return hmac.compare_digest(digest, expected)
-
-
-# A hash of nothing anybody knows, used to spend the same time on an unknown email as on a
-# real one. Built once, because building it is the expensive part.
-_DUMMY_HASH = hash_password(secrets.token_urlsafe(32))
-
-
-# --- shapes ------------------------------------------------------------------------------
-
-
 @dataclass
 class Account:
-    """One landlord's account. The password never leaves the store."""
+    """One landlord's contact details, as they typed them."""
 
     id: str
     email: str
     name: str
     phone: str
-    neighborhood: str
-    # Whether they set one. The page uses this to offer adding one later.
-    has_password: bool = False
+    neighborhood: str = ""
 
     @property
     def owner_id(self) -> str:
-        """What the conversation and property stores key on while this account is signed in."""
+        """What the conversation and property stores key on for this device."""
         return f"account:{self.id}"
 
     def to_dict(self) -> dict[str, Any]:
@@ -198,16 +96,12 @@ class Account:
             "name": self.name,
             "phone": self.phone,
             "neighborhood": self.neighborhood,
-            "has_password": self.has_password,
         }
 
 
 def anonymous_owner(browser_id: str) -> str:
-    """The owner id for someone who has not signed in."""
+    """The owner id for someone who has not filled the form yet."""
     return f"browser:{browser_id}" if browser_id else ""
-
-
-# --- validation --------------------------------------------------------------------------
 
 
 def _clean(value: Any, limit: int) -> str:
@@ -216,33 +110,12 @@ def _clean(value: Any, limit: int) -> str:
 
 
 def normalize_email(value: Any) -> str:
-    """Lowercased and trimmed, because a username people type has to match every time."""
+    """Lowercased and trimmed, so the same address is the same address."""
     return _clean(value, MAX_EMAIL_CHARS).lower()
 
 
-def check_password(password: Any, email: str = "", required: bool = True) -> str:
-    """Validate a new password. Length is the rule that matters; the rest is a trap.
-
-    Returns "" when none was given and none is required, which is what a lead-only signup
-    looks like: the account exists, this device is remembered, and there is nothing to
-    sign in with anywhere else.
-    """
-    raw = str(password or "")
-    if not raw and not required:
-        return ""
-    if "\n" in raw or "\r" in raw:
-        raise SignupError("A password cannot contain a line break.")
-    if len(raw) < MIN_PASSWORD_CHARS:
-        raise SignupError(f"Use at least {MIN_PASSWORD_CHARS} characters for the password.")
-    if len(raw) > MAX_PASSWORD_CHARS:
-        raise SignupError(f"That password is longer than {MAX_PASSWORD_CHARS} characters.")
-    if email and raw.strip().lower() == email:
-        raise SignupError("The password cannot be your email address.")
-    return raw
-
-
-def parse(raw: dict[str, Any], password_required: bool = False) -> tuple[Account, str]:
-    """Validate the signup form. Returns the account and the password, which may be ""."""
+def parse(raw: dict[str, Any]) -> Account:
+    """Validate the form. Every message names its field, so it can be shown as it is."""
     name = _clean(raw.get("name"), MAX_NAME_CHARS)
     if len(name) < 2:
         raise SignupError("Tell us your name.")
@@ -252,27 +125,17 @@ def parse(raw: dict[str, Any], password_required: bool = False) -> tuple[Account
     phone = _clean(raw.get("phone"), MAX_PHONE_CHARS)
     if len(_DIGITS.findall(phone)) < MIN_PHONE_DIGITS:
         raise SignupError("A phone number with the area code, please.")
-    neighborhood = _clean(raw.get("neighborhood"), MAX_NEIGHBORHOOD_CHARS)
-    if len(neighborhood) < 2:
-        raise SignupError("Which neighborhood is your rental in?")
-    password = check_password(raw.get("password"), email, required=password_required)
-    return (
-        Account(
-            id=secrets.token_hex(16),
-            email=email,
-            name=name,
-            phone=phone,
-            neighborhood=neighborhood,
-        ),
-        password,
+    return Account(
+        id=secrets.token_hex(16),
+        email=email,
+        name=name,
+        phone=phone,
+        neighborhood=_clean(raw.get("neighborhood"), MAX_NEIGHBORHOOD_CHARS),
     )
 
 
-# --- the store ---------------------------------------------------------------------------
-
-
 class Accounts:
-    """Accounts, sign-in sessions, and the free-question count per owner."""
+    """Contact details, one remembered device each, and the free-question count."""
 
     def __init__(
         self, path: Path, free_questions: int = 2, session_days: int = SESSION_DAYS
@@ -282,7 +145,6 @@ class Accounts:
         self.free_questions = max(int(free_questions), 0)
         self.session_days = max(int(session_days), 1)
         self._lock = threading.Lock()
-        self._failures: dict[str, tuple[int, float]] = {}
         self._conn = sqlite3.connect(self._path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._migrate()
@@ -290,20 +152,23 @@ class Accounts:
         self._conn.commit()
 
     def _migrate(self) -> None:
-        """Move a pre-password database aside instead of throwing away what it holds.
+        """Carry two older shapes forward rather than dropping what they hold.
 
-        The first version keyed a signup by browser id and had no password, so those rows
-        cannot become accounts: there is nothing to sign in with. They are kept as
-        ``signups_v1`` so the owner still has the leads, and `mark accounts` says so.
+        The first version keyed a signup by browser id; the second added a password. Both
+        hold real contact details, so an old table is moved to ``signups_v1`` where the
+        owner can still read it and `mark accounts` says how many are there.
         """
         listing = self._conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
         tables = {row[0] for row in listing}
-        if "accounts" in tables:
+        if "accounts" in tables and "signups_v1" not in tables:
             columns = {row[1] for row in self._conn.execute("PRAGMA table_info(accounts)")}
-            if "password_hash" not in columns and "signups_v1" not in tables:
+            # Either the browser-keyed first version, or the password one whose UNIQUE
+            # email and password column no longer fit.
+            if "browser_id" in columns or "password_hash" in columns:
                 self._conn.execute("ALTER TABLE accounts RENAME TO signups_v1")
+                self._conn.execute("DROP TABLE IF EXISTS sessions")
                 self._conn.commit()
-                logger.info("kept the pre-password signups as signups_v1")
+                logger.info("kept the earlier signups as signups_v1")
         if "usage" in tables:
             columns = {row[1] for row in self._conn.execute("PRAGMA table_info(usage)")}
             if "owner_id" not in columns and "browser_id" in columns:
@@ -315,7 +180,7 @@ class Accounts:
                 )
                 self._conn.commit()
 
-    # --- accounts ------------------------------------------------------------------------
+    # --- the form ------------------------------------------------------------------------
 
     @staticmethod
     def _row_to_account(row: sqlite3.Row) -> Account:
@@ -325,103 +190,50 @@ class Accounts:
             name=row["name"],
             phone=row["phone"],
             neighborhood=row["neighborhood"],
-            has_password=bool(row["password_hash"]),
         )
 
-    def by_email(self, email: str) -> Account | None:
-        needle = normalize_email(email)
-        if not needle:
-            return None
-        with self._lock:
-            row = self._conn.execute("SELECT * FROM accounts WHERE email = ?", (needle,)).fetchone()
-        return self._row_to_account(row) if row else None
+    def create(self, raw: dict[str, Any]) -> tuple[Account, str]:
+        """Save the contact details and remember this device. Returns it and the token.
 
-    def create(self, raw: dict[str, Any], password_required: bool = False) -> tuple[Account, str]:
-        """Create an account and a session for this device. Returns it and the token."""
-        account, password = parse(raw, password_required=password_required)
-        account.has_password = bool(password)
-        # An empty string, never a hash of one: a hash of "" would match a blank password.
-        stored = hash_password(password) if password else ""
+        A repeat email is not refused. Without a password there is nothing to check, so a
+        landlord on a second device fills the form again and gets their own row rather than
+        being handed whatever the first device had.
+        """
+        account = parse(raw)
         with self._lock, self._conn:
-            taken = self._conn.execute(
-                "SELECT password_hash FROM accounts WHERE email = ?", (account.email,)
-            ).fetchone()
-            if taken and taken["password_hash"]:
-                raise SignupError("There is already an account with that email. Sign in instead.")
-            if taken:
-                # Handing this device the existing account would mean anyone who knows a
-                # landlord's email can read their conversations. Same path as a forgotten
-                # password instead.
-                raise SignupError(
-                    "That email is already with us, and it has no password yet. Email "
-                    "mark@gcrealtyinc.com to get one set, then sign in."
-                )
             self._conn.execute(
-                "INSERT INTO accounts (id, email, name, phone, neighborhood, password_hash,"
-                " created_at, last_login_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO accounts (id, email, name, phone, neighborhood, created_at)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
                 (
                     account.id,
                     account.email,
                     account.name,
                     account.phone,
                     account.neighborhood,
-                    stored,
-                    time.time(),
                     time.time(),
                 ),
             )
         # The id, never the fields.
-        logger.info("account created (%s…)", account.id[:6])
+        logger.info("signup recorded (%s…)", account.id[:6])
         return account, self.start_session(account.id)
 
-    def sign_in(self, email: str, password: str) -> tuple[Account, str]:
-        """Check a password and open a session. Every failure raises the same message."""
-        needle = normalize_email(email)
-        self._check_throttle(needle)
-        with self._lock:
-            row = self._conn.execute("SELECT * FROM accounts WHERE email = ?", (needle,)).fetchone()
-        # An unknown email still costs a hash, so the wait does not answer the question the
-        # message refuses to. An account with no password is unreachable by the same
-        # measure: nothing can match it, and nothing is said about why.
-        stored = (row["password_hash"] if row else "") or _DUMMY_HASH
-        if not verify_password(str(password or ""), stored) or row is None:
-            self._note_failure(needle)
-            raise LoginError(WRONG_CREDENTIALS)
-        self._clear_failures(needle)
-        account = self._row_to_account(row)
-        with self._lock, self._conn:
-            self._conn.execute(
-                "UPDATE accounts SET last_login_at = ? WHERE id = ?", (time.time(), account.id)
-            )
-        return account, self.start_session(account.id)
+    def seen_before(self, email: str) -> bool:
+        """Whether this address has already been through the form.
 
-    def set_password(self, email: str, password: str, keep_token: str | None = None) -> None:
-        """Set or reset a password from the terminal. There is no self-service route.
-
-        This is also how a lead-only account becomes one that can sign in on a second
-        device, which is the whole reason the owner has this command.
+        Used to keep one person filling the form on their phone and their laptop from
+        landing in the CRM twice.
         """
-        account = self.by_email(email)
-        if account is None:
-            raise SignupError(f"No account with the email {normalize_email(email)!r}.")
-        stored = hash_password(check_password(password, account.email, required=True))
-        with self._lock, self._conn:
-            self._conn.execute(
-                "UPDATE accounts SET password_hash = ? WHERE id = ?", (stored, account.id)
-            )
-            # Every other session goes: a reset is also how you throw someone out. The one
-            # doing the setting is kept when it is the landlord adding a password to their
-            # own account, because signing them out of that would be a strange reward.
-            if keep_token:
-                self._conn.execute(
-                    "DELETE FROM sessions WHERE account_id = ? AND token_hash != ?",
-                    (account.id, self._token_hash(keep_token)),
-                )
-            else:
-                self._conn.execute("DELETE FROM sessions WHERE account_id = ?", (account.id,))
+        needle = normalize_email(email)
+        if not needle:
+            return False
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT 1 FROM accounts WHERE email = ? LIMIT 1", (needle,)
+            ).fetchone()
+        return row is not None
 
     def all(self, limit: int | None = None) -> list[tuple[Account, float]]:
-        """Every account, newest first, with when it was created. For `mark accounts`."""
+        """Every signup, newest first, with when it happened. For `mark accounts`."""
         with self._lock:
             rows = self._conn.execute(
                 "SELECT * FROM accounts ORDER BY created_at DESC" + (" LIMIT ?" if limit else ""),
@@ -430,7 +242,7 @@ class Accounts:
         return [(self._row_to_account(row), float(row["created_at"])) for row in rows]
 
     def legacy_signups(self) -> int:
-        """How many pre-password signups are still sitting in signups_v1."""
+        """How many signups from an earlier shape are sitting in signups_v1."""
         try:
             with self._lock:
                 row = self._conn.execute("SELECT COUNT(*) FROM signups_v1").fetchone()
@@ -438,40 +250,34 @@ class Accounts:
         except sqlite3.Error:
             return 0
 
-    # --- sessions ------------------------------------------------------------------------
+    # --- the remembered device -----------------------------------------------------------
 
     @staticmethod
     def _token_hash(token: str) -> str:
         return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
     def start_session(self, account_id: str) -> str:
-        """Return a fresh token. Only its hash is stored, so the database holds no key."""
+        """A fresh token. Only its hash is stored, so the database holds no usable cookie."""
         token = secrets.token_urlsafe(32)
         now = time.time()
         with self._lock, self._conn:
             self._conn.execute(
                 "INSERT INTO sessions (token_hash, account_id, created_at, expires_at)"
                 " VALUES (?, ?, ?, ?)",
-                (
-                    self._token_hash(token),
-                    account_id,
-                    now,
-                    now + self.session_days * 86400,
-                ),
+                (self._token_hash(token), account_id, now, now + self.session_days * 86400),
             )
             self._conn.execute("DELETE FROM sessions WHERE expires_at < ?", (now,))
         return token
 
     def account_for_token(self, token: str | None) -> Account | None:
-        """Who this cookie belongs to, or None. An expired session is deleted as it is found."""
+        """Whose device this is, or None. An expired session is deleted as it is found."""
         if not token:
             return None
-        digest = self._token_hash(token)
         with self._lock:
             row = self._conn.execute(
                 "SELECT a.*, s.expires_at FROM sessions s JOIN accounts a ON a.id = s.account_id"
                 " WHERE s.token_hash = ?",
-                (digest,),
+                (self._token_hash(token),),
             ).fetchone()
         if row is None:
             return None
@@ -487,20 +293,6 @@ class Accounts:
             self._conn.execute(
                 "DELETE FROM sessions WHERE token_hash = ?", (self._token_hash(token),)
             )
-
-    # --- throttling ----------------------------------------------------------------------
-
-    def _check_throttle(self, email: str) -> None:
-        count, until = self._failures.get(email, (0, 0.0))
-        if count >= FAILED_ATTEMPTS_BEFORE_THROTTLE and time.time() < until:
-            raise LoginError("Too many tries. Wait a minute and try again.")
-
-    def _note_failure(self, email: str) -> None:
-        count, _ = self._failures.get(email, (0, 0.0))
-        self._failures[email] = (count + 1, time.time() + THROTTLE_SECONDS)
-
-    def _clear_failures(self, email: str) -> None:
-        self._failures.pop(email, None)
 
     # --- free questions ------------------------------------------------------------------
 
@@ -535,7 +327,7 @@ class Accounts:
             return 0
 
     def needs_signup(self, owner_id: str) -> bool:
-        """True when the next question needs an account first. Signed in, never."""
+        """True when the next question needs the form first. A known device, never."""
         if not owner_id or owner_id.startswith("account:"):
             return False
         return self.questions_used(owner_id) >= self.free_questions

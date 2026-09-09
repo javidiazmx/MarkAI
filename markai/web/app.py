@@ -48,26 +48,12 @@ class ResetRequest(BaseModel):
 
 
 class SignupRequest(BaseModel):
-    """The account form. Validated again in the store, which owns the rules."""
+    """The lead form. Validated again in the store, which owns the rules."""
 
     name: str = Field(default="", max_length=200)
     email: str = Field(default="", max_length=400)
     phone: str = Field(default="", max_length=60)
     neighborhood: str = Field(default="", max_length=200)
-    password: str = Field(default="", max_length=400)
-
-
-class LoginRequest(BaseModel):
-    """Sign in. The email is the username."""
-
-    email: str = Field(default="", max_length=400)
-    password: str = Field(default="", max_length=400)
-
-
-class PasswordRequest(BaseModel):
-    """Add or change a password on the account already signed in on this device."""
-
-    password: str = Field(default="", max_length=400)
 
 
 class PropertyRequest(BaseModel):
@@ -190,14 +176,11 @@ def create_app(
 
     def get_crm() -> Any:
         if state["crm"] is None:
-            from markai.web.crm import Crm
+            from markai.web.crm import Crm, sender_from_settings
 
             settings.ensure_dirs()
-            state["crm"] = Crm(
-                settings.data_dir / "leads.db",
-                url=settings.crm_webhook_url,
-                headers=settings.crm_headers(),
-            )
+            sender, describe = sender_from_settings(settings)
+            state["crm"] = Crm(settings.data_dir / "leads.db", sender=sender, describe=describe)
         return state["crm"]
 
     def get_accounts() -> Any:
@@ -380,9 +363,6 @@ def create_app(
             # The name to greet them with and the username they signed in as. No more.
             "name": signed_in.name if signed_in else None,
             "email": signed_in.email if signed_in else None,
-            # False means they can be offered one, which is what buys a second device.
-            "has_password": signed_in.has_password if signed_in else False,
-            "password_required": settings.password_required,
         }
 
     @app.post("/api/account")
@@ -394,10 +374,12 @@ def create_app(
     ) -> dict[str, Any]:
         from markai.web.accounts import SignupError, anonymous_owner
 
+        accounts = get_accounts()
+        # Checked before the row exists, so one person filling the form on their phone and
+        # their laptop reaches the CRM once.
+        already_a_lead = accounts.seen_before(payload.email)
         try:
-            saved, token = get_accounts().create(
-                payload.model_dump(), password_required=settings.password_required
-            )
+            saved, token = accounts.create(payload.model_dump())
         except SignupError as exc:
             # The message names the field, so it is meant to be shown.
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -406,15 +388,11 @@ def create_app(
         anonymous = anonymous_owner(browser)
         get_history().reassign(anonymous, saved.owner_id)
         get_portfolio().reassign(anonymous, saved.owner_id)
-        # After the reassign, so the lead can carry what they already asked about.
-        _queue_lead(saved)
+        if not already_a_lead:
+            # After the reassign, so the lead can carry what they already asked about.
+            _queue_lead(saved)
         _set_session(response, token)
-        return {
-            "signed_in": True,
-            "name": saved.name,
-            "email": saved.email,
-            "has_password": saved.has_password,
-        }
+        return {"signed_in": True, "name": saved.name, "email": saved.email}
 
     def _queue_lead(account: Any) -> None:
         """Write the lead down, then push it in the background. Never blocks the signup."""
@@ -435,59 +413,6 @@ def create_app(
             crm.deliver_soon()
         except Exception:  # a CRM problem is never a failed signup
             logger.exception("could not queue the lead")
-
-    @app.post("/api/login")
-    def login(
-        payload: LoginRequest,
-        response: Response,
-        _: None = Depends(require_access),
-    ) -> dict[str, Any]:
-        from markai.web.accounts import LoginError
-
-        try:
-            account, token = get_accounts().sign_in(payload.email, payload.password)
-        except LoginError as exc:
-            # 401 is right here and says nothing about which half was wrong.
-            raise HTTPException(status_code=401, detail=str(exc)) from exc
-        _set_session(response, token)
-        return {
-            "signed_in": True,
-            "name": account.name,
-            "email": account.email,
-            "has_password": account.has_password,
-        }
-
-    @app.post("/api/password")
-    def set_password(
-        payload: PasswordRequest,
-        signed_in: Any = Depends(signed_in_of),
-        mark_auth: str | None = Cookie(default=None),
-        _: None = Depends(require_access),
-    ) -> dict[str, Any]:
-        """Add or change a password on the account signed in on this device.
-
-        The cookie is the authentication, so no current password is asked for: whoever holds
-        it is already this account here. Every other session ends; this one is kept.
-        """
-        from markai.web.accounts import SignupError
-
-        if signed_in is None:
-            raise HTTPException(status_code=401, detail="Sign in first.")
-        try:
-            get_accounts().set_password(signed_in.email, payload.password, keep_token=mark_auth)
-        except SignupError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return {"has_password": True}
-
-    @app.post("/api/logout")
-    def logout(
-        response: Response,
-        mark_auth: str | None = Cookie(default=None),
-        _: None = Depends(require_access),
-    ) -> dict[str, Any]:
-        get_accounts().end_session(mark_auth)
-        response.delete_cookie(SESSION_COOKIE, path="/")
-        return {"signed_in": False}
 
     @app.get("/api/properties")
     def properties(

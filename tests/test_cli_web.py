@@ -955,7 +955,6 @@ SIGNUP = {
     "email": "javier@example.com",
     "phone": "312-555-0134",
     "neighborhood": "Logan Square",
-    "password": "six flats and a boiler",
 }
 
 
@@ -991,43 +990,23 @@ def test_signing_up_lets_the_third_question_through(settings, store):
     assert _ask(client, "t3", "Third question").status_code == 200
 
 
-def test_signing_in_again_from_a_clean_browser(settings, store):
-    client = _client(settings, store, FakeAdvisor())
-    client.post("/api/account", json=SIGNUP, headers={"X-Browser-Id": "b1"})
-    client.post("/api/logout")
-    assert client.get("/api/account").json()["signed_in"] is False
+def test_a_second_device_fills_the_form_again_and_starts_clean(settings, store):
+    """No password, so nothing can prove who anyone is, and nothing is handed over."""
+    app_under_test = create_app(settings, advisor=FakeAdvisor(), store=store)
+    phone = TestClient(app_under_test)
+    phone.post("/api/account", json=SIGNUP, headers={"X-Browser-Id": "b1"})
+    _ask(phone, "t1", "Something about my building")
 
-    # A different browser id entirely: the account is the identity, not the browser.
-    back = client.post(
-        "/api/login",
-        json={"email": "JAVIER@example.com", "password": "six flats and a boiler"},
-        headers={"X-Browser-Id": "b2"},
-    )
-    assert back.json()["name"] == "Javier Diaz"
-    assert _ask(client, "t9", "A question from the other machine", browser="b2").status_code == 200
+    laptop = TestClient(app_under_test)  # its own cookie jar, like a different machine
+    for index in range(2):
+        _ask(laptop, f"o{index}", "A free question", browser="b2")
+    again = laptop.post("/api/account", json=SIGNUP, headers={"X-Browser-Id": "b2"})
+    assert again.status_code == 200, "the same email fills the form again, and that is fine"
 
-
-def test_a_wrong_password_is_refused_without_saying_which_half(settings, store):
-    client = _client(settings, store)
-    client.post("/api/account", json=SIGNUP, headers={"X-Browser-Id": "b1"})
-    client.post("/api/logout")
-
-    wrong = client.post("/api/login", json={"email": "javier@example.com", "password": "not it"})
-    unknown = client.post("/api/login", json={"email": "nobody@example.com", "password": "not it"})
-    assert wrong.status_code == unknown.status_code == 401
-    assert wrong.json()["detail"] == unknown.json()["detail"]
-    assert client.get("/api/account").json()["signed_in"] is False
-
-
-def test_a_signup_that_is_missing_a_password_is_refused(settings, store):
-    client = _client(settings, store)
-    bad = client.post(
-        "/api/account",
-        json={**SIGNUP, "password": "short"},
-        headers={"X-Browser-Id": "b1"},
-    )
-    assert bad.status_code == 400
-    assert "8 characters" in bad.json()["detail"]
+    titles = [t["title"] for t in laptop.get("/api/threads").json()["threads"]]
+    assert "Something about my building" not in titles
+    assert titles == ["A free question", "A free question"]
+    assert _ask(laptop, "o9", "And a third").status_code == 200, "no wall on this device now"
 
 
 def test_the_session_cookie_cannot_be_read_by_a_script(settings, store):
@@ -1036,24 +1015,6 @@ def test_the_session_cookie_cannot_be_read_by_a_script(settings, store):
     header = made.headers["set-cookie"].lower()
     assert "httponly" in header
     assert "samesite=lax" in header, "so no other site can post with it"
-
-
-def test_conversations_follow_the_account_not_the_browser(settings, store):
-    client = _client(settings, store, FakeAdvisor())
-    client.post("/api/account", json=SIGNUP, headers={"X-Browser-Id": "b1"})
-    _ask(client, "t1", "How long for a deposit?")
-    client.post("/api/properties", json={"label": "2145 W Division"})
-
-    client.post("/api/logout")
-    assert client.get("/api/threads", headers={"X-Browser-Id": "b2"}).json() == {"threads": []}
-
-    client.post(
-        "/api/login", json={"email": "javier@example.com", "password": "six flats and a boiler"}
-    )
-    threads = client.get("/api/threads", headers={"X-Browser-Id": "b2"}).json()["threads"]
-    assert [t["title"] for t in threads] == ["How long for a deposit"]
-    properties = client.get("/api/properties", headers={"X-Browser-Id": "b2"}).json()
-    assert [p["label"] for p in properties["properties"]] == ["2145 W Division"]
 
 
 def test_the_neighborhood_reaches_the_advisor(settings, store):
@@ -1131,8 +1092,9 @@ def test_the_page_has_the_signup_form_with_the_four_fields():
     from pathlib import Path
 
     page = Path("markai/web/static/index.html").read_text(encoding="utf-8")
-    for field in ("su-name", "su-email", "su-phone", "su-hood", "su-pass"):
+    for field in ("su-name", "su-email", "su-phone", "su-hood"):
         assert f'id="{field}"' in page
+    assert "su-pass" not in page and "/api/login" not in page, "no password anywhere"
     assert "signup_required" in page, "the page reacts to the server's wall, not its own count"
     assert "heldQuestion" in page, "the question they were typing is asked after signup"
 
@@ -1182,44 +1144,6 @@ def test_mark_accounts_says_so_when_nobody_signed_up(tmp_path, monkeypatch):
     assert "No accounts yet" in result.stdout + str(result.stderr)
 
 
-def test_mark_accounts_resets_a_password(tmp_path, monkeypatch):
-    from markai.web.accounts import Accounts
-
-    data_dir = tmp_path / "data"
-    data_dir.mkdir(parents=True)
-    store = Accounts(data_dir / "accounts.db")
-    _account, token = store.create(
-        {
-            "name": "Javier Diaz",
-            "email": "javier@example.com",
-            "phone": "312-555-0134",
-            "neighborhood": "Logan Square",
-            "password": "the old password",
-        }
-    )
-    store.close()
-
-    manifest = tmp_path / "sources.yaml"
-    manifest.write_text("websites: []\n", encoding="utf-8")
-    monkeypatch.setenv("MARKAI_SOURCES_FILE", str(manifest))
-    monkeypatch.setenv("MARKAI_DATA_DIR", str(data_dir))
-
-    done = runner.invoke(
-        app, ["accounts", "reset-password", "javier@example.com", "--password", "a new password"]
-    )
-    assert done.exit_code == 0
-
-    store = Accounts(data_dir / "accounts.db")
-    assert store.account_for_token(token) is None, "the reset signed that session out"
-    assert store.sign_in("javier@example.com", "a new password")[0]
-    store.close()
-
-    missing = runner.invoke(
-        app, ["accounts", "reset-password", "nobody@example.com", "--password", "a new password"]
-    )
-    assert missing.exit_code == 1
-
-
 # --- the lead reaching the CRM ----------------------------------------------------------
 
 
@@ -1233,7 +1157,7 @@ def test_a_signup_queues_a_lead_with_what_they_asked_about(settings, store):
 
     # Swap the queue's sender before signing up, so nothing leaves the process.
     queue = Crm(settings.data_dir / "leads.db", url="https://crm.test/hook", sender=sent.append)
-    client.post("/api/account", json={**SIGNUP, "password": ""}, headers=headers)
+    client.post("/api/account", json=SIGNUP, headers=headers)
     queue.deliver_pending()
     queue.close()
 
@@ -1242,70 +1166,6 @@ def test_a_signup_queues_a_lead_with_what_they_asked_about(settings, store):
     assert lead["email"] == "javier@example.com"
     assert lead["neighborhood"] == "Logan Square"
     assert lead["asked_about"] == "How long do I have to return a deposit"
-    assert lead["has_password"] is False
-
-
-def test_a_signup_without_a_password_is_still_remembered(settings, store):
-    client = _client(settings, store, FakeAdvisor())
-    headers = {"X-Browser-Id": "b1"}
-    _ask(client, "t1", "One")
-    _ask(client, "t2", "Two")
-
-    made = client.post("/api/account", json={**SIGNUP, "password": ""}, headers=headers)
-    assert made.status_code == 200
-    assert made.json()["has_password"] is False
-    assert _ask(client, "t3", "Third question").status_code == 200, "no wall on this device"
-
-    state = client.get("/api/account", headers=headers).json()
-    assert state["signed_in"] is True and state["has_password"] is False
-
-
-def test_the_password_can_be_required_by_the_owner(settings, store):
-    settings = settings.model_copy(update={"password_required": True})
-    client = _client(settings, store)
-    bad = client.post(
-        "/api/account", json={**SIGNUP, "password": ""}, headers={"X-Browser-Id": "b1"}
-    )
-    assert bad.status_code == 400
-    assert "8 characters" in bad.json()["detail"]
-
-
-def test_a_password_added_later_keeps_this_device_signed_in(settings, store):
-    client = _client(settings, store, FakeAdvisor())
-    headers = {"X-Browser-Id": "b1"}
-    client.post("/api/account", json={**SIGNUP, "password": ""}, headers=headers)
-
-    added = client.post("/api/password", json={"password": "six flats and a boiler"})
-    assert added.json() == {"has_password": True}
-    assert client.get("/api/account", headers=headers).json()["signed_in"] is True
-
-    client.post("/api/logout")
-    back = client.post(
-        "/api/login", json={"email": "javier@example.com", "password": "six flats and a boiler"}
-    )
-    assert back.json()["has_password"] is True
-
-
-def test_adding_a_password_needs_to_be_signed_in(settings, store):
-    client = _client(settings, store)
-    refused = client.post("/api/password", json={"password": "six flats and a boiler"})
-    assert refused.status_code == 401
-
-
-def test_an_email_already_taken_without_a_password_is_not_handed_over(settings, store):
-    client = _client(settings, store, FakeAdvisor())
-    client.post("/api/account", json={**SIGNUP, "password": ""}, headers={"X-Browser-Id": "b1"})
-    _ask(client, "t1", "Something private about my building")
-    client.post("/api/logout")
-
-    again = client.post(
-        "/api/account",
-        json={**SIGNUP, "name": "Someone Else", "password": ""},
-        headers={"X-Browser-Id": "b2"},
-    )
-    assert again.status_code == 400
-    assert "no password yet" in again.json()["detail"]
-    assert client.get("/api/threads", headers={"X-Browser-Id": "b2"}).json() == {"threads": []}
 
 
 def test_mark_leads_lists_and_sends(tmp_path, monkeypatch):
@@ -1337,12 +1197,12 @@ def test_mark_leads_lists_and_sends(tmp_path, monkeypatch):
     listed = runner.invoke(app, ["leads", "list"])
     assert listed.exit_code == 0
     assert "javier@example.com" in listed.stdout
-    assert "No CRM webhook set" in listed.stdout
+    assert "Nowhere to send leads yet" in listed.stdout
     assert "1 waiting" in listed.stdout
 
     blocked = runner.invoke(app, ["leads", "send"])
     assert blocked.exit_code == 1
-    assert "MARKAI_CRM_WEBHOOK_URL" in blocked.stdout + str(blocked.stderr)
+    assert "MARKAI_LEAD_EMAIL_TO" in blocked.stdout + str(blocked.stderr)
 
 
 def test_doctor_reports_on_the_page_the_accounts_and_the_crm(tmp_path, monkeypatch):
@@ -1354,17 +1214,23 @@ def test_doctor_reports_on_the_page_the_accounts_and_the_crm(tmp_path, monkeypat
     bare = runner.invoke(app, ["doctor"])
     assert bare.exit_code == 0
     assert "Web access code" in bare.stdout and "not set" in bare.stdout
-    assert "2 free question" in bare.stdout
-    assert "MARKAI_CRM_WEBHOOK_URL" in bare.stdout
+    assert "2 free question" in bare.stdout and "No password" in bare.stdout
+    assert "MARKAI_LEAD_EMAIL_TO" in bare.stdout, "it says how to wire the leads up"
     assert "fine on 127.0.0.1" in bare.stdout
 
     monkeypatch.setenv("MARKAI_WEB_ACCESS_CODE", "letmein")
-    monkeypatch.setenv("MARKAI_CRM_WEBHOOK_URL", "https://hooks.example.com/catch")
+    monkeypatch.setenv("MARKAI_LEAD_EMAIL_TO", "new-deal@newlead.leadsimple.com")
+    monkeypatch.setenv("MARKAI_SMTP_HOST", "smtp.gmail.com")
     monkeypatch.setenv("MARKAI_WEB_HOST", "0.0.0.0")
     wired = runner.invoke(app, ["doctor"])
     assert wired.exit_code == 0
-    assert "hooks.example.com" in wired.stdout
+    assert "email to new-deal@newlead.leadsimple.com" in wired.stdout
     assert "plain http on a public host" in wired.stdout, "the cookie warning has to be loud"
+
+    # Half-configured is the dangerous one: it looks set up and sends nothing.
+    monkeypatch.delenv("MARKAI_SMTP_HOST")
+    half = runner.invoke(app, ["doctor"])
+    assert "no SMTP host" in half.stdout
 
 
 def test_doctor_never_prints_a_secret(tmp_path, monkeypatch):

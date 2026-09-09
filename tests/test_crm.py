@@ -16,7 +16,6 @@ ACCOUNT = Account(
     name="Javier Diaz",
     phone="312-555-0134",
     neighborhood="Logan Square",
-    has_password=False,
 )
 
 
@@ -163,3 +162,152 @@ def test_delivery_in_the_background_does_not_raise(crm, sender):
     if crm._worker:
         crm._worker.join(timeout=5)
     assert len(sender.sent) == 1
+
+
+# --- the email a CRM parses -------------------------------------------------------------
+
+
+def test_the_email_body_is_the_three_labelled_lines():
+    """LeadSimple parses this. Anything clever in it is a way to lose a lead."""
+    from markai.web.crm import build_email
+
+    subject, body = build_email(build_payload(ACCOUNT, {"asked_about": "Deposits", "questions": 2}))
+    assert subject == "New lead from Jay: Javier Diaz"
+    assert body == ("Name: Javier Diaz\nPhone: 312-555-0134\nEmail: javier@example.com"), (
+        "three lines, in that order, and nothing after them"
+    )
+
+
+def test_the_subject_survives_a_missing_name():
+    from markai.web.crm import build_email
+
+    subject, body = build_email({"phone": "312", "email": "j@example.com"})
+    assert subject == "New lead from Jay"
+    assert body.startswith("Name: \n")
+
+
+def test_the_email_is_addressed_and_replies_to_the_landlord(monkeypatch):
+    """One message, to the CRM address, that Mark can just hit reply on."""
+    from markai.web import crm as crm_module
+
+    sent = {}
+
+    class FakeSMTP:
+        def __init__(self, host, port, timeout=None):
+            sent["host"], sent["port"] = host, port
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def starttls(self):
+            sent["starttls"] = True
+
+        def login(self, username, password):
+            sent["login"] = username
+
+        def send_message(self, message):
+            sent["message"] = message
+
+    import smtplib
+
+    monkeypatch.setattr(smtplib, "SMTP", FakeSMTP)
+    send = crm_module._email(
+        "new-deal@newlead.leadsimple.com",
+        "smtp.gmail.com",
+        587,
+        "jay@gcrealtyinc.com",
+        "app-password",
+        "",
+        True,
+        10.0,
+    )
+    send(build_payload(ACCOUNT))
+
+    message = sent["message"]
+    assert (sent["host"], sent["port"]) == ("smtp.gmail.com", 587)
+    assert sent["starttls"] is True and sent["login"] == "jay@gcrealtyinc.com"
+    assert message["To"] == "new-deal@newlead.leadsimple.com"
+    assert message["From"] == "jay@gcrealtyinc.com", "falls back to the username"
+    assert message["Reply-To"] == "javier@example.com"
+    assert "Phone: 312-555-0134" in message.get_content()
+
+
+def test_port_465_uses_ssl_and_skips_starttls(monkeypatch):
+    from markai.web import crm as crm_module
+
+    used = {}
+
+    class FakeSSL:
+        def __init__(self, host, port, timeout=None):
+            used["ssl"] = True
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def starttls(self):
+            used["starttls"] = True
+
+        def login(self, *a):
+            pass
+
+        def send_message(self, message):
+            pass
+
+    import smtplib
+
+    monkeypatch.setattr(smtplib, "SMTP_SSL", FakeSSL)
+    crm_module._email("to@crm.test", "mail.test", 465, "u", "p", "from@test", True, 10.0)(
+        build_payload(ACCOUNT)
+    )
+    assert used == {"ssl": True}, "no STARTTLS on an already encrypted connection"
+
+
+def test_a_refused_send_is_retried_not_lost(tmp_path):
+    """SMTP goes down, the mailbox is full, the password is wrong: all the same to us."""
+    sender = Sender(fail_times=1, error="SMTPAuthenticationError")
+    crm = Crm(tmp_path / "leads.db", sender=sender, describe="email to crm")
+    crm.enqueue("a1", build_payload(ACCOUNT))
+    assert crm.deliver_pending() == (0, 1)
+    assert crm.counts()["waiting"] == 1
+    assert crm.deliver_pending(now=9e9) == (1, 0)
+    crm.close()
+
+
+def test_the_settings_pick_email_over_a_webhook(tmp_path):
+    from markai.config import Settings
+    from markai.web.crm import sender_from_settings
+
+    both = Settings(
+        _env_file=None,
+        data_dir=tmp_path,
+        lead_email_to="new-deal@newlead.leadsimple.com",
+        smtp_host="smtp.gmail.com",
+        crm_webhook_url="https://hooks.example.com/catch",
+    )
+    sender, describe = sender_from_settings(both)
+    assert sender is not None
+    assert "email to new-deal@newlead.leadsimple.com" in describe
+
+    webhook_only = Settings(
+        _env_file=None, data_dir=tmp_path, crm_webhook_url="https://hooks.example.com/catch"
+    )
+    assert "POST to https://hooks.example.com/catch" in sender_from_settings(webhook_only)[1]
+
+    nothing = Settings(_env_file=None, data_dir=tmp_path)
+    assert sender_from_settings(nothing) == (None, "")
+
+
+def test_an_address_with_no_mail_server_says_so(tmp_path):
+    from markai.config import Settings
+    from markai.web.crm import sender_from_settings
+
+    half = Settings(_env_file=None, data_dir=tmp_path, lead_email_to="new-deal@newlead.test")
+    sender, describe = sender_from_settings(half)
+    assert sender is None
+    assert "no SMTP host" in describe, "a half-configured route has to be visible"

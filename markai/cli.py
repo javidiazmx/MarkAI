@@ -291,14 +291,13 @@ def doctor(
         )
 
     if settings.account_required:
-        how = "required at signup" if settings.password_required else "offered, not required"
         table.add_row(
-            "Accounts",
-            f"{settings.free_questions_before_signup} free question(s), then a signup "
-            f"· password {how}",
+            "Lead form",
+            f"{settings.free_questions_before_signup} free question(s), then the form\n"
+            "[dim]name, email, phone. No password.[/dim]",
         )
     else:
-        table.add_row("Accounts", "off, nobody is ever asked to sign up")
+        table.add_row("Lead form", "off, nobody is ever asked for their details")
 
     accounts_path = settings.data_dir / "accounts.db"
     if accounts_path.exists():
@@ -306,33 +305,34 @@ def doctor(
 
         signups = Accounts(accounts_path, free_questions=settings.free_questions_before_signup)
         total = len(signups.all())
-        with_password = sum(1 for account, _ in signups.all() if account.has_password)
         legacy = signups.legacy_signups()
         signups.close()
-        note = f"{total} account(s), {with_password} with a password"
+        note = f"{total} signup(s)"
         if legacy:
-            note += f"\n[dim]{legacy} pre-password signup(s) kept in signups_v1[/dim]"
+            note += f"\n[dim]{legacy} from an earlier version, kept in signups_v1[/dim]"
         table.add_row("Signups so far", note)
 
-    if settings.crm_webhook_url:
-        from markai.web.crm import Crm
+    from markai.web.crm import Crm, sender_from_settings
 
-        queue = Crm(settings.data_dir / "leads.db")
-        counts = queue.counts()
-        queue.close()
-        note = (
-            f"{settings.crm_webhook_url}\n"
-            f"[dim]{counts['delivered']} delivered · {counts['waiting']} waiting · "
-            f"{counts['gave_up']} gave up[/dim]"
-        )
+    sender, describe = sender_from_settings(settings)
+    queue = Crm(settings.data_dir / "leads.db")
+    counts = queue.counts()
+    queue.close()
+    tally = (
+        f"[dim]{counts['delivered']} delivered · {counts['waiting']} waiting · "
+        f"{counts['gave_up']} gave up[/dim]"
+    )
+    if sender is not None:
+        note = f"{escape(describe)}\n{tally}"
         if counts["waiting"] or counts["gave_up"]:
             note += "\n[dim]`mark leads send` pushes them.[/dim]"
-        table.add_row("CRM webhook", note)
+        table.add_row("Leads go to", note)
     else:
+        why = escape(describe) if describe else "nowhere set"
         table.add_row(
-            "CRM webhook",
-            "[yellow]not set[/yellow] - leads are queued and go nowhere\n"
-            "[dim]MARKAI_CRM_WEBHOOK_URL, then `mark leads test`.[/dim]",
+            "Leads go to",
+            f"[yellow]{why}[/yellow] - they queue and wait\n{tally}\n"
+            "[dim]MARKAI_LEAD_EMAIL_TO plus MARKAI_SMTP_*, then `mark leads test`.[/dim]",
         )
 
     host = settings.web_host
@@ -1055,43 +1055,11 @@ def accounts_list(
     console.print(f"[dim]{len(rows)} shown · `mark accounts list --csv leads.csv` to export[/dim]")
 
 
-@accounts_app.command("reset-password")
-def accounts_reset_password(
-    email: str = typer.Argument(..., help="The account's email, which is its username."),
-    password: str = typer.Option(
-        None, "--password", help="The new password. Prompted for, hidden, if omitted."
-    ),
-) -> None:
-    """Set a landlord's password.
-
-    There is no email delivery here, so there is no reset link a landlord can use. This is
-    the whole recovery story: they email the owner and the owner runs this. Every session
-    that account had is ended, which is also how you throw someone out.
-    """
-    from markai.web.accounts import LoginError, SignupError
-
-    settings = _settings()
-    store = _accounts_store(settings)
-    if not password:
-        password = typer.prompt("New password (hidden)", hide_input=True, confirmation_prompt=True)
-    try:
-        store.set_password(email, password)
-    except (SignupError, LoginError) as exc:
-        store.close()
-        _fail(str(exc))
-    store.close()
-    console.print(f"[green]✓[/green] Password set for {escape(email)}.")
-    console.print("[dim]Every session that account had is signed out.[/dim]")
-
-
 def _crm(settings: Any) -> Any:
-    from markai.web.crm import Crm
+    from markai.web.crm import Crm, sender_from_settings
 
-    return Crm(
-        settings.data_dir / "leads.db",
-        url=settings.crm_webhook_url,
-        headers=settings.crm_headers(),
-    )
+    sender, describe = sender_from_settings(settings)
+    return Crm(settings.data_dir / "leads.db", sender=sender, describe=describe)
 
 
 @leads_app.command("list")
@@ -1105,15 +1073,17 @@ def leads_list(
     crm = _crm(settings)
     counts = crm.counts()
     rows = crm.all(limit=limit)
-    configured = crm.configured
+    configured, describe = crm.configured, crm.describe
     crm.close()
 
     if not configured:
         console.print(
-            "[yellow]No CRM webhook set, so leads are queued and waiting.[/yellow]\n"
-            "[dim]Put the URL in .env as MARKAI_CRM_WEBHOOK_URL, then run "
-            "`mark leads send`.[/dim]"
+            "[yellow]Nowhere to send leads yet, so they are queued and waiting.[/yellow]\n"
+            "[dim]Set MARKAI_LEAD_EMAIL_TO plus the MARKAI_SMTP_* lines in .env, or "
+            "MARKAI_CRM_WEBHOOK_URL for a webhook. Then `mark leads send`.[/dim]"
         )
+    else:
+        console.print(f"[dim]Sending: {escape(describe)}[/dim]")
     console.print(
         f"[dim]{counts['total']} total · {counts['delivered']} delivered · "
         f"{counts['waiting']} waiting · {counts['gave_up']} gave up[/dim]"
@@ -1155,9 +1125,9 @@ def leads_send(
     if not crm.configured:
         crm.close()
         _fail(
-            "No CRM webhook is set.",
-            "Add MARKAI_CRM_WEBHOOK_URL to .env. A Zapier or Make catch hook works, and so "
-            "does any endpoint that accepts a JSON POST.",
+            "There is nowhere to send leads.",
+            "Set MARKAI_LEAD_EMAIL_TO and the MARKAI_SMTP_* lines in .env to email them to "
+            "your CRM, or MARKAI_CRM_WEBHOOK_URL to POST them.",
         )
     if retry_all:
         console.print(f"[dim]Requeued {crm.reset_attempts()} undelivered lead(s).[/dim]")
@@ -1180,23 +1150,26 @@ def leads_test() -> None:
     crm = _crm(settings)
     if not crm.configured:
         crm.close()
-        _fail("No CRM webhook is set.", "Add MARKAI_CRM_WEBHOOK_URL to .env first.")
+        _fail(
+            "There is nowhere to send leads.",
+            "Set MARKAI_LEAD_EMAIL_TO and the MARKAI_SMTP_* lines in .env first.",
+        )
+    console.print(f"[dim]Sending: {escape(crm.describe)}[/dim]")
 
     class _Fake:
         name = "TEST LEAD - please ignore"
         email = "test@example.com"
         phone = "312-555-0100"
         neighborhood = "Logan Square"
-        has_password = False
 
     crm.enqueue("test", build_payload(_Fake(), {"asked_about": "A test from mark leads test"}))
     delivered, failed = crm.deliver_pending()
     crm.close()
     if delivered:
-        console.print("[green]✓[/green] The CRM accepted it. Go look for the test lead.")
+        console.print("[green]✓[/green] It went out. Go look for the test lead in your CRM.")
         return
     _fail(
-        f"The CRM did not accept it ({failed} failed).",
+        f"It did not go out ({failed} failed).",
         "Run `mark leads list` for the reason it gave.",
     )
 

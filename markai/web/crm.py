@@ -1,8 +1,12 @@
 """Send a new lead to the CRM, without ever making a landlord wait for it.
 
-A signup is worth nothing sitting in a SQLite file on one machine, so it goes out to
-whatever the owner points this at: LeadSimple's own inbound URL, a Zapier or Make catch
-hook, an internal endpoint. One generic POST with a stable payload serves all of them.
+A signup is worth nothing sitting in a SQLite file on one machine, so it goes out. Two ways
+out, and the queue in front of them is the same either way:
+
+- **An email** to a CRM's inbound address, which is how LeadSimple takes a lead. The body
+  is three labelled lines and nothing else, because a parser on the far side reads it and
+  anything clever is a way to lose a lead.
+- **A webhook**, for a CRM with an inbound URL, or a Zapier or Make catch hook.
 
 Two rules shape everything here:
 
@@ -72,6 +76,66 @@ class Lead:
         return not self.delivered and self.attempts >= MAX_ATTEMPTS
 
 
+LEAD_SUBJECT = "New lead from Jay"
+
+
+def build_email(payload: dict[str, Any]) -> tuple[str, str]:
+    """Subject and body for a CRM that takes leads by email.
+
+    Three labelled lines, in the order a person reads them, and nothing after. LeadSimple
+    and every tool like it parse the body looking for exactly these; an extra paragraph is
+    a chance for the parse to go wrong, and a lead that arrives wrong is worse than one
+    that arrives plain. The rest of what we know is in `mark leads list`.
+    """
+    name = str(payload.get("name", "")).strip()
+    body = "\n".join(
+        [
+            f"Name: {name}",
+            f"Phone: {str(payload.get('phone', '')).strip()}",
+            f"Email: {str(payload.get('email', '')).strip()}",
+        ]
+    )
+    return (f"{LEAD_SUBJECT}: {name}" if name else LEAD_SUBJECT, body)
+
+
+def _email(
+    to_address: str,
+    host: str,
+    port: int,
+    username: str,
+    password: str,
+    from_address: str,
+    starttls: bool,
+    timeout: float,
+) -> Callable[[dict], None]:
+    """The email sender: one message per lead, over SMTP, raising on anything that fails."""
+
+    def send(payload: dict[str, Any]) -> None:
+        import smtplib
+        from email.message import EmailMessage
+
+        subject, body = build_email(payload)
+        message = EmailMessage()
+        message["To"] = to_address
+        message["From"] = from_address or username
+        message["Subject"] = subject
+        reply_to = str(payload.get("email", "")).strip()
+        if reply_to:
+            # So whoever picks the lead up can just hit reply.
+            message["Reply-To"] = reply_to
+        message.set_content(body)
+
+        opener = smtplib.SMTP_SSL if port == 465 else smtplib.SMTP
+        with opener(host, port, timeout=timeout) as smtp:
+            if starttls and port != 465:
+                smtp.starttls()
+            if username:
+                smtp.login(username, password)
+            smtp.send_message(message)
+
+    return send
+
+
 def build_payload(account: Any, context: dict[str, Any] | None = None) -> dict[str, Any]:
     """The lead as the CRM receives it.
 
@@ -87,7 +151,6 @@ def build_payload(account: Any, context: dict[str, Any] | None = None) -> dict[s
         "phone": account.phone,
         "neighborhood": account.neighborhood,
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "has_password": bool(getattr(account, "has_password", False)),
     }
     payload.update(context or {})
     return payload
@@ -106,11 +169,41 @@ def _post(url: str, headers: dict[str, str], timeout: float) -> Callable[[dict],
     return send
 
 
+def sender_from_settings(settings: Any) -> tuple[Callable[[dict], None] | None, str]:
+    """Pick the way out, and say which one in a line fit for `mark doctor`.
+
+    Email wins when both are configured, because that is the one the owner set up on
+    purpose for a CRM that takes leads that way.
+    """
+    to_address = (getattr(settings, "lead_email_to", "") or "").strip()
+    host = (getattr(settings, "smtp_host", "") or "").strip()
+    if to_address and host:
+        return (
+            _email(
+                to_address,
+                host,
+                int(settings.smtp_port),
+                (settings.smtp_username or "").strip(),
+                settings.smtp_secret() or "",
+                (settings.smtp_from or "").strip(),
+                bool(settings.smtp_starttls),
+                DEFAULT_TIMEOUT,
+            ),
+            f"email to {to_address} via {host}:{settings.smtp_port}",
+        )
+    url = (getattr(settings, "crm_webhook_url", "") or "").strip()
+    if url:
+        return (_post(url, settings.crm_headers(), DEFAULT_TIMEOUT), f"POST to {url}")
+    if to_address:
+        return (None, "an address but no SMTP host, so nothing can be sent")
+    return (None, "")
+
+
 class Crm:
     """A durable outbound queue for new leads.
 
-    ``sender`` is injectable so tests never touch the network and so an owner with a CRM
-    that wants something other than a JSON POST has one function to replace.
+    ``sender`` is injectable so tests never touch the network, and so an owner whose CRM
+    wants something neither of these does has one function to replace.
     """
 
     def __init__(
@@ -120,6 +213,7 @@ class Crm:
         headers: dict[str, str] | None = None,
         timeout: float = DEFAULT_TIMEOUT,
         sender: Callable[[dict[str, Any]], None] | None = None,
+        describe: str = "",
     ) -> None:
         self._path = Path(path)
         self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -127,6 +221,7 @@ class Crm:
         self._headers = dict(headers or {})
         self._timeout = timeout
         self._sender = sender or (_post(self.url, self._headers, timeout) if self.url else None)
+        self.describe = describe or (f"POST to {self.url}" if self.url else "")
         self._lock = threading.Lock()
         self._conn = sqlite3.connect(self._path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row

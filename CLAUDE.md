@@ -62,8 +62,11 @@ The owner runs this on Windows. Commands you hand over go in `cmd` form, or thro
   surface has no standing notice, and strips one the model wrote anyway.
 - **Identity in `markai/web/` is an owner id**, `account:<id>` when signed in and
   `browser:<id>` when not. Nothing stores anything against a bare browser id.
-- **Never log a password, an email, a phone, or a question.** `accounts.py` logs an account
-  id prefix and nothing else.
+- **Never log an email, a phone, or a question.** `accounts.py` logs a signup id prefix and
+  nothing else, and `crm.py` records an error class, never the payload it failed to send.
+- **The lead form has no password on purpose.** Identity is the device, through an HttpOnly
+  cookie. One device never inherits another's conversations, because nothing here proves
+  who anyone is.
 
 ## Testing conventions
 

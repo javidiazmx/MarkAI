@@ -189,11 +189,6 @@
   }
   .fineprint { color: var(--muted); font-size: 12px; line-height: 1.5; margin: 4px 0 0; }
   .formerr { color: #b3261e; font-size: 13px; min-height: 18px; }
-  #login-form { display: grid; gap: 9px; }
-  #login-form input {
-    width: 100%; padding: 10px 11px; border: 1px solid var(--line); border-radius: 8px;
-    background: var(--bg); color: var(--ink); font: inherit;
-  }
   .linkish {
     background: none; border: 0; padding: 0; font: inherit; color: var(--accent);
     text-decoration: underline; cursor: pointer;
@@ -203,13 +198,6 @@
     font-size: 12px; color: var(--muted);
   }
   .whoami span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  #pass-form { display: grid; gap: 6px; padding: 8px 0 0; }
-  #pass-form input {
-    width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px;
-    background: var(--bg); color: var(--ink); font: inherit; font-size: 13px;
-  }
-  #pass-form button { padding: 7px 12px; font-size: 13px; border-radius: 7px; }
-  #pass-form .pair { display: flex; gap: 6px; }
   .thread { display: flex; align-items: center; }
   .thread .pick {
     flex: 1; min-width: 0; background: none; border: 0; color: inherit; font: inherit;
@@ -270,21 +258,7 @@
     <button class="ghost" id="handoff" type="button">Hand this to a manager</button>
     <div class="whoami" id="whoami" hidden>
       <span id="whoami-name"></span>
-      <button class="linkish" id="sign-out" type="button">Sign out</button>
     </div>
-    <form id="pass-form" hidden>
-      <input id="pw-new" type="password" minlength="8" maxlength="200"
-             autocomplete="new-password" placeholder="A password, 8 characters or more" />
-      <div class="formerr" id="pass-error"></div>
-      <div class="pair">
-        <button type="submit">Save</button>
-        <button class="ghost" id="pass-cancel" type="button">Not now</button>
-      </div>
-    </form>
-    <p class="whoami" id="add-pass-row" hidden>
-      <button class="linkish" id="add-pass" type="button">Add a password</button>
-      to use Jay on your phone too.
-    </p>
   </div>
 </aside>
 
@@ -301,41 +275,16 @@
              placeholder="Phone" required />
       <input id="su-hood" type="text" maxlength="80"
              placeholder="Neighborhood where your rental is" required />
-      <input id="su-pass" type="password" minlength="8" maxlength="200"
-             autocomplete="new-password"
-             placeholder="Password (optional, for a second device)" />
       <div class="formerr" id="signup-error"></div>
       <div class="row-buttons">
         <button type="submit" id="signup-go">Create my free account</button>
       </div>
       <p class="fineprint">
-        This device remembers you either way. A password is only needed to pick Jay back up
-        on your phone, and you can add one later. Your email is the username. This stays
-        with GC Realty, it is not sold or shared, and the neighborhood is what lets Jay
-        answer for your side of the line.
+        No password to remember. This browser keeps you signed in, and the neighborhood is
+        what lets Jay answer for your side of the line. Your details stay with GC Realty
+        and are not sold or shared.
       </p>
     </form>
-    <p class="fineprint">
-      Already have one? <button class="linkish" id="show-login" type="button">Sign in</button>
-    </p>
-
-    <form id="login-form" hidden>
-      <input id="li-email" type="email" maxlength="200" autocomplete="username"
-             placeholder="Email" required />
-      <input id="li-pass" type="password" maxlength="200" autocomplete="current-password"
-             placeholder="Password" required />
-      <div class="formerr" id="login-error"></div>
-      <div class="row-buttons">
-        <button type="submit" id="login-go">Sign in</button>
-      </div>
-      <p class="fineprint">
-        Forgot it? There is no reset link yet, so email mark@gcrealtyinc.com and it gets
-        set for you.
-      </p>
-    </form>
-    <p class="fineprint" id="back-to-signup" hidden>
-      New here? <button class="linkish" id="show-signup" type="button">Create an account</button>
-    </p>
   </div>
 </div>
 
@@ -653,8 +602,6 @@
   var heldQuestion = "";
 
   var signupForm = document.getElementById("signup-form");
-  var loginForm = document.getElementById("login-form");
-  var loginError = document.getElementById("login-error");
   var whoami = document.getElementById("whoami");
 
   async function loadAccount() {
@@ -669,85 +616,25 @@
   function drawWhoami() {
     var signedIn = account.required && account.signed_in;
     whoami.hidden = !signedIn;
-    // Offered, never demanded: what it buys is a second device, and that is worth more to
-    // someone who has already seen Jay work than to someone at the door.
-    document.getElementById("add-pass-row").hidden = !signedIn || account.has_password;
     if (signedIn) {
       document.getElementById("whoami-name").textContent = account.name || account.email || "";
     }
   }
 
-  var passForm = document.getElementById("pass-form");
-  var passError = document.getElementById("pass-error");
-
-  document.getElementById("add-pass").addEventListener("click", function () {
-    passForm.hidden = false;
-    document.getElementById("add-pass-row").hidden = true;
-    document.getElementById("pw-new").focus();
-  });
-
-  document.getElementById("pass-cancel").addEventListener("click", function () {
-    passForm.hidden = true;
-    document.getElementById("pw-new").value = "";
-    drawWhoami();
-  });
-
-  passForm.addEventListener("submit", async function (event) {
-    event.preventDefault();
-    passError.textContent = "";
-    var field = document.getElementById("pw-new");
-    try {
-      var response = await fetch("/api/password", {
-        method: "POST", headers: headers(), body: JSON.stringify({ password: field.value })
-      });
-      if (!response.ok) {
-        var detail = "That did not go through.";
-        try { detail = (await response.json()).detail || detail; } catch (e) {}
-        passError.textContent = detail;
-        return;
-      }
-    } catch (error) {
-      passError.textContent = "Could not reach the server.";
-      return;
-    }
-    field.value = "";
-    passForm.hidden = true;
-    account.has_password = true;
-    drawWhoami();
-  });
-
-  function showHalf(which) {
-    var login = which === "login";
-    signupForm.hidden = login;
-    document.getElementById("show-login").parentNode.hidden = login;
-    loginForm.hidden = !login;
-    document.getElementById("back-to-signup").hidden = !login;
-    signupError.textContent = "";
-    loginError.textContent = "";
-    document.getElementById(login ? "li-email" : "su-name").focus();
-  }
-
-  document.getElementById("show-login").addEventListener("click", function () {
-    showHalf("login");
-  });
-  document.getElementById("show-signup").addEventListener("click", function () {
-    showHalf("signup");
-  });
-
   function askToSignUp(why) {
     document.getElementById("signup-why").textContent = why ||
-      "That is your free questions used up. A free account keeps Jay going.";
+      "That is your free questions used up. Tell Jay who you are and keep going.";
+    signupError.textContent = "";
     signupCard.hidden = false;
-    showHalf("signup");
+    document.getElementById("su-name").focus();
   }
 
-  // Whatever they came through, signup or sign in, they are in: take down the card and
-  // ask the question they were typing when it went up.
+  // Through the form: take the card down and ask the question they were typing when it
+  // went up.
   function afterSignIn(data) {
     account.signed_in = true;
     account.name = data.name;
     account.email = data.email;
-    account.has_password = !!data.has_password;
     account.free_left = 0;
     drawWhoami();
     signupCard.hidden = true;
@@ -762,49 +649,6 @@
     }
   }
 
-  loginForm.addEventListener("submit", async function (event) {
-    event.preventDefault();
-    var button = document.getElementById("login-go");
-    button.disabled = true;
-    loginError.textContent = "";
-    try {
-      var response = await fetch("/api/login", {
-        method: "POST",
-        headers: headers(),
-        body: JSON.stringify({
-          email: document.getElementById("li-email").value,
-          password: document.getElementById("li-pass").value
-        })
-      });
-      if (!response.ok) {
-        var detail = "That did not work.";
-        try { detail = (await response.json()).detail || detail; } catch (e) {}
-        loginError.textContent = detail;
-        return;
-      }
-      document.getElementById("li-pass").value = "";
-      afterSignIn(await response.json());
-    } catch (error) {
-      loginError.textContent = "Could not reach the server.";
-    } finally {
-      button.disabled = false;
-    }
-  });
-
-  document.getElementById("sign-out").addEventListener("click", async function () {
-    try {
-      await fetch("/api/logout", { method: "POST", headers: headers() });
-    } catch (error) { /* the cookie is the server's to clear */ }
-    account.signed_in = false;
-    account.name = null;
-    drawWhoami();
-    log.textContent = "";
-    showStarters(true);
-    await loadAccount();
-    loadThreads();
-    loadProperties();
-  });
-
   signupForm.addEventListener("submit", async function (event) {
     event.preventDefault();
     var button = document.getElementById("signup-go");
@@ -814,8 +658,7 @@
       name: document.getElementById("su-name").value,
       email: document.getElementById("su-email").value,
       phone: document.getElementById("su-phone").value,
-      neighborhood: document.getElementById("su-hood").value,
-      password: document.getElementById("su-pass").value
+      neighborhood: document.getElementById("su-hood").value
     };
     try {
       var response = await fetch("/api/account", {
@@ -827,8 +670,6 @@
         signupError.textContent = detail;
         return;
       }
-      // Out of the page's hands the moment it is sent, and never kept in a variable.
-      document.getElementById("su-pass").value = "";
       afterSignIn(await response.json());
     } catch (error) {
       signupError.textContent = "Could not reach the server.";

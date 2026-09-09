@@ -139,6 +139,33 @@ class Settings(BaseSettings):
             "the page never asks. The terminal never asks either way."
         ),
     )
+    lead_email_to: str = Field(
+        default="",
+        description=(
+            "The CRM's inbound address for a new lead, such as LeadSimple's "
+            "new-deal...@newlead.leadsimple.com. Needs the SMTP settings below."
+        ),
+    )
+    smtp_host: str = Field(
+        default="",
+        description="Mail server for sending the lead. Google Workspace: smtp.gmail.com.",
+    )
+    smtp_port: int = Field(default=587, ge=1, le=65535)
+    smtp_username: str = Field(default="", description="Usually the sending address.")
+    smtp_password: SecretStr | None = Field(
+        default=None,
+        description=(
+            "The mailbox password. On Google Workspace or Gmail this is an app password, "
+            "never the account password."
+        ),
+    )
+    smtp_from: str = Field(
+        default="", description="What the lead is sent from. Defaults to the username."
+    )
+    smtp_starttls: bool = Field(
+        default=True, description="STARTTLS on port 587. Port 465 uses SSL instead."
+    )
+
     crm_webhook_url: str = Field(
         default="",
         description=(
@@ -156,15 +183,6 @@ class Settings(BaseSettings):
         description=(
             "An extra header for a CRM that wants something other than a bearer token, "
             "written as `Name: value`."
-        ),
-    )
-    password_required: bool = Field(
-        default=False,
-        description=(
-            "Make the password mandatory at signup. Off: it is optional, and an account "
-            "without one is remembered on that device but cannot sign in elsewhere. A "
-            "password does not verify an email, so requiring one costs conversion without "
-            "buying lead quality; what it buys is a second device."
         ),
     )
     session_days: int = Field(
@@ -292,6 +310,9 @@ class Settings(BaseSettings):
 
     def anthropic_key(self) -> str | None:
         return self._reveal(self.anthropic_api_key)
+
+    def smtp_secret(self) -> str | None:
+        return self._reveal(self.smtp_password)
 
     def crm_token(self) -> str | None:
         return self._reveal(self.crm_webhook_token)
