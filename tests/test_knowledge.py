@@ -379,3 +379,21 @@ def test_keyword_evidence_alone_still_carries_a_question(settings):
     """English questions must behave exactly as before."""
     assert _coverage_for(settings, top_bm25=9.0, positive_count=4, has_vectors=False) == "covered"
     assert _coverage_for(settings, top_bm25=9.0, positive_count=1, has_vectors=False) == "weak"
+
+
+def test_declined_gaps_can_be_cleared_without_losing_the_question_log(settings):
+    """Those rows were never missing material: Jay said he had nothing and he did."""
+    from markai.knowledge.store import KnowledgeStore
+
+    settings.ensure_dirs()
+    store = KnowledgeStore(settings.db_path)
+    store.log_question(None, "who is Mark Ainley?", "covered", [], True, {})
+    store.log_question(None, "Parking permits in Winnetka?", "none", [], True, {})
+    store.log_question(None, "Snow removal in Evanston?", "weak", [], True, {})
+
+    assert len(store.list_gaps(10)) == 3
+    assert store.forget_declined_gaps() == 1
+    assert [g["coverage"] for g in store.list_gaps(10)] == ["weak", "none"]
+    assert store.stats().questions_total == 3, "the usage record is untouched"
+    assert store.forget_declined_gaps() == 0, "nothing left to clear"
+    store.close()

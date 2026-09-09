@@ -84,6 +84,7 @@ Then:
 | `mark audit` | Checks the knowledge base is usable: silent sources, duplicated text, missing embeddings, and whether real questions find anything. Calls Claude never |
 | `mark embed` | Adds semantic search to material already ingested, no re-download |
 | `mark gaps` | Where the sources came up short: nothing found, or a thin match |
+| `mark gaps --forget-declined` | Clears the rows Jay declined but the sources covered |
 | `mark feedback` | What landlords thought of the answers. A thumbs down is a content decision |
 | `mark search "deposits"` | Searches the knowledge base directly, without calling Claude |
 | `mark search --scores` | Same, showing the keyword and semantic scores behind the coverage verdict |

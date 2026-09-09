@@ -920,7 +920,14 @@ def status() -> None:
 
 
 @app.command()
-def gaps(top: int = typer.Option(20, "--top", help="How many to show.")) -> None:
+def gaps(
+    top: int = typer.Option(20, "--top", help="How many to show."),
+    forget_declined: bool = typer.Option(
+        False,
+        "--forget-declined",
+        help="Clear the 'Jay declined it' rows. They are history, not work.",
+    ),
+) -> None:
     """List questions the sources answered thinly or not at all.
 
     Jay does not tell a landlord when the material is thin any more, so this is where that
@@ -929,6 +936,13 @@ def gaps(top: int = typer.Option(20, "--top", help="How many to show.")) -> None
     """
     settings = _settings()
     store = _store(settings)
+    if forget_declined:
+        cleared = store.forget_declined_gaps()
+        console.print(
+            f"[green]✓[/green] Cleared {cleared} row(s) Jay declined but the sources "
+            f"covered.\n[dim]They stay in the question log; they just stop looking like "
+            f"work.[/dim]"
+        )
     rows = store.list_gaps(top)
     if not rows:
         console.print("No thin or unanswered questions logged yet.")
@@ -961,7 +975,7 @@ def gaps(top: int = typer.Option(20, "--top", help="How many to show.")) -> None
         console.print(
             f"[dim]{declined} say 'Jay declined it': the sources covered the question and "
             f"he said they did not. He no longer does that, so those are history rather "
-            f"than a to-do.[/dim]"
+            f"than a to-do. `mark gaps --forget-declined` clears them.[/dim]"
         )
     console.print("[dim]`mark feedback` is the other half: answers landlords marked wrong.[/dim]")
     store.close()

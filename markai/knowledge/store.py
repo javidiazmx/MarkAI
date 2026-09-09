@@ -384,6 +384,21 @@ class KnowledgeStore:
                 ),
             )
 
+    def forget_declined_gaps(self) -> int:
+        """Un-flag the gaps that were only gaps because Jay said so.
+
+        A question the retrieval covered was never missing material: it was recorded when
+        Jay announced a gap he did not have, which he no longer does. The rows stay in the
+        question log - they are real history and part of the usage record - they just stop
+        showing up on a list of work to do.
+        """
+        with self._lock, self._conn:
+            cursor = self._conn.execute(
+                "UPDATE questions_log SET not_covered = 0"
+                " WHERE not_covered = 1 AND coverage = 'covered'"
+            )
+        return cursor.rowcount
+
     def list_gaps(self, limit: int = 20) -> list[dict]:
         """Questions Mark could not answer from the sources, newest first."""
         with self._lock:
