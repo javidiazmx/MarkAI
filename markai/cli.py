@@ -1421,12 +1421,22 @@ def _save_proposals(settings: Any, data: dict) -> None:
     _proposals_path(settings).write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
+def _record_proposals(settings: Any, saved: dict, already: set, report: Any) -> None:
+    """File what a run found, whichever path found it. Never loses what was there before."""
+    saved["read_chunk_ids"] = sorted(already | set(report.read_chunk_ids))
+    saved["proposals"] = list(saved.get("proposals", [])) + [p.to_dict() for p in report.proposals]
+    _save_proposals(settings, saved)
+
+
 @facts_app.command("mine")
 def facts_mine(
     limit: int = typer.Option(0, "--limit", help="Passages to read. 0 means all of them."),
     kind: str = typer.Option("all", "--kind", help="all, website, youtube or podcast."),
     yes: bool = typer.Option(False, "--yes", help="Skip the cost confirmation."),
     restart: bool = typer.Option(False, "--restart", help="Read everything again from scratch."),
+    free: bool = typer.Option(
+        False, "--free", help="No API call, no cost: propose the sentences themselves."
+    ),
 ) -> None:
     """Read the indexed sources and propose ordinance and cost entries out of them.
 
@@ -1438,8 +1448,13 @@ def facts_mine(
 
     This calls Claude and costs money, so it tells you how much before it starts. It picks
     up where it left off, so a run you stop is not a run you lose.
+
+    `--free` spends nothing. It pulls out the sentences that state a rule outright and
+    proposes each one as itself, no API key and no call. It finds less, and everything it
+    finds is a sentence your source actually wrote. Worth running first on new material:
+    what it catches costs nothing, and what it misses is still there for a paid run.
     """
-    from markai.facts_miner import candidates_in, estimate, mine
+    from markai.facts_miner import candidates_in, estimate, mine, mine_locally
     from markai.models import SourceKind
 
     wanted = {
@@ -1465,6 +1480,27 @@ def facts_mine(
         console.print(
             f"[green]✓[/green] Nothing left to read: {seen} passages, all of them either "
             f"already mined or with no rule in them."
+        )
+        return
+
+    if free:
+        with console.status("Reading the sources…") as status:
+
+            def free_progress(done: int, total: int) -> None:
+                status.update(f"Read {done} of {total} passages…")
+
+            report = mine_locally(
+                store, limit=limit, kinds=kinds, already_read=already, on_progress=free_progress
+            )
+        store.close()
+        _record_proposals(settings, saved, already, report)
+        console.print(
+            f"[green]✓[/green] Read {report.passages_read} passages and found "
+            f"{len(report.proposals)} sentences that state a rule. [bold]Cost: nothing.[/bold]"
+        )
+        console.print(
+            f"Now run [bold]mark facts proposals[/bold] to see what is there "
+            f"({len(saved['proposals'])} waiting)."
         )
         return
 
@@ -1506,9 +1542,7 @@ def facts_mine(
         )
     store.close()
 
-    saved["read_chunk_ids"] = sorted(already | set(report.read_chunk_ids))
-    saved["proposals"] = list(saved.get("proposals", [])) + [p.to_dict() for p in report.proposals]
-    _save_proposals(settings, saved)
+    _record_proposals(settings, saved, already, report)
 
     console.print(
         f"[green]✓[/green] Read {report.passages_read} passages, "

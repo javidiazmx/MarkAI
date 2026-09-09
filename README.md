@@ -347,10 +347,16 @@ thing: the facts are already in the sources, said out loud in a blog post or an 
 and `mark facts mine` reads them out into proposals for `sources/facts.yaml`.
 
 ```bash
-mark facts mine        # reads everything, tells you the cost first, resumable
-mark facts review      # one at a time, with the sentence from your own source in front of you
-mark facts validate    # then restart the server
+mark facts mine --free   # no API call, no cost: proposes the sentences themselves
+mark facts mine          # asks Claude to read it, tells you the cost first, resumable
+mark facts proposals     # the map: distinct rules, how many sources back each
+mark facts review        # decide, with the sentence from your own source in front of you
+mark facts validate      # then restart the server
 ```
+
+**Reviewing is free.** `mark facts proposals` and `mark facts review` make no API call at
+all - they read the proposals already on disk. `mark facts mine` is the only one of these
+that spends anything, and `--free` is a version of it that spends nothing.
 
 Three things make it safe to run over the whole corpus:
 
@@ -367,6 +373,30 @@ Three things make it safe to run over the whole corpus:
 It only reads passages with a number and a binding word in them, because the rest is
 commentary and reading it costs money for nothing. It tells you the estimated cost before
 it starts, and picks up where it left off, so a run you stop is not a run you lose.
+
+**The free path.** `mark facts mine --free` needs no API key and makes no call. It pulls out
+the sentences that state a rule outright - a number and a word like "must" or "within",
+both in the same sentence - and proposes each one as itself, so the rule and the quote are
+the same text and it cannot misquote you. It finds less than the paid run: it will not turn
+"about a month and a half" into 45 days, and it skips anything it is unsure about, because a
+pattern cannot look at a weak passage and correctly decide there is nothing there. Worth
+running first on new material. What it catches costs nothing, and what it misses is still
+sitting in the sources for a paid run whenever you want one.
+
+**Reviewing 1300 proposals.** Identical quotes collapse into one decision that says how many
+of your sources stated it, and accepting it answers all of them. The queue goes by subject,
+with subjects `facts.yaml` already covers at the back and labelled. Filter it and take a
+slice in one go:
+
+```bash
+mark facts proposals                              # what is in there, by subject
+mark facts review --min-sources 3 --accept-all    # the rules three of your sources agree on
+mark facts review --kind cost --topic boiler     # or one subject at a time
+```
+
+In the one-at-a-time mode, `t` drops a whole subject without deciding it away. A cost
+proposal with no number in it is never offered: "$0 to $0" in the fact block is not a
+missing answer, it is a wrong one.
 
 ## The property log
 

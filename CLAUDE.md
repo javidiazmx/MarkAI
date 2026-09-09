@@ -66,6 +66,9 @@ The owner runs this on Windows. Commands you hand over go in `cmd` form, or thro
   `browser:<id>` when not. Nothing stores anything against a bare browser id.
 - **Never log an email, a phone, or a question.** `accounts.py` logs a signup id prefix and
   nothing else, and `crm.py` records an error class, never the payload it failed to send.
+- **Mining is the only thing that spends.** `mark facts proposals` and `mark facts review`
+  make no API call, and `mark facts mine --free` extracts the rule sentences with patterns
+  instead of a model: no key, no call, quote and rule the same text.
 - **`facts_miner` proposes, the owner disposes.** Every mined entry quotes its passage and
   the quote is verified against it; an unverified one is dropped, never shown. Nothing is
   written to `facts.yaml` outside `mark facts review`, and the section key is never written

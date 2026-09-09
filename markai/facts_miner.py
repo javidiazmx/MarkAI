@@ -284,6 +284,175 @@ def estimate(candidates: list[tuple[str, str, str]], batch_size: int = DEFAULT_B
     }
 
 
+# --- mining without spending anything -----------------------------------------------------
+
+# The model reads a passage and writes the rule out in its own words. That costs money, and
+# it is better. But most of the value is in one sentence somebody already wrote - "heat must
+# reach 68 degrees during the day" - and pulling that sentence out is pattern matching, not
+# language understanding. So there is a free path: no API key, no call, no bill, the sentence
+# proposed verbatim as its own rule. The owner still decides, and the quote is the sentence,
+# so it cannot be wrong about what the source said.
+#
+# The filter is stricter here than for the paid path. The model can look at a weak passage
+# and correctly return nothing; a regex cannot, so anything it is unsure about it leaves
+# alone. Fewer proposals, all of them at least somebody's actual sentence.
+
+_SENTENCE = re.compile(r"[^.!?\n]+[.!?]?")
+_BINDING = re.compile(
+    r"\b(must|shall|is required|are required|required to|may not|cannot|can not|"
+    r"no later than|within \d|has to|have to|is entitled|are entitled|is prohibited|"
+    r"are prohibited|is liable|are liable|is due|are due)\b",
+    re.IGNORECASE,
+)
+_MONEY_RANGE = re.compile(
+    r"\$\s?([\d,]+(?:\.\d+)?)\s?(k\b)?(?:\s*(?:to|-|–|and)\s*\$?\s?([\d,]+(?:\.\d+)?)\s?(k\b)?)?",
+    re.IGNORECASE,
+)
+_JURISDICTIONS = (
+    "Chicago",
+    "Cook County",
+    "Evanston",
+    "Oak Park",
+    "Berwyn",
+    "Cicero",
+    "Skokie",
+    "Naperville",
+    "Aurora",
+    "Joliet",
+    "Illinois",
+)
+
+MIN_SENTENCE_CHARS = 40
+MAX_SENTENCE_CHARS = 320
+MAX_TOPIC_WORDS = 4
+
+# Words that say nothing about what a rule is about, on top of the shared stop list.
+_NOT_A_TOPIC = frozenset(
+    """
+    landlord landlords tenant tenants property properties unit units building buildings
+    day days month months year years time must shall required require within also going
+    really thing things lot lots way ways people going make made take taken give given
+    """.split()
+)
+
+
+def sentences_worth_proposing(text: str) -> list[str]:
+    """The sentences in a passage that state a rule outright, verbatim.
+
+    A number and a binding word have to be in the *sentence*, not merely somewhere in the
+    passage: "we paid $8,000" three lines above "you must give notice" is two facts, and
+    joining them would invent a third.
+    """
+    found: list[str] = []
+    for raw in _SENTENCE.findall(text or ""):
+        sentence = re.sub(r"\s+", " ", raw).strip()
+        if not (MIN_SENTENCE_CHARS <= len(sentence) <= MAX_SENTENCE_CHARS):
+            continue
+        if _HAS_A_NUMBER.search(sentence) and _BINDING.search(sentence):
+            found.append(sentence)
+    return found
+
+
+def topic_from(sentence: str) -> str:
+    """A few words naming what the sentence is about, in the order they appear."""
+    from markai.sources.facts import terms_in
+
+    keep = terms_in(sentence) - _NOT_A_TOPIC
+    words = [word for word in re.findall(r"[a-z0-9áéíóúñü]+", sentence.lower()) if word in keep]
+    seen: list[str] = []
+    for word in words:
+        if word not in seen:
+            seen.append(word)
+    return " ".join(seen[:MAX_TOPIC_WORDS]) or "rule"
+
+
+def jurisdiction_from(sentence: str, passage: str = "") -> str:
+    """Which government the sentence is about, named only when it says so.
+
+    The sentence first, then the passage around it. Nothing is assumed: an unsourced
+    "Chicago" on a rule that is actually state law is exactly the mistake that hurts.
+    """
+    for where in _JURISDICTIONS:
+        if re.search(rf"\b{re.escape(where)}\b", sentence, re.IGNORECASE):
+            return where
+    for where in _JURISDICTIONS:
+        if re.search(rf"\b{re.escape(where)}\b", passage, re.IGNORECASE):
+            return where
+    return ""
+
+
+def price_in(sentence: str) -> tuple[float | None, float | None]:
+    """The dollar figure or range a sentence names, as (low, high)."""
+
+    def value(number: str, thousands: str | None) -> float:
+        amount = float(number.replace(",", ""))
+        return amount * 1000 if thousands else amount
+
+    match = _MONEY_RANGE.search(sentence)
+    if not match:
+        return None, None
+    low = value(match.group(1), match.group(2))
+    high = value(match.group(3), match.group(4)) if match.group(3) else low
+    return (low, high) if high >= low else (high, low)
+
+
+def proposal_from_sentence(sentence: str, label: str, passage: str) -> Proposal:
+    """One sentence as a proposal that quotes itself."""
+    title, _, url = label.partition("\u241f")
+    low, high = price_in(sentence)
+    priced = low is not None and "$" in sentence
+    return Proposal(
+        kind="cost" if priced else "ordinance",
+        topic=topic_from(sentence),
+        rule=sentence[:600],
+        quote=sentence[:600],
+        source_title=title,
+        source_url=url or None,
+        jurisdiction=jurisdiction_from(sentence, passage),
+        citation=title,
+        low=low if priced else None,
+        high=high if priced else None,
+        unit="as stated" if priced else "",
+    )
+
+
+def mine_locally(
+    store: Any,
+    limit: int = 0,
+    kinds: tuple[SourceKind, ...] | None = None,
+    already_read: set[str] | None = None,
+    on_progress: Any = None,
+) -> MinerReport:
+    """Propose entries out of the sources with no API call and no cost.
+
+    Same output as :func:`mine` - proposals into the same review queue - reached by reading
+    rather than by asking. Worth running first on new material: what it finds is free, and
+    what it misses is still there for a paid run later.
+    """
+    report = MinerReport()
+    found, seen = candidates_in(store, kinds=kinds, already_read=already_read)
+    report.passages_seen = seen
+    if limit:
+        found = found[:limit]
+    report.passages_read = len(found)
+
+    for index, (chunk_id, label, text) in enumerate(found, start=1):
+        for sentence in sentences_worth_proposing(text[:MAX_PASSAGE_CHARS]):
+            proposal = proposal_from_sentence(sentence, label, text)
+            if not quote_is_real(proposal.quote, text):
+                # Cannot happen while the quote is a slice of the passage, and checked
+                # anyway: this is the one property the whole thing rests on.
+                report.dropped_unquoted += 1
+                continue
+            report.proposals.append(proposal)
+        report.read_chunk_ids.append(chunk_id)
+        if on_progress and index % 100 == 0:
+            on_progress(index, len(found))
+    if on_progress:
+        on_progress(len(found), len(found))
+    return report
+
+
 # --- reading a big pile of proposals ------------------------------------------------------
 
 # A full run over the corpus came back with 1305 proposals, and a command that shows those

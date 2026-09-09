@@ -490,3 +490,72 @@ def test_an_accepted_rule_points_back_at_the_page_it_came_from():
         "ordinances"
     ][0]
     assert entry["url"] == "https://www.gcrealtyinc.com/blog/rlto"
+
+
+# --- mining without spending anything -----------------------------------------------------
+
+
+def test_a_sentence_that_states_a_rule_is_proposed_verbatim():
+    from markai.facts_miner import sentences_worth_proposing
+
+    text = (
+        "We bought the place in 2015 and it was a grind. "
+        "Heat must reach 68 degrees during the day under the Chicago ordinance. "
+        "Anyway, the tenants were great."
+    )
+    found = sentences_worth_proposing(text)
+    assert found == ["Heat must reach 68 degrees during the day under the Chicago ordinance."]
+
+
+def test_a_number_in_one_sentence_and_a_rule_in_another_is_not_joined():
+    from markai.facts_miner import sentences_worth_proposing
+
+    text = "We paid $8,000 for the boiler. You must give the tenant notice."
+    assert sentences_worth_proposing(text) == [], (
+        "joining two sentences would invent a rule neither of them states"
+    )
+
+
+def test_the_free_miner_never_paraphrases():
+    from markai.facts_miner import proposal_from_sentence, quote_is_real
+
+    passage = "Under the RLTO the landlord must return the deposit within 45 days. Full stop."
+    sentence = "Under the RLTO the landlord must return the deposit within 45 days."
+    proposal = proposal_from_sentence(sentence, "A post␟https://x.test/1", passage)
+    assert proposal.quote == sentence == proposal.rule
+    assert quote_is_real(proposal.quote, passage) is True
+    assert proposal.source_url == "https://x.test/1"
+
+
+def test_the_free_miner_prices_a_range_and_names_a_jurisdiction():
+    from markai.facts_miner import proposal_from_sentence
+
+    sentence = "In Evanston a tuckpointing job must run $9,000 to $16,000 on a six flat."
+    proposal = proposal_from_sentence(sentence, "A post␟", sentence)
+    assert proposal.kind == "cost"
+    assert (proposal.low, proposal.high) == (9000.0, 16000.0)
+    assert proposal.jurisdiction == "Evanston"
+
+
+def test_the_free_miner_names_no_jurisdiction_it_was_not_given():
+    from markai.facts_miner import jurisdiction_from
+
+    assert jurisdiction_from("The landlord must give 30 days notice.") == ""
+
+
+def test_the_free_run_reads_the_whole_corpus_and_costs_nothing(mined_store):
+    from markai.facts_miner import mine_locally
+
+    report = mine_locally(mined_store)
+    assert report.passages_read > 0
+    assert report.cost_usd == 0.0
+    assert report.dropped_unquoted == 0, "the quote is a slice of the passage by construction"
+    assert all(p.quote in p.rule for p in report.proposals)
+
+
+def test_a_second_free_run_does_not_read_the_same_passages(mined_store):
+    from markai.facts_miner import mine_locally
+
+    first = mine_locally(mined_store)
+    again = mine_locally(mined_store, already_read=set(first.read_chunk_ids))
+    assert again.passages_read == 0

@@ -1768,3 +1768,44 @@ def test_the_handoff_carries_what_is_still_open(settings, store):
     notes = client.post("/api/handoff", json={"session_id": "t1"}, headers=headers).json()["text"]
     assert "Still open:" in notes
     assert "Kitchen stack backing up" in notes
+
+
+def test_facts_mine_free_spends_nothing_and_needs_no_key(tmp_path, monkeypatch):
+    """The free path has to work on a machine with no API key at all."""
+    from markai.knowledge.chunking import chunk_document
+    from markai.knowledge.store import KnowledgeStore
+    from markai.models import Document, SourceKind
+
+    manifest = tmp_path / "sources.yaml"
+    manifest.write_text("business:\n  name: GC Realty\nsources: []\n", encoding="utf-8")
+    data = tmp_path / "data"
+    data.mkdir()
+    monkeypatch.setenv("MARKAI_SOURCES_FILE", str(manifest))
+    monkeypatch.setenv("MARKAI_DATA_DIR", str(data))
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    rule = "Heat must reach 68 degrees during the day under the Chicago ordinance."
+    doc = Document(
+        id="d1",
+        kind=SourceKind.WEBSITE,
+        title="A post about heat",
+        locator="https://example.com/heat",
+        text=(rule + " ") * 4,
+    )
+    doc.ensure_hash()
+    store = KnowledgeStore(data / "markai.db")
+    store.upsert_document(doc, chunk_document(doc, target_words=60, overlap_words=10))
+    store.close()
+
+    result = runner.invoke(app, ["facts", "mine", "--free"])
+    assert result.exit_code == 0, result.stdout
+    assert "Cost: nothing" in result.stdout
+
+    waiting = json.loads((data / "facts-proposals.json").read_text(encoding="utf-8"))["proposals"]
+    assert waiting, "it found the sentence"
+    assert waiting[0]["quote"] == rule, "proposed verbatim, so it cannot misquote the source"
+    assert waiting[0]["jurisdiction"] == "Chicago"
+
+    # And a second run has nothing left to do rather than proposing it all again.
+    again = runner.invoke(app, ["facts", "mine", "--free"])
+    assert "Nothing left to read" in again.stdout
