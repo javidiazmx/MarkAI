@@ -93,6 +93,7 @@ Then:
 | `mark facts probe "..."` | Which of your facts a real question would put in front of Jay |
 | `mark accounts list` | The landlords who filled in the form |
 | `mark accounts list --csv leads.csv` | The same, exported. That file holds personal data |
+| `mark leads setup` | Asks for the sending mailbox, checks the login, writes `.env` |
 | `mark leads test` | Sends one fake lead, to prove the CRM wiring before a real one |
 | `mark leads list` | Every lead and whether your CRM has it yet |
 | `mark leads send` | Push whatever is waiting, `--retry-all` after fixing a URL |
@@ -379,8 +380,26 @@ anything clever in it is a way to lose a lead, so the neighborhood and the quest
 asked stay in `mark leads list` rather than going in the email. If your CRM parses more
 than these three, they can be added.
 
-On Google Workspace or Gmail, `MARKAI_SMTP_PASSWORD` is an **app password**, not the
-account password.
+`mark leads setup` asks for all of it, signs in to check the password before saving
+anything, and writes it to `.env` itself. Use it rather than editing the file by hand: a
+password typed into a prompt that does not echo is one that does not end up in a chat
+window or a screenshot.
+
+**Which mailbox sends it.** It does not have to be a mailbox of Jay's, and on Google
+Workspace it should not be a new paid seat either:
+
+1. Add `jay@gcrealtyinc.com` as an **alias** on a mailbox you already pay for, and set
+   `MARKAI_SMTP_FROM` to the alias while `MARKAI_SMTP_USERNAME` stays the real account.
+   Free, and the lead looks like it came from Jay.
+2. Or just send as yourself. The CRM reads the body, not the sender, and `Reply-To` is the
+   landlord either way.
+3. Or use a sending service (Resend, SES, Mailgun) instead of a mailbox. More setup, one
+   DNS record, but the credential is an API key scoped to sending that you can revoke
+   without touching anybody's email.
+
+On Google Workspace or Gmail, `MARKAI_SMTP_PASSWORD` is an **app password**, generated
+under Account → Security → 2-Step Verification → App passwords. The account password will
+be refused, and `mark leads setup` says so when it is.
 
 **Or by webhook**, for a CRM with an inbound URL, or a Zapier or Make catch hook. Set
 `MARKAI_CRM_WEBHOOK_URL` and it is POSTed a flat JSON lead with everything: name, email,

@@ -1330,3 +1330,94 @@ def test_old_databases_load_and_keep_what_they_hold(tmp_path):
     assert [t["title"] for t in client.get("/api/threads", headers=headers).json()["threads"]] == [
         "Cuanto tiempo para el deposito"
     ]
+
+
+# --- wiring the mailbox up ----------------------------------------------------------------
+
+
+def test_leads_setup_checks_the_login_then_writes_env(tmp_path, monkeypatch):
+    """The password is typed into the terminal and goes straight to .env, nowhere else."""
+    import smtplib
+
+    from markai import cli
+
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "ANTHROPIC_API_KEY=sk-ant-keep-me\n# MARKAI_SMTP_HOST=\nMARKAI_EFFORT=medium\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cli, "PROJECT_ROOT", tmp_path, raising=False)
+    monkeypatch.setattr("markai.config.PROJECT_ROOT", tmp_path)
+
+    signed_in = {}
+
+    class FakeSMTP:
+        def __init__(self, host, port, timeout=None):
+            signed_in["host"], signed_in["port"] = host, port
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def starttls(self):
+            signed_in["starttls"] = True
+
+        def login(self, username, password):
+            signed_in["as"] = username
+
+    monkeypatch.setattr(smtplib, "SMTP", FakeSMTP)
+
+    result = runner.invoke(
+        app,
+        ["leads", "setup"],
+        input="new-deal@newlead.leadsimple.com\nsmtp.gmail.com\n587\n"
+        "javier@gcrealtyinc.com\nan-app-password\njay@gcrealtyinc.com\n",
+    )
+    assert result.exit_code == 0, result.stdout
+    assert signed_in["as"] == "javier@gcrealtyinc.com", "it signs in before saving anything"
+
+    body = env_path.read_text(encoding="utf-8")
+    assert "MARKAI_LEAD_EMAIL_TO=new-deal@newlead.leadsimple.com" in body
+    assert "MARKAI_SMTP_HOST=smtp.gmail.com" in body, "the commented-out line was revived"
+    assert "MARKAI_SMTP_PASSWORD=an-app-password" in body
+    assert "MARKAI_SMTP_FROM=jay@gcrealtyinc.com" in body
+    assert "ANTHROPIC_API_KEY=sk-ant-keep-me" in body, "nothing else in the file was touched"
+    assert "MARKAI_EFFORT=medium" in body
+    assert "an-app-password" not in result.stdout, "the password is never echoed back"
+
+
+def test_leads_setup_refuses_a_bad_password_and_writes_nothing(tmp_path, monkeypatch):
+    import smtplib
+
+    env_path = tmp_path / ".env"
+    env_path.write_text("ANTHROPIC_API_KEY=sk-ant-keep-me\n", encoding="utf-8")
+    monkeypatch.setattr("markai.config.PROJECT_ROOT", tmp_path)
+
+    class Refusing:
+        def __init__(self, *a, **kw):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def starttls(self):
+            pass
+
+        def login(self, *a):
+            raise smtplib.SMTPAuthenticationError(535, b"denied")
+
+    monkeypatch.setattr(smtplib, "SMTP", Refusing)
+
+    result = runner.invoke(
+        app,
+        ["leads", "setup"],
+        input="new-deal@newlead.test\nsmtp.gmail.com\n587\nme@test\nwrong\nme@test\n",
+    )
+    assert result.exit_code == 1
+    assert "app password" in result.stdout + str(result.stderr), "it says what to fix"
+    assert env_path.read_text(encoding="utf-8") == "ANTHROPIC_API_KEY=sk-ant-keep-me\n"

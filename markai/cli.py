@@ -1055,6 +1055,98 @@ def accounts_list(
     console.print(f"[dim]{len(rows)} shown · `mark accounts list --csv leads.csv` to export[/dim]")
 
 
+def _update_env(values: dict[str, str]) -> Path:
+    """Set these keys in .env, leaving every other line exactly as it was.
+
+    Written here rather than by hand because the alternative is a person editing a file
+    with a password in it in a text editor, which is how a password ends up pasted into
+    the wrong window. Nothing is echoed and the file stays readable only by its owner.
+    """
+    from markai.config import PROJECT_ROOT
+
+    env_path = PROJECT_ROOT / ".env"
+    lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
+    remaining = dict(values)
+
+    updated: list[str] = []
+    for raw in lines:
+        stripped = raw.strip()
+        key = stripped.lstrip("#").strip().partition("=")[0].strip()
+        if key in remaining:
+            # Replaces the live line and revives a commented-out one.
+            updated.append(f"{key}={remaining.pop(key)}")
+            continue
+        updated.append(raw)
+    if remaining:
+        if updated and updated[-1].strip():
+            updated.append("")
+        updated.append("# Added by `mark leads setup`.")
+        updated.extend(f"{key}={value}" for key, value in remaining.items())
+
+    env_path.write_text("\n".join(updated) + "\n", encoding="utf-8")
+    try:
+        env_path.chmod(0o600)
+    except OSError:
+        pass
+    return env_path
+
+
+@leads_app.command("setup")
+def leads_setup() -> None:
+    """Ask for the mailbox that sends leads, check it works, and write it to .env.
+
+    The password is typed here and goes straight into .env. It is never echoed, never
+    logged, and never has to be pasted anywhere else.
+    """
+    import smtplib
+
+    console.print(
+        "[bold]Where the lead goes[/bold]\n"
+        "[dim]The CRM's inbound address, then a mailbox that can send to it. On Google "
+        "Workspace or Gmail the password below is an app password, not the account "
+        "password.[/dim]"
+    )
+    to_address = typer.prompt("CRM inbound address").strip()
+    host = typer.prompt("SMTP host", default="smtp.gmail.com").strip()
+    port = int(typer.prompt("SMTP port", default="587"))
+    username = typer.prompt("Mailbox (the account that signs in)").strip()
+    password = typer.prompt("App password (hidden)", hide_input=True)
+    from_address = typer.prompt("Send from", default=username).strip()
+
+    console.print("[dim]Signing in to check it before saving…[/dim]")
+    try:
+        opener = smtplib.SMTP_SSL if port == 465 else smtplib.SMTP
+        with opener(host, port, timeout=20) as smtp:
+            if port != 465:
+                smtp.starttls()
+            smtp.login(username, password)
+    except smtplib.SMTPAuthenticationError:
+        _fail(
+            "The mail server refused that username and password.",
+            "On Google this has to be an app password (Account > Security > 2-Step "
+            "Verification > App passwords), not the password you log in with.",
+        )
+    except Exception as exc:
+        _fail(f"Could not reach {host}:{port} - {exc}", "Check the host and the port.")
+
+    env_path = _update_env(
+        {
+            "MARKAI_LEAD_EMAIL_TO": to_address,
+            "MARKAI_SMTP_HOST": host,
+            "MARKAI_SMTP_PORT": str(port),
+            "MARKAI_SMTP_USERNAME": username,
+            "MARKAI_SMTP_PASSWORD": password,
+            "MARKAI_SMTP_FROM": from_address,
+            "MARKAI_SMTP_STARTTLS": "false" if port == 465 else "true",
+        }
+    )
+    console.print(f"[green]✓[/green] It signed in. Saved to {env_path}.")
+    console.print(
+        "[dim]That file is git-ignored and readable only by you. Now run "
+        "`mark leads test` to put one fake lead in your CRM.[/dim]"
+    )
+
+
 def _crm(settings: Any) -> Any:
     from markai.web.crm import Crm, sender_from_settings
 
