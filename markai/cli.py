@@ -1474,7 +1474,8 @@ def facts_mine(
         f"({len(already)} already done)\n"
         f"[dim]{plan['batches']} requests, roughly {plan['input_tokens']:,} in and "
         f"{plan['output_tokens']:,} out[/dim]\n"
-        f"Estimated cost: [bold]${plan['usd']:.2f}[/bold]"
+        f"Estimated cost: [bold]${plan['usd']:.2f}[/bold], "
+        f"[dim]up to ${plan['usd_max']:.2f} if the sources are dense with rules[/dim]"
     )
     if not yes and not typer.confirm("Run it?", default=False):
         store.close()
@@ -1527,57 +1528,182 @@ def facts_mine(
     console.print(f"Now run [bold]mark facts review[/bold] ({len(saved['proposals'])} waiting).")
 
 
+def _known_terms(path: Path) -> tuple[frozenset[str], set[str], str]:
+    """The vocabulary of facts.yaml, the ids in it, and the file as text.
+
+    Read once per sitting so the review can say "you already have a rule about this"
+    without parsing the file for every proposal.
+    """
+    from markai.sources.facts import load_facts, terms_in
+
+    body = path.read_text(encoding="utf-8") if path.exists() else ""
+    if not body:
+        return frozenset(), set(), ""
+    try:
+        book = load_facts(path)
+    except Exception as exc:
+        _fail(f"{path} is not valid, so nothing can be added to it: {exc}")
+    words: set[str] = set()
+    ids: set[str] = set()
+    for item in [*book.ordinances, *book.costs]:
+        ids.add(item.id)
+        words |= terms_in(getattr(item, "topic", "") or getattr(item, "item", ""))
+    return frozenset(words), ids, body
+
+
+def _pick_groups(
+    settings: Any,
+    kind: str,
+    topic: str,
+    min_sources: int,
+    new_only: bool,
+) -> tuple[list[Any], list[dict], Path, set[str], str, int]:
+    """The proposals worth showing this sitting, grouped, filtered and ordered."""
+    from markai.facts_miner import group_proposals, has_a_price
+    from markai.sources.facts import facts_path
+
+    saved = _load_proposals(settings)
+    waiting = list(saved.get("proposals", []))
+    path = facts_path(settings.sources_file)
+    known, existing_ids, body = _known_terms(path)
+
+    priced = [raw for raw in waiting if has_a_price(raw)]
+    groups = group_proposals(waiting, known_terms=known)
+    wanted = kind.lower()
+    kept = []
+    for group in groups:
+        if wanted in ("ordinance", "cost") and group.kind != wanted:
+            continue
+        if topic and topic.lower() not in str(group.lead.get("topic", "")).lower():
+            continue
+        if group.support < max(1, min_sources):
+            continue
+        if new_only and group.known:
+            continue
+        if not has_a_price(group.lead):
+            continue  # a price with no number in it would read as "$0"
+        kept.append(group)
+    return kept, waiting, path, existing_ids, body, len(waiting) - len(priced)
+
+
+@facts_app.command("proposals")
+def facts_proposals(
+    kind: str = typer.Option("all", "--kind", help="all, ordinance or cost."),
+    topic: str = typer.Option("", "--topic", help="Only topics containing this word."),
+    limit: int = typer.Option(25, "-n", "--limit", help="Rows to show. 0 shows all of them."),
+) -> None:
+    """What is waiting in the review queue, by subject, before you sit down to it.
+
+    Mining a corpus this size proposes more than anyone reviews in one evening, and most of
+    it is the same handful of rules quoted in different posts. This is the map: which
+    subjects came up, how many of your own sources state each rule, and which ones you
+    already have a rule about.
+    """
+    settings = _settings()
+    groups, waiting, path, _, _, priceless = _pick_groups(settings, kind, topic, 1, False)
+    if not waiting:
+        console.print("[yellow]Nothing waiting. Run `mark facts mine` first.[/yellow]")
+        return
+    if not groups:
+        console.print("[yellow]Nothing matches that filter.[/yellow]")
+        return
+
+    corroborated = [g for g in groups if g.support >= 3]
+    console.print(
+        f"[bold]{len(waiting)}[/bold] proposals, [bold]{len(groups)}[/bold] distinct rules "
+        f"after the repeats collapse"
+    )
+    counts = {"ordinance": 0, "cost": 0}
+    for group in groups:
+        counts[group.kind] = counts.get(group.kind, 0) + 1
+    console.print(
+        f"[dim]{counts.get('ordinance', 0)} rules, {counts.get('cost', 0)} prices; "
+        f"{sum(1 for g in groups if g.known)} on subjects you already cover"
+        + (
+            f"; {priceless} priced proposals with no number in them are held back"
+            if priceless
+            else ""
+        )
+        + "[/dim]"
+    )
+
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Topic", overflow="fold")
+    table.add_column("Kind")
+    table.add_column("Sources", justify="right")
+    table.add_column("You already cover it")
+    for group in groups[: limit or len(groups)]:
+        table.add_row(
+            escape(str(group.lead.get("topic", ""))[:52]),
+            group.kind,
+            str(group.support),
+            "yes" if group.known else "",
+        )
+    console.print(table)
+    if limit and len(groups) > limit:
+        console.print(f"[dim]{len(groups) - limit} more. Use -n 0 to see all of them.[/dim]")
+    if corroborated:
+        console.print(
+            f"\n[dim]The {len(corroborated)} rules three or more of your sources state are "
+            f"the safest place to start:[/dim]\n"
+            f"  [bold]mark facts review --min-sources 3[/bold]"
+        )
+
+
 @facts_app.command("review")
 def facts_review(
     limit: int = typer.Option(0, "-n", "--limit", help="How many to go through this sitting."),
+    kind: str = typer.Option("all", "--kind", help="all, ordinance or cost."),
+    topic: str = typer.Option("", "--topic", help="Only topics containing this word."),
+    min_sources: int = typer.Option(
+        1, "--min-sources", help="Only rules this many of your sources state."
+    ),
+    new_only: bool = typer.Option(
+        False, "--new-only", help="Skip subjects facts.yaml already covers."
+    ),
+    accept_all: bool = typer.Option(
+        False, "--accept-all", help="Accept everything that matches, without asking one by one."
+    ),
 ) -> None:
     """Walk the mined proposals and accept the ones you want into facts.yaml.
 
-    Nothing was written while mining. This is where you decide, one at a time, with the
-    sentence from your own source in front of you.
+    Nothing was written while mining. This is where you decide, with the sentence from your
+    own source in front of you.
+
+    Repeats are collapsed first, so a rule four of your posts state is one decision, not
+    four, and it says how many said it. Then it goes by subject, so every proposal about
+    security deposits arrives together. Filter it down (`--kind cost`, `--topic heat`,
+    `--min-sources 3`) and the pile becomes an evening instead of a week; `--accept-all`
+    takes a filtered set in one go, which is the point of the filters.
     """
     from markai.facts_miner import CannotInsert, Proposal, as_yaml_entry, insert_into_facts
-    from markai.sources.facts import facts_path, load_facts
 
     settings = _settings()
-    saved = _load_proposals(settings)
-    waiting = list(saved.get("proposals", []))
+    groups, waiting, path, existing_ids, body, _ = _pick_groups(
+        settings, kind, topic, min_sources, new_only
+    )
     if not waiting:
         console.print("[yellow]Nothing to review. Run `mark facts mine` first.[/yellow]")
         return
+    if not groups:
+        console.print("[yellow]Nothing matches that filter.[/yellow]")
+        return
+    if limit:
+        groups = groups[:limit]
 
-    path = facts_path(settings.sources_file)
-    body = path.read_text(encoding="utf-8") if path.exists() else ""
-    existing_ids = set()
-    if body:
-        try:
-            book = load_facts(path)
-            existing_ids = {item.id for item in [*book.ordinances, *book.costs]}
-        except Exception as exc:
-            _fail(f"{path} is not valid, so nothing can be added to it: {exc}")
-
-    accepted = kept = 0
-    remaining: list[dict] = []
-    for index, raw in enumerate(waiting):
-        if limit and index >= limit:
-            remaining.extend(waiting[index:])
-            break
-        console.print()
+    if accept_all:
         console.print(
-            f"[bold]{escape(str(raw.get('topic', '')))}[/bold] "
-            f"[dim]({raw.get('kind')}, from {escape(str(raw.get('source', '')))})[/dim]"
+            f"About to add [bold]{len(groups)}[/bold] entries to {path.name} "
+            f"({sum(g.support for g in groups)} proposals, repeats collapsed)."
         )
-        console.print(f"  {escape(str(raw.get('rule', '')))}")
-        console.print(f'  [dim]source says: "{escape(str(raw.get("quote", "")))}"[/dim]')
-        choice = typer.prompt("  [a]ccept, [s]kip, [q]uit", default="s").strip().lower()[:1]
-        if choice == "q":
-            remaining.extend(waiting[index:])
-            break
-        if choice != "a":
-            kept += 1
-            continue
+        if not typer.confirm("Go ahead?", default=False):
+            console.print("[dim]Nothing written.[/dim]")
+            return
 
-        # Plain and predictable, because the owner edits this file by hand.
+    def take(group: Any) -> tuple[bool, str]:
+        """Write one group's lead into the file body. Returns (written, why not)."""
+        nonlocal body
+        raw = group.lead
         number = 1
         while f"mined-{number}" in existing_ids:
             number += 1
@@ -1594,14 +1720,13 @@ def facts_review(
             low=raw.get("low"),
             high=raw.get("high"),
             unit=str(raw.get("unit", "")),
+            support=group.support,
         )
         section = "ordinances" if proposal.kind == "ordinance" else "costs"
         try:
             candidate = insert_into_facts(body, section, as_yaml_entry(proposal, entry_id))
         except CannotInsert as exc:
-            console.print(f"[red]Skipped: {escape(str(exc))}[/red]")
-            kept += 1
-            continue
+            return False, str(exc)
         # Written only once it parses. A file that does not load takes Jay's whole fact
         # layer with it, and that is not a trade worth making for one entry.
         try:
@@ -1609,23 +1734,65 @@ def facts_review(
 
             yaml.safe_load(candidate)
         except Exception as exc:
-            console.print(f"[red]Skipped: that entry would break the file ({exc}).[/red]")
-            kept += 1
-            continue
+            return False, f"that entry would break the file ({exc})"
         body = candidate
         existing_ids.add(entry_id)
+        return True, ""
+
+    accepted = declined = 0
+    decided: set[int] = set()
+    skip_topics: set[str] = set()
+    for group in groups:
+        if not accept_all and group.topic in skip_topics:
+            continue
+        if accept_all:
+            choice = "a"
+        else:
+            console.print()
+            console.print(
+                f"[bold]{escape(str(group.lead.get('topic', '')))}[/bold] "
+                f"[dim]({group.kind}"
+                + (f", {group.support} sources say it" if group.support > 1 else "")
+                + (", you already cover this subject" if group.known else "")
+                + f", from {escape(group.sources()[0][:44] if group.sources() else '?')})[/dim]"
+            )
+            console.print(f"  {escape(str(group.lead.get('rule', '')))}")
+            console.print(f'  [dim]source says: "{escape(str(group.lead.get("quote", "")))}"[/dim]')
+            choice = (
+                typer.prompt("  [a]ccept, [s]kip, skip this [t]opic, [q]uit", default="s")
+                .strip()
+                .lower()[:1]
+            )
+        if choice == "q":
+            break
+        if choice == "t":
+            skip_topics.add(group.topic)
+            continue
+        if choice != "a":
+            declined += 1
+            decided.update(group.indices)
+            continue
+
+        written, why = take(group)
+        if not written:
+            console.print(f"[red]Skipped: {escape(why)}[/red]")
+            continue
         accepted += 1
+        # Every passage that quoted this sentence is answered by the one entry.
+        decided.update(group.indices)
 
     if accepted:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(body, encoding="utf-8")
+    remaining = [raw for index, raw in enumerate(waiting) if index not in decided]
+    saved = _load_proposals(settings)
     saved["proposals"] = remaining
     _save_proposals(settings, saved)
 
     console.print()
     console.print(
-        f"[green]✓[/green] Accepted {accepted} into {path.name}, skipped {kept}, "
-        f"{len(remaining)} left."
+        f"[green]✓[/green] Accepted {accepted} into {path.name}, turned down {declined}, "
+        f"{len(remaining)} proposals left."
     )
     if accepted:
         console.print("[dim]Run `mark facts validate`, then restart `mark serve`.[/dim]")

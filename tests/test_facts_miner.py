@@ -14,6 +14,9 @@ from markai.facts_miner import (
     build_batch_prompt,
     candidates_in,
     estimate,
+    fingerprint,
+    group_proposals,
+    has_a_price,
     insert_into_facts,
     mine,
     quote_is_real,
@@ -239,6 +242,114 @@ def test_the_estimate_is_in_dollars():
     plan = estimate([("c", "t", "x" * 1200)] * 120)
     assert plan["batches"] == 10
     assert 0.3 < plan["usd"] < 3.0, "cheap enough to run, dear enough to be told first"
+    assert plan["usd_max"] > plan["usd"], "the owner decides against the worst case"
+
+
+def test_the_estimate_covers_what_the_first_real_run_cost():
+    """2640 passages of about 1190 characters came to $12.36. The estimate has to cover it.
+
+    The first version quoted $8.21 for that run because it allowed 700 output tokens per
+    *request*, and the reply is entries, which scale with passages.
+    """
+    plan = estimate([("c", "t", "x" * 1190)] * 2640)
+    assert plan["usd"] >= 12.36, f"undershot again: ${plan['usd']:.2f}"
+    assert plan["usd"] < 20.0, "generous, not alarming"
+
+
+# --- a pile too big to walk one at a time -------------------------------------------------
+
+
+def _raw(topic, rule, quote, source, kind="ordinance", **extra):
+    return {
+        "kind": kind,
+        "topic": topic,
+        "rule": rule,
+        "quote": quote,
+        "source": source,
+        **extra,
+    }
+
+
+def test_the_same_sentence_from_four_posts_is_one_decision():
+    quote = "The landlord must return the deposit within 45 days."
+    waiting = [
+        _raw("security deposit", "Return it in 45 days.", quote, f"Post {n}") for n in range(4)
+    ]
+    groups = group_proposals(waiting)
+    assert len(groups) == 1
+    assert groups[0].support == 4, "it says how many of their sources stated it"
+    assert len(groups[0].sources()) == 4
+    assert groups[0].indices == [0, 1, 2, 3], "accepting it answers all four"
+
+
+def test_two_rules_that_differ_in_a_number_stay_two_rules():
+    waiting = [
+        _raw("deposit", "45 days.", "Return the deposit within 45 days.", "A"),
+        _raw("deposit", "30 days.", "Return the deposit within 30 days.", "B"),
+    ]
+    assert len(group_proposals(waiting)) == 2, "guessing these are the same merges a number"
+
+
+def test_a_price_and_a_rule_quoting_one_sentence_are_not_merged():
+    quote = "A new boiler runs $8,000 and must be permitted."
+    waiting = [
+        _raw("boiler", "Needs a permit.", quote, "A"),
+        _raw("boiler", "$8,000.", quote, "B", kind="cost", low=8000, high=8000),
+    ]
+    assert len({fingerprint(raw) for raw in waiting}) == 2
+
+
+def test_subjects_the_owner_already_covers_go_to_the_back():
+    waiting = [
+        _raw("heat ordinance", "68 degrees.", "Heat must reach 68 degrees by day.", "A"),
+        _raw("radon testing", "Test it.", "A radon test is required within 30 days.", "B"),
+    ]
+    groups = group_proposals(waiting, known_terms=frozenset({"heat", "ordinance"}))
+    assert [g.lead["topic"] for g in groups] == ["radon testing", "heat ordinance"]
+    assert groups[-1].known is True, "so the prompt can say you already have one of these"
+
+
+def test_one_subject_arrives_together():
+    waiting = [
+        _raw(
+            "deposit interest", "Pay interest.", "Interest is due on deposits over 6 months.", "A"
+        ),
+        _raw("snow removal", "Shovel it.", "Snow must be cleared within 24 hours.", "B"),
+        _raw("deposit return", "45 days.", "Return the deposit within 45 days.", "C"),
+    ]
+    topics = [g.topic for g in group_proposals(waiting)]
+    assert topics[0] == topics[1], "both deposit rules, then the snow one"
+
+
+def test_the_lead_of_a_group_is_the_one_worth_reading():
+    quote = "Heat must reach 68 degrees during the day."
+    waiting = [
+        _raw("heat", "68 by day.", quote, "Short post"),
+        _raw("heat", "68 degrees from 8:30am to 10:30pm.", quote, "Long post", citation="5-12-110"),
+    ]
+    (group,) = group_proposals(waiting)
+    assert group.lead["citation"] == "5-12-110", "a cited entry beats an uncited one"
+
+
+def test_a_price_with_no_number_never_reaches_the_file():
+    assert (
+        has_a_price(_raw("boiler", "It is dear.", "A boiler is dear.", "A", kind="cost")) is False
+    )
+    assert has_a_price(_raw("boiler", "$8k.", "A boiler is $8,000.", "A", kind="cost", low=8000))
+    assert has_a_price(_raw("heat", "68.", "Heat must reach 68.", "A")) is True
+
+
+def test_an_entry_says_how_many_sources_stated_it():
+    proposal = Proposal(
+        kind="ordinance",
+        topic="heat",
+        rule="68 degrees by day.",
+        quote="Heat must reach 68 degrees during the day.",
+        source_title="A post",
+        support=4,
+    )
+    entry = yaml.safe_load(insert_into_facts("", "ordinances", as_yaml_entry(proposal, "mined-1")))
+    assert "stated in 4 of your sources" in entry["ordinances"][0]["notes"]
 
 
 # --- writing it down ----------------------------------------------------------------------

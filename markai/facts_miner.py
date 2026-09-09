@@ -107,6 +107,7 @@ class Proposal:
     high: float | None = None
     unit: str = ""
     verified: bool = True
+    support: int = 1  # how many passages quoted this same sentence
 
     def to_dict(self) -> dict[str, Any]:
         data = {
@@ -245,23 +246,197 @@ def candidates_in(
     return found, seen
 
 
-def estimate(candidates: list[tuple[str, str, str]], batch_size: int = DEFAULT_BATCH) -> dict:
-    """Roughly what a run will cost, before the owner spends it.
+# Priced off the first full run over the real corpus, which is the only measurement there
+# is: 2640 passages, 220 requests, $12.36. The reply was about 115 output tokens per
+# passage - the model found roughly one entry every second passage, and an entry carries a
+# quote - against a flat 700 per *request* this used to assume, which is why the estimate
+# came in at $8.21 and the bill did not. Output scales with passages, not with requests.
+CHARS_PER_TOKEN = 3.6  # escaped markup runs denser than prose
+INPUT_TOKENS_PER_BATCH = 500  # the system prompt rides on every request
+OUTPUT_TOKENS_PER_PASSAGE = 120
+OUTPUT_TOKENS_PER_BATCH = 200  # the JSON envelope, even on a batch that finds nothing
+CEILING = 1.25  # what to quote as the worst case, since the average is only an average
 
-    Deliberately generous: a surprise on the bill is worse than a surprise that it came in
-    under. Characters over four for tokens, plus a fixed allowance for the reply.
+IN_USD_PER_MTOK = 5.0
+OUT_USD_PER_MTOK = 25.0
+
+
+def estimate(candidates: list[tuple[str, str, str]], batch_size: int = DEFAULT_BATCH) -> dict:
+    """What a run will cost, before the owner spends it.
+
+    Two numbers, because one number pretending to be exact is what went wrong the first
+    time: ``usd`` is the expected bill and ``usd_max`` the figure to decide against. A run
+    that finds more rules than average costs more, and the owner would rather hear the
+    ceiling now than read it on the invoice.
     """
     chars = sum(len(text[:MAX_PASSAGE_CHARS]) for _, _, text in candidates)
     batches = max(1, -(-len(candidates) // batch_size)) if candidates else 0
-    input_tokens = int(chars / 4) + batches * 400  # the system prompt rides on each batch
-    output_tokens = batches * 700
+    input_tokens = int(chars / CHARS_PER_TOKEN) + batches * INPUT_TOKENS_PER_BATCH
+    output_tokens = len(candidates) * OUTPUT_TOKENS_PER_PASSAGE + batches * OUTPUT_TOKENS_PER_BATCH
+    usd = input_tokens / 1_000_000 * IN_USD_PER_MTOK + output_tokens / 1_000_000 * OUT_USD_PER_MTOK
     return {
         "passages": len(candidates),
         "batches": batches,
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
-        "usd": input_tokens / 1_000_000 * 5.0 + output_tokens / 1_000_000 * 25.0,
+        "usd": usd,
+        "usd_max": usd * CEILING,
     }
+
+
+# --- reading a big pile of proposals ------------------------------------------------------
+
+# A full run over the corpus came back with 1305 proposals, and a command that shows those
+# one at a time is a command nobody finishes. Most of the pile is repetition: the same
+# sentence about the heat ordinance sits in four blog posts and gets quoted four times. So
+# identical quotes collapse into one entry that names how many sources said it, and what is
+# left is ordered by topic, so a landlord's whole "security deposit" pile arrives together
+# and can be dealt with in one decision instead of eleven.
+
+_NUMBER = re.compile(r"\d+(?:[.,]\d+)?")
+
+
+def fingerprint(raw: dict) -> str:
+    """What makes two proposals the same proposal.
+
+    The quote, normalised. Two passages that quote the same sentence are one rule, whoever
+    republished it; two passages that say the same thing in different words are not, and
+    guessing that they are would merge rules that differ in a number.
+    """
+    quote = _normalise(raw.get("quote", ""))
+    return f"{raw.get('kind', 'ordinance')}|{quote or _normalise(raw.get('rule', ''))}"
+
+
+# A word that turns up in nearly every topic is not a subject, it is the vocabulary of the
+# whole corpus. "Tenant" or "chicago" would collect everything into one pile, so a term is
+# only allowed to name a subject if it stays under this share of the topics.
+MAX_SUBJECT_SHARE = 0.4
+
+
+def topic_terms(raw: dict) -> set[str]:
+    from markai.sources.facts import terms_in
+
+    return terms_in(str(raw.get("topic", "")))
+
+
+def topic_key(raw: dict, counts: dict[str, int] | None = None, ceiling: int = 0) -> str:
+    """The subject a proposal belongs to, for ordering and for "skip this topic".
+
+    The word its topic shares with the most other proposals, which is what makes a pile a
+    pile: "deposit interest" and "deposit return" both land under ``deposit``. Without the
+    counts to compare against it falls back to the topic's own words.
+    """
+    words = topic_terms(raw)
+    if not words:
+        return _normalise(raw.get("topic", "")) or "other"
+    if not counts:
+        return " ".join(sorted(words))
+    usable = [word for word in words if counts.get(word, 0) <= ceiling] or sorted(words)
+    return sorted(usable, key=lambda word: (-counts.get(word, 0), word))[0]
+
+
+@dataclass
+class ProposalGroup:
+    """One rule, the passages that stated it, and where it sits in the review queue."""
+
+    lead: dict
+    raws: list[dict] = field(default_factory=list)
+    indices: list[int] = field(default_factory=list)
+    topic: str = ""
+    known: bool = False
+
+    @property
+    def support(self) -> int:
+        """How many of the owner's own sources state this."""
+        return len(self.raws)
+
+    @property
+    def kind(self) -> str:
+        return str(self.lead.get("kind", "ordinance"))
+
+    def sources(self) -> list[str]:
+        seen: list[str] = []
+        for raw in self.raws:
+            title = str(raw.get("source", ""))
+            if title and title not in seen:
+                seen.append(title)
+        return seen
+
+
+def _lead_of(raws: list[dict]) -> dict:
+    """The one to show. A cited, fully written entry beats a terse one, ties broken by name."""
+    return max(
+        raws,
+        key=lambda raw: (
+            bool(str(raw.get("citation", "")).strip()),
+            min(len(str(raw.get("rule", ""))), 400),
+            str(raw.get("source", "")),
+        ),
+    )
+
+
+def group_proposals(
+    raws: list[dict], known_terms: frozenset[str] = frozenset()
+) -> list[ProposalGroup]:
+    """Collapse repeats, mark what the owner already has a rule about, and order the queue.
+
+    ``known_terms`` is the vocabulary of ``facts.yaml``. A proposal whose topic is already
+    covered there goes to the back and is labelled, because the owner has already made that
+    decision and a second rule on the same subject is usually the one they do not want.
+    """
+    from markai.sources.facts import terms_in
+
+    order: list[str] = []
+    by_print: dict[str, ProposalGroup] = {}
+    for index, raw in enumerate(raws):
+        key = fingerprint(raw)
+        group = by_print.get(key)
+        if group is None:
+            group = ProposalGroup(lead=raw)
+            by_print[key] = group
+            order.append(key)
+        group.raws.append(raw)
+        group.indices.append(index)
+
+    groups = [by_print[key] for key in order]
+    for group in groups:
+        group.lead = _lead_of(group.raws)
+        group.known = bool(known_terms and terms_in(str(group.lead.get("topic", ""))) & known_terms)
+
+    counts: dict[str, int] = {}
+    for group in groups:
+        for word in topic_terms(group.lead):
+            counts[word] = counts.get(word, 0) + 1
+    ceiling = max(2, int(len(groups) * MAX_SUBJECT_SHARE))
+    for group in groups:
+        group.topic = topic_key(group.lead, counts, ceiling)
+
+    # Topics first, best-supported topic first, so one subject is reviewed in one sitting.
+    weight: dict[tuple[bool, str], int] = {}
+    for group in groups:
+        cluster = (group.known, group.topic)
+        weight[cluster] = weight.get(cluster, 0) + group.support
+    groups.sort(
+        key=lambda g: (
+            g.known,
+            -weight[(g.known, g.topic)],
+            g.topic,
+            -g.support,
+            str(g.lead.get("topic", "")),
+        )
+    )
+    return groups
+
+
+def has_a_price(raw: dict) -> bool:
+    """Whether a cost proposal actually carries a price.
+
+    A cost entry with no number becomes "$0 to $0" in the fact block, which is not a
+    missing answer but a wrong one, so it never reaches the file.
+    """
+    if raw.get("kind") != "cost":
+        return True
+    return bool(raw.get("low") or raw.get("high"))
 
 
 def as_yaml_entry(proposal: Proposal, entry_id: str) -> str:
@@ -274,6 +449,10 @@ def as_yaml_entry(proposal: Proposal, entry_id: str) -> str:
     def quoted(value: str) -> str:
         return json.dumps(str(value))  # JSON strings are valid YAML and escape themselves
 
+    note = "From: " + proposal.quote
+    if proposal.support > 1:
+        note += f" (stated in {proposal.support} of your sources)"
+
     lines = [f"  - id: {entry_id}"]
     if proposal.kind == "ordinance":
         lines.append(f"    jurisdiction: {quoted(proposal.jurisdiction or 'Chicago')}")
@@ -282,14 +461,14 @@ def as_yaml_entry(proposal: Proposal, entry_id: str) -> str:
         lines.append(f"    citation: {quoted(proposal.citation or proposal.source_title)}")
         if proposal.source_url:
             lines.append(f"    url: {quoted(proposal.source_url)}")
-        lines.append(f"    notes: {quoted('From: ' + proposal.quote)}")
+        lines.append(f"    notes: {quoted(note)}")
     else:
         lines.append(f"    item: {quoted(proposal.topic)}")
         lines.append(f"    low: {proposal.low or 0}")
         lines.append(f"    high: {proposal.high or proposal.low or 0}")
         lines.append(f"    unit: {quoted(proposal.unit or 'per job')}")
         lines.append(f"    source: {quoted(proposal.source_title)}")
-        lines.append(f"    notes: {quoted('From: ' + proposal.quote)}")
+        lines.append(f"    notes: {quoted(note)}")
     return "\n".join(lines)
 
 

@@ -1563,3 +1563,138 @@ def test_one_landlord_never_gets_anothers_memory(settings, store):
     _ask(client, "t1", "Something about my building", browser="b1")
     _ask(client, "t2", "A different question", browser="b2")
     assert advisor.remembered == []
+
+
+# --- reviewing a big pile of mined proposals ---------------------------------------------
+
+
+def _waiting(tmp_path, monkeypatch, proposals):
+    """A manifest, a data dir, and a proposals file, as `mark facts mine` would leave it."""
+    manifest = tmp_path / "sources.yaml"
+    manifest.write_text(
+        "business:\n  name: GC Realty\nsources: []\n",
+        encoding="utf-8",
+    )
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "facts-proposals.json").write_text(
+        json.dumps({"read_chunk_ids": [], "proposals": proposals}), encoding="utf-8"
+    )
+    monkeypatch.setenv("MARKAI_SOURCES_FILE", str(manifest))
+    monkeypatch.setenv("MARKAI_DATA_DIR", str(data))
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    return manifest, data
+
+
+def _proposal(topic, rule, quote, source, **extra):
+    return {
+        "kind": "ordinance",
+        "topic": topic,
+        "rule": rule,
+        "quote": quote,
+        "source": source,
+        "url": None,
+        "verified_quote": True,
+        "jurisdiction": "Chicago",
+        "citation": "",
+        **extra,
+    }
+
+
+def test_facts_proposals_collapses_the_repeats(tmp_path, monkeypatch):
+    quote = "The landlord must return the deposit within 45 days of the tenant vacating."
+    _waiting(
+        tmp_path,
+        monkeypatch,
+        [
+            _proposal("security deposit", "Return it in 45 days.", quote, f"Post {n}")
+            for n in range(4)
+        ]
+        + [
+            _proposal(
+                "heat ordinance",
+                "68 degrees by day.",
+                "Heat must reach 68 degrees during the day.",
+                "A post",
+            )
+        ],
+    )
+    result = runner.invoke(app, ["facts", "proposals"])
+    assert result.exit_code == 0
+    assert "5 proposals" in result.stdout
+    assert "2 distinct rules" in result.stdout, "four posts quoting one sentence is one decision"
+
+
+def test_facts_review_accepts_a_filtered_set_in_one_go(tmp_path, monkeypatch):
+    quote = "The landlord must return the deposit within 45 days of the tenant vacating."
+    manifest, data = _waiting(
+        tmp_path,
+        monkeypatch,
+        [
+            _proposal("security deposit", "Return it in 45 days.", quote, f"Post {n}")
+            for n in range(3)
+        ]
+        + [
+            _proposal(
+                "snow removal",
+                "Clear it in 24 hours.",
+                "Snow must be cleared within 24 hours of a storm.",
+                "A post",
+            )
+        ],
+    )
+    result = runner.invoke(
+        app, ["facts", "review", "--min-sources", "3", "--accept-all"], input="y\n"
+    )
+    assert result.exit_code == 0, result.stdout
+
+    body = (manifest.parent / "facts.yaml").read_text(encoding="utf-8")
+    assert "security deposit" in body
+    assert "snow" not in body, "the filter is the point of --accept-all"
+    assert "stated in 3 of your sources" in body
+
+    left = json.loads((data / "facts-proposals.json").read_text(encoding="utf-8"))["proposals"]
+    assert len(left) == 1, "the three that quoted one sentence are all answered"
+    assert left[0]["topic"] == "snow removal"
+
+
+def test_facts_review_can_skip_a_whole_topic(tmp_path, monkeypatch):
+    manifest, data = _waiting(
+        tmp_path,
+        monkeypatch,
+        [
+            _proposal(
+                "deposit interest", "Pay it.", "Interest is due on deposits over 6 months.", "A"
+            ),
+            _proposal("deposit return", "45 days.", "Return the deposit within 45 days.", "B"),
+        ],
+    )
+    result = runner.invoke(app, ["facts", "review"], input="t\n")
+    assert result.exit_code == 0, result.stdout
+    assert not (manifest.parent / "facts.yaml").exists(), "nothing accepted, nothing written"
+    left = json.loads((data / "facts-proposals.json").read_text(encoding="utf-8"))["proposals"]
+    assert len(left) == 2, "skipping a topic leaves it for later, it does not throw it away"
+
+
+def test_facts_review_refuses_a_price_with_no_number(tmp_path, monkeypatch):
+    _waiting(
+        tmp_path,
+        monkeypatch,
+        [
+            _proposal(
+                "boiler replacement",
+                "Boilers are expensive.",
+                "A boiler replacement is one of the most expensive jobs on a 6 flat.",
+                "A post",
+                kind="cost",
+                low=None,
+                high=None,
+                unit="per job",
+            )
+        ],
+    )
+    result = runner.invoke(app, ["facts", "review"], input="a\n")
+    assert result.exit_code == 0
+    assert "Nothing matches" in result.stdout, (
+        "a $0 to $0 price is a wrong answer, not a missing one"
+    )

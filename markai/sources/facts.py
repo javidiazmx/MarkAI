@@ -51,6 +51,15 @@ def _terms(text: str) -> set[str]:
     }
 
 
+def terms_in(text: str) -> set[str]:
+    """The words in a piece of text that carry matching signal, in either language.
+
+    Public because the fact miner needs the same vocabulary when it asks whether the owner
+    already has a rule about a subject: two different splits would disagree.
+    """
+    return _terms(text)
+
+
 class Ordinance(BaseModel):
     """One rule, as the owner states it, with the dates it applies between."""
 
