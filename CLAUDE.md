@@ -69,6 +69,10 @@ The owner runs this on Windows. Commands you hand over go in `cmd` form, or thro
 - **Mining is the only thing that spends.** `mark facts proposals` and `mark facts review`
   make no API call, and `mark facts mine --free` extracts the rule sentences with patterns
   instead of a model: no key, no call, quote and rule the same text.
+- **The review queue is ranked by demand, not by confidence.** `group_proposals` takes the
+  questions from `mark gaps` and the thumbs-down from `mark feedback` and puts the
+  proposals that would have answered one of them first. A fact layer is worth what it
+  answers; nobody is going to review nine hundred subjects.
 - **`facts_miner` proposes, the owner disposes.** Every mined entry quotes its passage and
   the quote is verified against it; an unverified one is dropped, never shown. Nothing is
   written to `facts.yaml` outside `mark facts review`, and the section key is never written

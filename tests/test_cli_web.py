@@ -1883,3 +1883,81 @@ def test_facts_proposals_can_leave_the_market_rents_out(tmp_path, monkeypatch):
     without = runner.invoke(app, ["facts", "proposals", "--no-rents"])
     assert "Average apartment rent" not in without.stdout
     assert "Boiler replacement" in without.stdout
+
+
+def test_facts_drop_clears_a_slice_and_never_touches_the_file(tmp_path, monkeypatch):
+    manifest, data = _waiting(
+        tmp_path,
+        monkeypatch,
+        [
+            _proposal(
+                "Average apartment rent",
+                "$2,100.",
+                "The average apartment rent must be around $2,100 a month.",
+                "Post A",
+                kind="cost",
+                low=2100,
+                high=2100,
+            ),
+            _proposal(
+                "security deposit interest",
+                "Interest each year.",
+                "Under RLTO 5-12-080 the landlord must pay interest every 12 months.",
+                "Post B",
+                citation="RLTO 5-12-080",
+            ),
+        ],
+    )
+    bare = runner.invoke(app, ["facts", "drop", "--yes"])
+    assert bare.exit_code != 0, "dropping everything has to be asked for by name"
+
+    result = runner.invoke(app, ["facts", "drop", "--rents", "--yes"])
+    assert result.exit_code == 0, result.stdout
+    left = json.loads((data / "facts-proposals.json").read_text(encoding="utf-8"))["proposals"]
+    assert [raw["topic"] for raw in left] == ["security deposit interest"]
+    assert not (manifest.parent / "facts.yaml").exists(), "dropping writes nothing"
+
+
+def test_facts_proposals_puts_what_landlords_asked_about_first(tmp_path, monkeypatch):
+    from markai.knowledge.chunking import chunk_document
+    from markai.knowledge.store import KnowledgeStore
+    from markai.models import Document, SourceKind
+
+    _waiting(
+        tmp_path,
+        monkeypatch,
+        [
+            _proposal(
+                "snow removal",
+                "24 hours.",
+                "Snow must be cleared within 24 hours of a storm.",
+                "Post A",
+            ),
+            _proposal(
+                "security deposit interest",
+                "Interest is due every year.",
+                "The landlord must pay interest on the deposit every 12 months.",
+                "Post B",
+            ),
+        ],
+    )
+    doc = Document(
+        id="d1",
+        kind=SourceKind.WEBSITE,
+        title="A post",
+        locator="https://example.com/1",
+        text="Something about deposits and interest that must be paid within 12 months.",
+    )
+    doc.ensure_hash()
+    store = KnowledgeStore(tmp_path / "data" / "markai.db")
+    store.upsert_document(doc, chunk_document(doc, target_words=60, overlap_words=10))
+    store.log_question(
+        "s1", "how much interest do I owe on a security deposit", "weak", [], True, {}
+    )
+    store.close()
+
+    result = runner.invoke(app, ["facts", "proposals"])
+    assert result.exit_code == 0, result.stdout
+    assert "asked about" in result.stdout
+    rows = [line for line in result.stdout.splitlines() if "│" in line and "ordinance" in line]
+    assert "deposit" in rows[0], "the one somebody asked for goes first"

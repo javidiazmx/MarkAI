@@ -1608,6 +1608,37 @@ def _dates_by_title(settings: Any) -> dict[str, str]:
         store.close()
 
 
+def _questions_that_missed(settings: Any, limit: int = 200) -> list[str]:
+    """Questions the sources answered thinly or not at all, plus the answers marked wrong.
+
+    Both are already recorded - `mark gaps` and `mark feedback` read them - and together
+    they are the only demand signal this product has. A fact layer is worth what it answers,
+    so proposals that would have answered one of these are reviewed first.
+    """
+    asked: list[str] = []
+    try:
+        store = _store(settings)
+    except Exception:
+        return asked
+    try:
+        asked.extend(str(row.get("question", "")) for row in store.list_gaps(limit))
+    except Exception:
+        pass
+    finally:
+        store.close()
+    try:
+        from markai.web.history import History
+
+        history = History(settings.data_dir / "conversations.db")
+        try:
+            asked.extend(str(row.get("question", "")) for row in history.ratings(limit, "down"))
+        finally:
+            history.close()
+    except Exception:
+        pass
+    return [question for question in asked if question.strip()]
+
+
 def _pick_groups(
     settings: Any,
     kind: str,
@@ -1615,6 +1646,9 @@ def _pick_groups(
     min_sources: int,
     new_only: bool,
     no_rents: bool = False,
+    cited_only: bool = False,
+    wanted_only: bool = False,
+    max_sources: int = 0,
 ) -> tuple[list[Any], list[dict], Path, set[str], str, int]:
     """The proposals worth showing this sitting, grouped, filtered and ordered."""
     from markai.facts_miner import group_proposals, has_a_price
@@ -1626,7 +1660,7 @@ def _pick_groups(
     known, existing_ids, body = _known_terms(path)
 
     priced = [raw for raw in waiting if has_a_price(raw)]
-    groups = group_proposals(waiting, known_terms=known)
+    groups = group_proposals(waiting, known_terms=known, asked=_questions_that_missed(settings))
     wanted = kind.lower()
     kept = []
     for group in groups:
@@ -1639,6 +1673,12 @@ def _pick_groups(
         if new_only and group.known:
             continue
         if no_rents and group.rent:
+            continue
+        if cited_only and not group.cited:
+            continue
+        if wanted_only and not group.wanted:
+            continue
+        if max_sources and group.support > max_sources:
             continue
         if not has_a_price(group.lead):
             continue  # a price with no number in it would read as "$0"
@@ -1654,6 +1694,12 @@ def facts_proposals(
     no_rents: bool = typer.Option(
         False, "--no-rents", help="Leave out market rent numbers, which go stale in a season."
     ),
+    cited: bool = typer.Option(
+        False, "--cited", help="Only rules that name a section number, not a summary of one."
+    ),
+    wanted: bool = typer.Option(
+        False, "--wanted", help="Only subjects a landlord actually asked about and missed."
+    ),
 ) -> None:
     """What is waiting in the review queue, by subject, before you sit down to it.
 
@@ -1663,7 +1709,9 @@ def facts_proposals(
     already have a rule about.
     """
     settings = _settings()
-    groups, waiting, path, _, _, priceless = _pick_groups(settings, kind, topic, 1, False, no_rents)
+    groups, waiting, path, _, _, priceless = _pick_groups(
+        settings, kind, topic, 1, False, no_rents, cited, wanted
+    )
     if not waiting:
         console.print("[yellow]Nothing waiting. Run `mark facts mine` first.[/yellow]")
         return
@@ -1697,6 +1745,10 @@ def facts_proposals(
     table.add_column("Note")
     for group in groups[: limit or len(groups)]:
         notes = []
+        if group.wanted:
+            notes.append("[bold]asked about[/bold]")
+        if group.cited:
+            notes.append("cites a section")
         if group.known:
             notes.append("you cover this")
         if group.rent:
@@ -1718,12 +1770,31 @@ def facts_proposals(
             f"facts block Jay would state it as current. Add [bold]--no-rents[/bold] to "
             f"leave them out.[/dim]"
         )
+    asked_about = [g for g in groups if g.wanted]
+    cited_ones = [g for g in groups if g.cited]
+    console.print(
+        f"\n[dim]A fact layer is worth what it answers. You do not want {len(groups)} "
+        f"entries in it, you want the ones somebody asked for.[/dim]"
+    )
+    if asked_about:
+        console.print(
+            f"  [bold]mark facts review --wanted[/bold]  [dim]{len(asked_about)} that would "
+            f"have answered a question your sources missed[/dim]"
+        )
+    if cited_ones:
+        console.print(
+            f"  [bold]mark facts review --cited[/bold]  [dim]{len(cited_ones)} that name a "
+            f"section number, so they are the rule and not a summary[/dim]"
+        )
     if corroborated:
         console.print(
-            f"\n[dim]The {len(corroborated)} rules three or more of your sources state are "
-            f"the safest place to start:[/dim]\n"
-            f"  [bold]mark facts review --min-sources 3 --no-rents[/bold]"
+            f"  [bold]mark facts review --min-sources 3 --no-rents[/bold]  [dim]"
+            f"{len(corroborated)} that three or more of your sources state[/dim]"
         )
+    console.print(
+        "[dim]`mark facts drop` clears a slice you are never going to want, so the queue "
+        "stops looking like a thousand decisions.[/dim]"
+    )
 
 
 @facts_app.command("review")
@@ -1739,6 +1810,12 @@ def facts_review(
     ),
     no_rents: bool = typer.Option(
         False, "--no-rents", help="Leave out market rent numbers, which go stale in a season."
+    ),
+    cited: bool = typer.Option(
+        False, "--cited", help="Only rules that name a section number, not a summary of one."
+    ),
+    wanted: bool = typer.Option(
+        False, "--wanted", help="Only subjects a landlord actually asked about and missed."
     ),
     accept_all: bool = typer.Option(
         False, "--accept-all", help="Accept everything that matches, without asking one by one."
@@ -1759,7 +1836,7 @@ def facts_review(
 
     settings = _settings()
     groups, waiting, path, existing_ids, body, _ = _pick_groups(
-        settings, kind, topic, min_sources, new_only, no_rents
+        settings, kind, topic, min_sources, new_only, no_rents, cited, wanted
     )
     if not waiting:
         console.print("[yellow]Nothing to review. Run `mark facts mine` first.[/yellow]")
@@ -1840,6 +1917,7 @@ def facts_review(
                 + (f", {group.support} sources say it" if group.support > 1 else "")
                 + (", you already cover this subject" if group.known else "")
                 + (", a market rent that will go stale" if group.rent else "")
+                + (", somebody asked about this" if group.wanted else "")
                 + (
                     f", page dated {escape(str(group.lead.get('source_date', '')))[:10]}"
                     if group.lead.get("source_date")
@@ -1887,6 +1965,84 @@ def facts_review(
     )
     if accepted:
         console.print("[dim]Run `mark facts validate`, then restart `mark serve`.[/dim]")
+
+
+@facts_app.command("drop")
+def facts_drop(
+    kind: str = typer.Option("all", "--kind", help="all, ordinance or cost."),
+    topic: str = typer.Option("", "--topic", help="Only topics containing this word."),
+    rents: bool = typer.Option(False, "--rents", help="Drop the market rent numbers."),
+    max_sources: int = typer.Option(
+        0, "--max-sources", help="Only what this many or fewer of your sources state."
+    ),
+    uncited: bool = typer.Option(
+        False, "--uncited", help="Drop the ones that name no section number."
+    ),
+    covered: bool = typer.Option(
+        False, "--covered", help="Drop subjects facts.yaml already has a rule about."
+    ),
+    yes: bool = typer.Option(False, "--yes", help="Do not ask."),
+) -> None:
+    """Clear a slice of the queue you are never going to want.
+
+    Nine hundred subjects waiting is not a to-do list, it is a reason to stop opening the
+    command. This throws a filtered slice away - `--rents`, `--max-sources 1`, `--uncited` -
+    so what is left is a list you might actually finish. It never touches facts.yaml, and
+    what it drops is only ever a proposal: the sentence is still in your sources, and
+    `mark facts mine --restart` would find it again.
+    """
+    from markai.facts_miner import cites_a_section, group_proposals, is_market_rent
+    from markai.sources.facts import facts_path
+
+    settings = _settings()
+    saved = _load_proposals(settings)
+    waiting = list(saved.get("proposals", []))
+    if not waiting:
+        console.print("[yellow]Nothing waiting.[/yellow]")
+        return
+    if not (rents or max_sources or uncited or covered or topic or kind.lower() != "all"):
+        _fail(
+            "That would drop everything.",
+            "Name a slice: --rents, --max-sources 1, --uncited, --covered, --kind cost, "
+            "--topic <word>.",
+        )
+
+    known, _, _ = _known_terms(facts_path(settings.sources_file))
+    groups = group_proposals(waiting, known_terms=known)
+    wanted_kind = kind.lower()
+    doomed: set[int] = set()
+    for group in groups:
+        if wanted_kind in ("ordinance", "cost") and group.kind != wanted_kind:
+            continue
+        if topic and topic.lower() not in str(group.lead.get("topic", "")).lower():
+            continue
+        if rents and not is_market_rent(group.lead):
+            continue
+        if uncited and cites_a_section(group.lead):
+            continue
+        if covered and not group.known:
+            continue
+        if max_sources and group.support > max_sources:
+            continue
+        doomed.update(group.indices)
+
+    if not doomed:
+        console.print("[yellow]Nothing matches that.[/yellow]")
+        return
+    console.print(
+        f"About to drop [bold]{len(doomed)}[/bold] proposals from the queue. "
+        f"[dim]facts.yaml is untouched; nothing is written and nothing is deleted from your "
+        f"sources.[/dim]"
+    )
+    if not yes and not typer.confirm("Go ahead?", default=False):
+        console.print("[dim]Nothing dropped.[/dim]")
+        return
+
+    saved["proposals"] = [raw for index, raw in enumerate(waiting) if index not in doomed]
+    _save_proposals(settings, saved)
+    console.print(
+        f"[green]✓[/green] Dropped {len(doomed)}. {len(saved['proposals'])} proposals left."
+    )
 
 
 @facts_app.command("probe")

@@ -654,3 +654,44 @@ def test_the_label_carries_the_page_its_date_and_a_usable_link(mined_store):
     # citation still needs somewhere to point.
     assert url == "https://example.com/0"
     assert split_label("Old style␟https://x.test/1") == ("Old style", "https://x.test/1", "")
+
+
+# --- finding the ones that matter ---------------------------------------------------------
+
+
+def test_a_rule_that_names_its_section_is_marked():
+    from markai.facts_miner import cites_a_section
+
+    assert cites_a_section(
+        _raw("deposit interest", "Interest each year.", "Under RLTO 5-12-080 you must pay it.", "A")
+    )
+    assert cites_a_section(_raw("notice", "30 days.", "765 ILCS 705 requires 30 days notice.", "A"))
+    assert not cites_a_section(
+        _raw("railing", "42 inches.", "A porch railing must be 42 inches high.", "A")
+    ), "a number is not a citation"
+
+
+def test_a_subject_somebody_asked_about_comes_first():
+    from markai.facts_miner import group_proposals
+
+    waiting = [
+        _raw("snow removal", "24 hours.", "Snow must be cleared within 24 hours.", "A"),
+        _raw(
+            "security deposit interest",
+            "Interest is due each year.",
+            "The landlord must pay interest on the deposit every 12 months.",
+            "B",
+        ),
+    ]
+    asked = ["how much interest do I owe on a security deposit"]
+    groups = group_proposals(waiting, asked=asked)
+    assert groups[0].lead["topic"] == "security deposit interest"
+    assert groups[0].wanted is True
+    assert groups[1].wanted is False, "one shared word is not a match"
+
+
+def test_nothing_is_wanted_when_nobody_has_asked_anything():
+    from markai.facts_miner import group_proposals
+
+    groups = group_proposals([_raw("snow", "24 hours.", "Snow must go within 24 hours.", "A")])
+    assert groups[0].wanted is False

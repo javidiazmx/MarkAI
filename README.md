@@ -389,10 +389,30 @@ with subjects `facts.yaml` already covers at the back and labelled. Filter it an
 slice in one go:
 
 ```bash
-mark facts proposals                              # what is in there, by subject
-mark facts review --min-sources 3 --accept-all    # the rules three of your sources agree on
-mark facts review --kind cost --topic boiler     # or one subject at a time
+mark facts proposals                            # what is in there, by subject
+mark facts review --wanted                      # subjects a landlord asked about and missed
+mark facts review --cited                       # rules that name a section number
+mark facts review --min-sources 3 --accept-all  # what three of your sources agree on
+mark facts drop --rents --max-sources 1         # clear a slice you are never going to want
 ```
+
+**You do not want nine hundred entries in `facts.yaml`.** A fact layer is worth what it
+answers, and a mined corpus proposes far more than anyone reviews. Three orderings make the
+pile purposeful, and they are what `facts proposals` now leads with:
+
+- `--wanted` is the one that matters. It reads the questions landlords actually asked that
+  the sources answered thinly or not at all (`mark gaps`) plus the answers they marked wrong
+  (`mark feedback`), and puts the proposals that would have answered one of those first.
+- `--cited` is the quality signal: a proposal that names a section number, an ILCS cite or
+  the RLTO is the rule itself rather than somebody's summary of it. Your own file refuses an
+  ordinance with no citation, and these are the ones that can satisfy it honestly.
+- `--min-sources 3` is corroboration: three of your own pages saying the same thing.
+
+`mark facts drop` is the other half. Nine hundred subjects waiting is not a to-do list, it
+is a reason to stop opening the command, so this throws a filtered slice away - the rents,
+the single-source ones, the uncited ones, subjects you already cover. It writes nothing and
+deletes nothing from your sources: the sentence is still there, and `mark facts mine
+--restart` would find it again.
 
 In the one-at-a-time mode, `t` drops a whole subject without deciding it away. A cost
 proposal with no number in it is never offered: "$0 to $0" in the fact block is not a

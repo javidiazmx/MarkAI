@@ -533,6 +533,25 @@ def same_fact(raw: dict) -> str:
     return f"{number_key(raw)}|{topic}"
 
 
+# A rule that names where it comes from - a section number, an ILCS cite, "the RLTO" - is
+# the real thing rather than somebody's summary of it, and the owner's own file refuses an
+# ordinance with no citation. There are far fewer of these than there are proposals, which
+# is exactly why they are worth finding first.
+_SECTION = re.compile(
+    r"(\b\d{1,3}-\d{1,2}-\d{2,4}\b|\b\d{2,3}\s*ILCS\s*\d|\bRLTO\b|"
+    r"\bsection\s+\d|\bmunicipal code\b|\bordinance\s+no\b|\b\d{2,3}\s*U\.?S\.?C\b)",
+    re.IGNORECASE,
+)
+
+
+def cites_a_section(raw: dict) -> bool:
+    """Whether the proposal names the rule it comes from, not just the page it was read on."""
+    citation = str(raw.get("citation", ""))
+    if citation and citation != str(raw.get("source", "")) and _SECTION.search(citation):
+        return True
+    return bool(_SECTION.search(str(raw.get("rule", "")) + " " + str(raw.get("quote", ""))))
+
+
 # Market rents are not job costs. They arrive in the same shape - a topic and a dollar range
 # - and the corpus is full of them, but a tuckpointing quote from 2023 is roughly still true
 # and last season's asking rent is not. They are labelled so the owner can leave them out.
@@ -584,6 +603,8 @@ class ProposalGroup:
     topic: str = ""
     known: bool = False
     rent: bool = False  # a market rent number rather than what a job costs
+    cited: bool = False  # names a section number, so it is the rule and not a summary
+    wanted: bool = False  # a landlord actually asked something this would have answered
 
     @property
     def support(self) -> int:
@@ -642,14 +663,24 @@ def _lead_of(raws: list[dict]) -> dict:
     )
 
 
+MIN_WANTED_OVERLAP = 2
+
+
 def group_proposals(
-    raws: list[dict], known_terms: frozenset[str] = frozenset()
+    raws: list[dict],
+    known_terms: frozenset[str] = frozenset(),
+    asked: list[str] | None = None,
 ) -> list[ProposalGroup]:
     """Collapse repeats, mark what the owner already has a rule about, and order the queue.
 
     ``known_terms`` is the vocabulary of ``facts.yaml``. A proposal whose topic is already
     covered there goes to the back and is labelled, because the owner has already made that
     decision and a second rule on the same subject is usually the one they do not want.
+
+    ``asked`` is the questions landlords actually put to Jay and the sources answered badly.
+    A proposal that would have answered one of those goes first, ahead of everything else,
+    because a fact layer is worth what it answers and nothing else. The owner is never going
+    to review nine hundred subjects; they are going to review the ones somebody wanted.
     """
     from markai.sources.facts import terms_in
 
@@ -680,6 +711,7 @@ def group_proposals(
         group.lead = _lead_of(group.raws)
         group.known = bool(known_terms and terms_in(str(group.lead.get("topic", ""))) & known_terms)
         group.rent = is_market_rent(group.lead)
+        group.cited = cites_a_section(group.lead)
 
     counts: dict[str, int] = {}
     for group in groups:
@@ -689,16 +721,33 @@ def group_proposals(
     for group in groups:
         group.topic = topic_key(group.lead, counts, ceiling)
 
-    # Topics first, best-supported topic first, so one subject is reviewed in one sitting.
+    wanted_terms = [terms_in(question) for question in (asked or []) if question]
+    for group in groups:
+        if not wanted_terms:
+            continue
+        mine = terms_in(str(group.lead.get("topic", "")) + " " + str(group.lead.get("rule", "")))
+        group.wanted = any(len(mine & question) >= MIN_WANTED_OVERLAP for question in wanted_terms)
+
+    # Topics stay together - one subject is reviewed in one sitting - but a subject somebody
+    # asked about comes first, then one that names a section number, then the rest by how
+    # many sources back it.
     weight: dict[tuple[bool, str], int] = {}
+    asked_for: dict[tuple[bool, str], bool] = {}
+    has_cite: dict[tuple[bool, str], bool] = {}
     for group in groups:
         cluster = (group.known, group.topic)
         weight[cluster] = weight.get(cluster, 0) + group.support
+        asked_for[cluster] = asked_for.get(cluster, False) or group.wanted
+        has_cite[cluster] = has_cite.get(cluster, False) or group.cited
     groups.sort(
         key=lambda g: (
             g.known,
+            not asked_for[(g.known, g.topic)],
+            not has_cite[(g.known, g.topic)],
             -weight[(g.known, g.topic)],
             g.topic,
+            not g.wanted,
+            not g.cited,
             -g.support,
             str(g.lead.get("topic", "")),
         )
