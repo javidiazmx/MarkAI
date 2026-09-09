@@ -399,3 +399,39 @@ def test_the_terminal_gets_it_once_per_conversation(settings, store):
     assert LEGAL_DISCLAIMER in first.text
     second = advisor.ask("And if I keep part of it for damage?", conversation)
     assert LEGAL_DISCLAIMER not in second.text, "said once, it lands; said twice, it is furniture"
+
+
+def test_a_gap_is_logged_from_the_retrieval_not_from_the_wording(settings, store):
+    """Jay no longer announces a gap out loud, so `mark gaps` reads the retrieval instead.
+
+    The old signal was the model saying a fixed sentence, which made the owner's list of
+    missing material depend on Jay's phrasing rather than on what the sources hold.
+    """
+    advisor, _ = build_advisor(settings, store, [text_message("Email Mark about that one.")])
+    advisor.ask("What are the parking permit rules in Winnetka?")
+
+    gaps = store.list_gaps(10)
+    assert gaps, "the sources were thin on that, and the owner needs to know"
+    assert gaps[0]["question"] == "What are the parking permit rules in Winnetka?"
+    assert gaps[0]["coverage"] in ("none", "weak")
+
+
+def test_a_covered_question_is_not_logged_as_a_gap(settings, store):
+    advisor, _ = build_advisor(settings, store, [text_message("45 days.")])
+    advisor.ask("How long do I have to return a security deposit?")
+    assert store.list_gaps(10) == []
+
+
+def test_the_prompt_does_not_ask_jay_to_narrate_what_he_lacks():
+    """The owner watched Jay explain that episode 472 was about porches and did not apply.
+
+    That is an inventory of the training set, not an answer, and the prompt was asking for
+    it in as many words.
+    """
+    from pathlib import Path
+
+    prompt = Path("prompts/mark_system_prompt.md").read_text(encoding="utf-8")
+    assert "not covered in my training materials" not in prompt
+    assert "closest one to three sources" not in prompt
+    assert "Do not narrate the gap" in prompt
+    assert "Never fill a gap with general knowledge." in prompt, "the hard rule stays"

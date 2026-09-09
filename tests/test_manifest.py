@@ -234,3 +234,16 @@ def test_nobody_is_sent_to_build_your_team_for_a_vendor():
     )
     assert "build-your-team" not in blob
     assert "mark@gcrealtyinc.com" in blob
+
+
+def test_the_vendor_referral_asks_for_a_phone_number():
+    """Without one, referring somebody costs Mark two more emails."""
+    from pathlib import Path
+
+    from markai.sources.manifest import load_manifest
+
+    tools = load_manifest(Path("sources/sources.yaml")).tools
+    referral = next(t for t in tools if "mark@gcrealtyinc.com" in (t.description or ""))
+    blob = f"{referral.description} {referral.when_to_recommend}".lower()
+    assert "telefono" in blob or "teléfono" in blob
+    assert "direccion" in blob or "direcci" in blob

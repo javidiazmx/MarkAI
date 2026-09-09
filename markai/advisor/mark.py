@@ -50,7 +50,7 @@ from markai.advisor.prompt_builder import (
     strip_unused_markers,
 )
 from markai.config import Settings
-from markai.knowledge.episodes import EPISODE_TOOL, related_from, run_episode_tool
+from markai.knowledge.episodes import EPISODE_TOOL, run_episode_tool
 from markai.knowledge.retriever import Retriever
 from markai.models import AdvisorResponse, RetrievedChunk
 from markai.sources.facts import FactBook
@@ -468,7 +468,6 @@ class MarkAdvisor:
                 yield StreamEvent("text", text[len(streamed) :])
 
             citations = build_citations(retrieval, text, carried)
-            related = related_from([*retrieval.chunks, *carried])
             if not self.settings.show_citations:
                 # The prompt already asks for none; this catches the stray one.
                 text = strip_all_markers(text)
@@ -477,7 +476,6 @@ class MarkAdvisor:
             response = AdvisorResponse(
                 text=text,
                 citations=citations,
-                related=related,
                 coverage=retrieval.coverage,
                 flags=flags,
                 usage=usage,
@@ -496,7 +494,12 @@ class MarkAdvisor:
                     question,
                     response.coverage,
                     response.flags,
-                    is_not_covered_answer(response.text),
+                    # From the retrieval, not from the model's wording. Jay no longer
+                    # announces a gap out loud, so this is the only place it is recorded,
+                    # and it has to catch "weak" as well as "none": a thin match is exactly
+                    # the near miss he used to explain away to the landlord and now keeps
+                    # to himself. `mark gaps` shows which of the two it was.
+                    response.coverage in ("none", "weak") or is_not_covered_answer(response.text),
                     usage,
                 )
             except Exception as exc:  # logging must never break an answer

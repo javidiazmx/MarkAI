@@ -83,7 +83,7 @@ Then:
 | `mark status` | What Mark knows, which model, whether the key is set |
 | `mark audit` | Checks the knowledge base is usable: silent sources, duplicated text, missing embeddings, and whether real questions find anything. Calls Claude never |
 | `mark embed` | Adds semantic search to material already ingested, no re-download |
-| `mark gaps` | Questions Mark could not answer, so you know what to add |
+| `mark gaps` | Where the sources came up short: nothing found, or a thin match |
 | `mark feedback` | What landlords thought of the answers. A thumbs down is a content decision |
 | `mark search "deposits"` | Searches the knowledge base directly, without calling Claude |
 | `mark search --scores` | Same, showing the keyword and semantic scores behind the coverage verdict |
@@ -350,10 +350,18 @@ three are settings on one request:
   index over every passage takes seconds, and paying that in the first question is the
   worst possible moment: it is the one where somebody decides whether this works.
 
-Under every answer: copy it, rate it, and the episodes it leaned on with a link that lands
-on the minute. `mark feedback` is where the thumbs go, and a thumbs down is worth more than
-a thumbs up: it names a question the sources answered badly, which is a blog post to write
-or a rule to add to `facts.yaml`.
+Under every answer: copy it and rate it. No source list - the podcast is what Jay learned
+from, not a reading list to hand back, and an answer that has to show its homework is not
+finished. `mark feedback` is where the thumbs go, and a thumbs down is worth more than a
+thumbs up: it names a question the sources answered badly.
+
+Jay also does not narrate what he is missing. "That isn't in my materials, and the closest
+thing I have is episode 472, which is about porches" is an inventory of the training set,
+not an answer. He answers what the sources support, leaves the rest out, and hands over a
+next step when there is nothing useful. That moved the gap signal where it belonged:
+`mark gaps` now reads the retrieval rather than waiting for Jay to say a magic sentence,
+and it lists thin matches as well as empty ones, because a thin match is exactly the near
+miss the landlord no longer hears about.
 
 ## The lead form
 

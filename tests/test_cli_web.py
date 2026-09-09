@@ -1499,8 +1499,17 @@ def test_the_page_shows_the_reasoning_the_stop_and_the_thumbs():
     assert "foldReasoning" in page, "and folds away once the answer starts"
     assert 'id="stop"' in page and "AbortController" in page
     assert "/api/feedback" in page
-    assert 'el("div", "related")' in page
+    assert "Hand this to a property manager" in page
     assert ".innerHTML" not in page
+
+
+def test_no_reading_list_is_handed_back_under_an_answer():
+    """The podcast is what Jay learned from, not a list of links to check his homework."""
+    from pathlib import Path
+
+    page = Path("markai/web/static/index.html").read_text(encoding="utf-8")
+    assert "Mark on this" not in page
+    assert 'class="related"' not in page
 
 
 def test_the_corpus_is_loaded_before_anyone_asks(settings, store, caplog):

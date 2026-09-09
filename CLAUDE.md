@@ -64,6 +64,9 @@ The owner runs this on Windows. Commands you hand over go in `cmd` form, or thro
   `browser:<id>` when not. Nothing stores anything against a bare browser id.
 - **Never log an email, a phone, or a question.** `accounts.py` logs a signup id prefix and
   nothing else, and `crm.py` records an error class, never the payload it failed to send.
+- **Jay never narrates a gap.** No "that isn't in my materials", no listing the closest
+  source that did not fit. `mark gaps` reads `retrieval.coverage`, not the answer's
+  wording, and counts `weak` as well as `none`.
 - **Thinking is streamed with `display: "summarized"`.** The Opus 5 default is `omitted`,
   which the page renders as a blank bubble for several seconds. Never drop the display.
 - **Effort is per question** (`effort_for` in `mark.py`), top-level rather than the

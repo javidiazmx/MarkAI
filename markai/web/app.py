@@ -666,7 +666,6 @@ def _events(
             "data": json.dumps(
                 {
                     "text": response.text,
-                    "related": response.related,
                     "coverage": response.coverage,
                     "flags": response.flags,
                     "usage": response.usage,

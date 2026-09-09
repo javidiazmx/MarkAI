@@ -284,11 +284,14 @@ tools:
   - name: Referencia de vendor por correo con Mark
     description: >
       Mark refiere al oficio adecuado cuando le escribes a mark@gcrealtyinc.com con lo que
-      necesitas y donde esta la propiedad. No hay directorio publico que consultar.
+      necesitas, donde esta la propiedad y TU TELEFONO. No hay directorio publico que
+      consultar.
     when_to_recommend: >
       Cuando piden un contacto de un oficio o especialidad - caldera, alcantarillado,
       board-up, un abogado de arrendamiento - y no hay un nombre en las fuentes. Diles que
-      le escriban a mark@gcrealtyinc.com y que Mark ve si puede referirlos.
+      le escriban a mark@gcrealtyinc.com con la direccion, que necesitan y su telefono, y
+      que Mark ve si puede referirlos. Pide siempre el telefono: sin el, referir a alguien
+      toma dos correos mas.
 
   - name: Llamada de 20 minutos con Russell
     description: Property manager de GC Realty. Revisa el caso contigo por telefono.

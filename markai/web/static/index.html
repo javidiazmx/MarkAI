@@ -98,13 +98,7 @@
   .acts button:hover { border-color: var(--line); color: var(--ink); }
   .acts button.on { border-color: var(--accent); color: var(--accent); }
   .acts .said { color: var(--muted); font-size: 12px; }
-  .related { margin-top: 10px; display: grid; gap: 6px; }
-  .related a {
-    display: block; padding: 8px 10px; border: 1px solid var(--line); border-radius: 9px;
-    color: inherit; text-decoration: none; font-size: 13px; line-height: 1.4;
-  }
-  .related a:hover { border-color: var(--accent); }
-  .related .where { color: var(--muted); font-size: 12px; }
+
   @keyframes pulse { 0%, 100% { opacity: .25; } 50% { opacity: .9; } }
   @media (prefers-reduced-motion: reduce) { .dots { animation: none; opacity: .5; } }
   .cites { margin-top: 8px; font-size: 13px; }
@@ -284,7 +278,7 @@
   </div>
 
   <div class="side-foot">
-    <button class="ghost" id="handoff" type="button">Hand this to a manager</button>
+    <button class="ghost" id="handoff" type="button">Hand this to a property manager</button>
     <div class="whoami" id="whoami" hidden>
       <span id="whoami-name"></span>
     </div>
@@ -523,9 +517,9 @@
     if (last < text.length) parent.appendChild(document.createTextNode(text.slice(last)));
   }
 
-  // Everything under an answer once it has landed: copy it, say whether it helped, and
-  // hear Mark say it himself.
-  function addActions(slot, data) {
+  // Under an answer once it has landed: copy it, and say whether it helped. No source
+  // list: the podcast is what Jay learned from, not a reading list to hand back.
+  function addActions(slot) {
     var row = el("div", "acts");
     var copy = el("button", null, "Copy");
     copy.type = "button";
@@ -568,24 +562,6 @@
     row.appendChild(said);
     slot.wrap.appendChild(row);
 
-    var related = (data && data.related) || [];
-    if (!related.length) return;
-    var box = el("div", "related");
-    related.forEach(function (item) {
-      if (!/^https?:\/\//i.test(item.url || "")) return;
-      var link = el("a", null, "");
-      link.href = item.url;
-      link.target = "_blank";
-      link.rel = "noopener noreferrer";
-      link.appendChild(document.createTextNode(item.title || "Listen to this"));
-      var bits = [];
-      if (item.number) bits.push("Ep. " + item.number);
-      if (item.timestamp) bits.push("at " + item.timestamp);
-      bits.push(item.kind === "youtube" ? "video" : "podcast");
-      link.appendChild(el("div", "where", "Mark on this · " + bits.join(" · ")));
-      box.appendChild(link);
-    });
-    if (box.childNodes.length) slot.wrap.appendChild(box);
   }
 
   function addMessage(who, label) {
@@ -880,7 +856,7 @@
             foldReasoning();
             renderAnswer(slot.bubble, data.text || streamed, citations);
             renderCitations(slot.wrap, citations);
-            addActions(slot, data);
+            addActions(slot);
             var usage = data.usage || {};
             var meta = el("div", "meta",
               (data.model || "") + " · coverage " + (data.coverage || "?") +

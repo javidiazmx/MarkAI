@@ -921,20 +921,32 @@ def status() -> None:
 
 @app.command()
 def gaps(top: int = typer.Option(20, "--top", help="How many to show.")) -> None:
-    """List questions Mark could not answer, so you know what material to add."""
+    """List questions the sources answered thinly or not at all.
+
+    Jay does not tell a landlord when the material is thin any more, so this is where that
+    shows up. "none" means nothing came back; "weak" means something did and it was a
+    stretch, which is the more useful list: those are near misses worth one blog post.
+    """
     settings = _settings()
     store = _store(settings)
     rows = store.list_gaps(top)
     if not rows:
-        console.print("No unanswered questions logged yet.")
+        console.print("No thin or unanswered questions logged yet.")
         store.close()
         return
-    table = Table(title="Questions Mark could not answer", show_header=True, header_style="bold")
+    table = Table(title="Where the sources came up short", show_header=True, header_style="bold")
     table.add_column("When")
-    table.add_column("Question")
+    table.add_column("Match")
+    table.add_column("Question", overflow="fold")
     for row in rows:
-        table.add_row(str(row.get("asked_at", ""))[:16], escape(str(row.get("question", ""))[:90]))
+        coverage = str(row.get("coverage", ""))
+        table.add_row(
+            str(row.get("asked_at", ""))[:10],
+            "[red]none[/red]" if coverage == "none" else f"[yellow]{coverage}[/yellow]",
+            escape(str(row.get("question", ""))[:80]),
+        )
     console.print(table)
+    console.print("[dim]`mark feedback` is the other half: answers landlords marked wrong.[/dim]")
     store.close()
 
 

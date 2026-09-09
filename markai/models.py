@@ -153,10 +153,6 @@ class AdvisorResponse:
 
     text: str
     citations: list[Citation] = field(default_factory=list)
-    # The episodes the answer leaned on, whether or not it cited them. Free: the retrieval
-    # already happened, and hearing Mark say it himself is worth more than another
-    # paragraph from Jay.
-    related: list[dict[str, Any]] = field(default_factory=list)
     coverage: str = "none"
     flags: list[str] = field(default_factory=list)
     usage: dict[str, int] = field(default_factory=dict)
