@@ -559,3 +559,98 @@ def test_a_second_free_run_does_not_read_the_same_passages(mined_store):
     first = mine_locally(mined_store)
     again = mine_locally(mined_store, already_read=set(first.read_chunk_ids))
     assert again.passages_read == 0
+
+
+# --- one fact said three ways -------------------------------------------------------------
+
+
+def test_the_same_number_in_three_wordings_is_one_decision():
+    """The first real run proposed "Average apartment rent" three times. It is one fact."""
+    from markai.facts_miner import group_proposals
+
+    waiting = [
+        _raw(
+            "Average apartment rent",
+            "About $2,100 a month.",
+            "The average apartment rent runs about $2,100 a month.",
+            "Post A",
+            kind="cost",
+            low=2100,
+            high=2100,
+        ),
+        _raw(
+            "average apartment rent",
+            "Around $2,100.",
+            "Around $2,100 is what the average apartment goes for.",
+            "Post B",
+            kind="cost",
+            low=2100,
+            high=2100,
+        ),
+        _raw(
+            "Average apartment rent",
+            "$2,100 a month on average.",
+            "You are looking at $2,100 a month on average in that stretch.",
+            "Post C",
+            kind="cost",
+            low=2100,
+            high=2100,
+        ),
+    ]
+    groups = group_proposals(waiting)
+    assert len(groups) == 1, "same subject, same number, three wordings"
+    assert groups[0].support == 3
+    assert sorted(groups[0].indices) == [0, 1, 2], "accepting it answers all three"
+
+
+def test_the_same_subject_with_a_different_number_is_still_two_decisions():
+    from markai.facts_miner import group_proposals
+
+    waiting = [
+        _raw("2-bed rent", "$2,100.", "A two bed runs $2,100.", "A", kind="cost", low=2100),
+        _raw("2-bed rent", "$2,600.", "A two bed runs $2,600.", "B", kind="cost", low=2600),
+    ]
+    assert len(group_proposals(waiting)) == 2, "a merge that swallowed a number would be a lie"
+
+
+def test_a_market_rent_is_labelled_so_it_can_be_left_out():
+    from markai.facts_miner import group_proposals, is_market_rent
+
+    assert is_market_rent(_raw("Average apartment rent", "r", "q", "A", kind="cost")) is True
+    assert is_market_rent(_raw("Boiler replacement", "r", "q", "A", kind="cost")) is False
+    assert is_market_rent(_raw("Rent limits", "r", "q", "A")) is False, "an ordinance is not a rent"
+
+    (group,) = group_proposals([_raw("Condo rent range", "r", "q", "A", kind="cost", low=1800)])
+    assert group.rent is True
+
+
+def test_an_accepted_price_says_when_it_was_true():
+    from markai.facts_miner import as_yaml_entry, insert_into_facts
+
+    proposal = Proposal(
+        kind="cost",
+        topic="tuckpointing",
+        rule="$9,000 to $16,000 on a six flat.",
+        quote="Tuckpointing must run $9,000 to $16,000 on a six flat.",
+        source_title="A post",
+        source_date="2025-06-01",
+        low=9000,
+        high=16000,
+    )
+    entry = yaml.safe_load(insert_into_facts("", "costs", as_yaml_entry(proposal, "mined-1")))
+    assert entry["costs"][0]["as_of"] == "2025-06-01", (
+        "a price with no date is a number, not a fact about the market"
+    )
+    assert "page dated 2025-06-01" in entry["costs"][0]["notes"]
+
+
+def test_the_label_carries_the_page_its_date_and_a_usable_link(mined_store):
+    from markai.facts_miner import candidates_in, split_label
+
+    found, _ = candidates_in(mined_store)
+    title, url, _dated = split_label(found[0][1])
+    assert title == "Post 0"
+    # The fixture sets only a locator, which is how some ingesters leave a document; the
+    # citation still needs somewhere to point.
+    assert url == "https://example.com/0"
+    assert split_label("Old style␟https://x.test/1") == ("Old style", "https://x.test/1", "")

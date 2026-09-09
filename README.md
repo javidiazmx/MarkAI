@@ -398,6 +398,17 @@ In the one-at-a-time mode, `t` drops a whole subject without deciding it away. A
 proposal with no number in it is never offered: "$0 to $0" in the fact block is not a
 missing answer, it is a wrong one.
 
+Two proposals are the same decision when they name the same subject and the same numbers,
+even if the sentences differ, so "Average apartment rent" said three ways is one row that
+says three sources state it. Different numbers are never merged - that is the merge that
+would put a rule in your file you never agreed to.
+
+**Market rents are labelled.** The corpus is full of them, and they are not job costs: a
+tuckpointing quote from 2023 is roughly still true, and last season's asking rent is not,
+but in the facts block Jay would state either as current. `--no-rents` leaves them out of
+both `facts proposals` and `facts review`. Every accepted price also carries `as_of`, taken
+from the day the page was published, so `mark facts list` shows you what is going stale.
+
 ## The property log
 
 A landlord's real questions are about their own buildings: did I pay that water bill, when

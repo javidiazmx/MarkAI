@@ -1585,12 +1585,36 @@ def _known_terms(path: Path) -> tuple[frozenset[str], set[str], str]:
     return frozenset(words), ids, body
 
 
+def _dates_by_title(settings: Any) -> dict[str, str]:
+    """When each page was published, keyed by its title.
+
+    The proposals mined before the date was carried through do not have one, and a price
+    with no date is the mistake the whole fact layer exists to prevent. The store still
+    knows, so it is looked up here rather than lost.
+    """
+    try:
+        store = _store(settings)
+    except Exception:
+        return {}
+    try:
+        return {
+            doc.title: str(doc.published_at)[:32]
+            for doc in store.list_documents()
+            if doc.published_at
+        }
+    except Exception:
+        return {}
+    finally:
+        store.close()
+
+
 def _pick_groups(
     settings: Any,
     kind: str,
     topic: str,
     min_sources: int,
     new_only: bool,
+    no_rents: bool = False,
 ) -> tuple[list[Any], list[dict], Path, set[str], str, int]:
     """The proposals worth showing this sitting, grouped, filtered and ordered."""
     from markai.facts_miner import group_proposals, has_a_price
@@ -1614,6 +1638,8 @@ def _pick_groups(
             continue
         if new_only and group.known:
             continue
+        if no_rents and group.rent:
+            continue
         if not has_a_price(group.lead):
             continue  # a price with no number in it would read as "$0"
         kept.append(group)
@@ -1625,6 +1651,9 @@ def facts_proposals(
     kind: str = typer.Option("all", "--kind", help="all, ordinance or cost."),
     topic: str = typer.Option("", "--topic", help="Only topics containing this word."),
     limit: int = typer.Option(25, "-n", "--limit", help="Rows to show. 0 shows all of them."),
+    no_rents: bool = typer.Option(
+        False, "--no-rents", help="Leave out market rent numbers, which go stale in a season."
+    ),
 ) -> None:
     """What is waiting in the review queue, by subject, before you sit down to it.
 
@@ -1634,7 +1663,7 @@ def facts_proposals(
     already have a rule about.
     """
     settings = _settings()
-    groups, waiting, path, _, _, priceless = _pick_groups(settings, kind, topic, 1, False)
+    groups, waiting, path, _, _, priceless = _pick_groups(settings, kind, topic, 1, False, no_rents)
     if not waiting:
         console.print("[yellow]Nothing waiting. Run `mark facts mine` first.[/yellow]")
         return
@@ -1665,22 +1694,35 @@ def facts_proposals(
     table.add_column("Topic", overflow="fold")
     table.add_column("Kind")
     table.add_column("Sources", justify="right")
-    table.add_column("You already cover it")
+    table.add_column("Note")
     for group in groups[: limit or len(groups)]:
+        notes = []
+        if group.known:
+            notes.append("you cover this")
+        if group.rent:
+            notes.append("market rent")
         table.add_row(
             escape(str(group.lead.get("topic", ""))[:52]),
             group.kind,
             str(group.support),
-            "yes" if group.known else "",
+            ", ".join(notes),
         )
     console.print(table)
     if limit and len(groups) > limit:
         console.print(f"[dim]{len(groups) - limit} more. Use -n 0 to see all of them.[/dim]")
+    rents = [g for g in groups if g.rent]
+    if rents:
+        console.print(
+            f"\n[dim]{len(rents)} of these are market rent numbers. A tuckpointing quote "
+            f"from 2023 is roughly still true; last season's asking rent is not, and in the "
+            f"facts block Jay would state it as current. Add [bold]--no-rents[/bold] to "
+            f"leave them out.[/dim]"
+        )
     if corroborated:
         console.print(
             f"\n[dim]The {len(corroborated)} rules three or more of your sources state are "
             f"the safest place to start:[/dim]\n"
-            f"  [bold]mark facts review --min-sources 3[/bold]"
+            f"  [bold]mark facts review --min-sources 3 --no-rents[/bold]"
         )
 
 
@@ -1694,6 +1736,9 @@ def facts_review(
     ),
     new_only: bool = typer.Option(
         False, "--new-only", help="Skip subjects facts.yaml already covers."
+    ),
+    no_rents: bool = typer.Option(
+        False, "--no-rents", help="Leave out market rent numbers, which go stale in a season."
     ),
     accept_all: bool = typer.Option(
         False, "--accept-all", help="Accept everything that matches, without asking one by one."
@@ -1714,7 +1759,7 @@ def facts_review(
 
     settings = _settings()
     groups, waiting, path, existing_ids, body, _ = _pick_groups(
-        settings, kind, topic, min_sources, new_only
+        settings, kind, topic, min_sources, new_only, no_rents
     )
     if not waiting:
         console.print("[yellow]Nothing to review. Run `mark facts mine` first.[/yellow]")
@@ -1724,6 +1769,8 @@ def facts_review(
         return
     if limit:
         groups = groups[:limit]
+
+    dates = _dates_by_title(settings)
 
     if accept_all:
         console.print(
@@ -1754,6 +1801,10 @@ def facts_review(
             low=raw.get("low"),
             high=raw.get("high"),
             unit=str(raw.get("unit", "")),
+            # Whatever the miner carried, or the page's date looked up from the store.
+            source_date=str(raw.get("source_date") or dates.get(str(raw.get("source", "")), ""))[
+                :32
+            ],
             support=group.support,
         )
         section = "ordinances" if proposal.kind == "ordinance" else "costs"
@@ -1788,6 +1839,12 @@ def facts_review(
                 f"[dim]({group.kind}"
                 + (f", {group.support} sources say it" if group.support > 1 else "")
                 + (", you already cover this subject" if group.known else "")
+                + (", a market rent that will go stale" if group.rent else "")
+                + (
+                    f", page dated {escape(str(group.lead.get('source_date', '')))[:10]}"
+                    if group.lead.get("source_date")
+                    else ""
+                )
                 + f", from {escape(group.sources()[0][:44] if group.sources() else '?')})[/dim]"
             )
             console.print(f"  {escape(str(group.lead.get('rule', '')))}")

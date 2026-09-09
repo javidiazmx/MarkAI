@@ -1809,3 +1809,77 @@ def test_facts_mine_free_spends_nothing_and_needs_no_key(tmp_path, monkeypatch):
     # And a second run has nothing left to do rather than proposing it all again.
     again = runner.invoke(app, ["facts", "mine", "--free"])
     assert "Nothing left to read" in again.stdout
+
+
+def test_facts_review_dates_a_price_from_the_store(tmp_path, monkeypatch):
+    """Proposals mined before the date was carried still get one: the store knows."""
+    from markai.knowledge.chunking import chunk_document
+    from markai.knowledge.store import KnowledgeStore
+    from markai.models import Document, SourceKind
+
+    manifest, data = _waiting(
+        tmp_path,
+        monkeypatch,
+        [
+            _proposal(
+                "Boiler replacement",
+                "$8,000 to $16,000.",
+                "A boiler replacement must run $8,000 to $16,000 on a six flat.",
+                "A post about boilers",
+                kind="cost",
+                low=8000,
+                high=16000,
+                unit="per job",
+            )
+        ],
+    )
+    doc = Document(
+        id="d1",
+        kind=SourceKind.WEBSITE,
+        title="A post about boilers",
+        locator="https://example.com/boilers",
+        text="A boiler replacement must run $8,000 to $16,000 on a six flat.",
+        published_at="2024-11-01",
+    )
+    doc.ensure_hash()
+    store = KnowledgeStore(data / "markai.db")
+    store.upsert_document(doc, chunk_document(doc, target_words=60, overlap_words=10))
+    store.close()
+
+    result = runner.invoke(app, ["facts", "review", "--accept-all"], input="y\n")
+    assert result.exit_code == 0, result.stdout
+    body = (manifest.parent / "facts.yaml").read_text(encoding="utf-8")
+    assert 'as_of: "2024-11-01"' in body, "a price with no date is a number, not a fact"
+
+
+def test_facts_proposals_can_leave_the_market_rents_out(tmp_path, monkeypatch):
+    _waiting(
+        tmp_path,
+        monkeypatch,
+        [
+            _proposal(
+                "Average apartment rent",
+                "$2,100.",
+                "The average apartment rent must be around $2,100 a month.",
+                "Post A",
+                kind="cost",
+                low=2100,
+                high=2100,
+            ),
+            _proposal(
+                "Boiler replacement",
+                "$8,000.",
+                "A boiler replacement must run about $8,000 on a six flat.",
+                "Post B",
+                kind="cost",
+                low=8000,
+                high=8000,
+            ),
+        ],
+    )
+    both = runner.invoke(app, ["facts", "proposals"])
+    assert "market rent" in both.stdout
+
+    without = runner.invoke(app, ["facts", "proposals", "--no-rents"])
+    assert "Average apartment rent" not in without.stdout
+    assert "Boiler replacement" in without.stdout

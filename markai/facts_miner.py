@@ -101,6 +101,7 @@ class Proposal:
     quote: str
     source_title: str
     source_url: str | None = None
+    source_date: str = ""  # when the page was published, which is when a price was true
     jurisdiction: str = ""
     citation: str = ""
     low: float | None = None
@@ -117,6 +118,7 @@ class Proposal:
             "quote": self.quote,
             "source": self.source_title,
             "url": self.source_url,
+            "source_date": self.source_date,
             "verified_quote": self.verified,
         }
         if self.kind == "ordinance":
@@ -191,7 +193,7 @@ def _proposals_from(payload: dict, batch: list[tuple[int, str, str]], report: Mi
             report.dropped_unquoted += 1
             continue
         label, text = found
-        title, _, url = label.partition("\u241f")
+        title, url, dated = split_label(label)
         quote = str(raw.get("quote", ""))
         if not quote_is_real(quote, text):
             # The one check that matters. A rule the sources do not actually say is worse
@@ -207,6 +209,7 @@ def _proposals_from(payload: dict, batch: list[tuple[int, str, str]], report: Mi
                 quote=quote[:600],
                 source_title=title,
                 source_url=url or None,
+                source_date=dated,
                 jurisdiction=str(raw.get("jurisdiction", ""))[:80],
                 citation=str(raw.get("citation", ""))[:160],
                 low=raw.get("low"),
@@ -214,6 +217,14 @@ def _proposals_from(payload: dict, batch: list[tuple[int, str, str]], report: Mi
                 unit=str(raw.get("unit", ""))[:40],
             )
         )
+
+
+def split_label(label: str) -> tuple[str, str, str]:
+    """A passage label back into (title, url, date). Tolerates the older two-part form."""
+    parts = str(label or "").split("\u241f")
+    while len(parts) < 3:
+        parts.append("")
+    return parts[0], parts[1], parts[2][:32]
 
 
 def candidates_in(
@@ -239,9 +250,13 @@ def candidates_in(
         seen += 1
         if chunk.id in done or not worth_reading(chunk.text):
             continue
-        # The title carries the link so an accepted rule can point at the page it came
-        # from, which is the difference between a citation and a claim.
-        label = f"{doc.title}\u241f{doc.link or ''}"
+        # The title carries the link and the page's date so an accepted rule can point at
+        # where it came from and say when that was. A price with no date is not a fact
+        # about the market, it is a number.
+        link = doc.link or (
+            doc.locator if str(doc.locator).startswith(("http://", "https://")) else ""
+        )
+        label = f"{doc.title}\u241f{link}\u241f{doc.published_at or ''}"
         found.append((chunk.id, label, chunk.text))
     return found, seen
 
@@ -398,7 +413,7 @@ def price_in(sentence: str) -> tuple[float | None, float | None]:
 
 def proposal_from_sentence(sentence: str, label: str, passage: str) -> Proposal:
     """One sentence as a proposal that quotes itself."""
-    title, _, url = label.partition("\u241f")
+    title, url, dated = split_label(label)
     low, high = price_in(sentence)
     priced = low is not None and "$" in sentence
     return Proposal(
@@ -408,6 +423,7 @@ def proposal_from_sentence(sentence: str, label: str, passage: str) -> Proposal:
         quote=sentence[:600],
         source_title=title,
         source_url=url or None,
+        source_date=dated,
         jurisdiction=jurisdiction_from(sentence, passage),
         citation=title,
         low=low if priced else None,
@@ -466,14 +482,68 @@ _NUMBER = re.compile(r"\d+(?:[.,]\d+)?")
 
 
 def fingerprint(raw: dict) -> str:
-    """What makes two proposals the same proposal.
+    """What makes two proposals literally the same proposal: the quote, normalised.
 
-    The quote, normalised. Two passages that quote the same sentence are one rule, whoever
-    republished it; two passages that say the same thing in different words are not, and
-    guessing that they are would merge rules that differ in a number.
+    Two passages that quote the same sentence are one rule, whoever republished it.
     """
     quote = _normalise(raw.get("quote", ""))
     return f"{raw.get('kind', 'ordinance')}|{quote or _normalise(raw.get('rule', ''))}"
+
+
+def numbers_in(raw: dict) -> str:
+    """Every number a proposal turns on: the ones in the rule, plus any price."""
+    numbers = set(_NUMBER.findall(str(raw.get("rule", ""))))
+    for key in ("low", "high"):
+        value = raw.get(key)
+        if value not in (None, ""):
+            try:
+                numbers.add(f"{float(value):g}")
+            except (TypeError, ValueError):
+                numbers.add(str(value))
+    return ",".join(sorted(numbers))
+
+
+def number_key(raw: dict) -> str:
+    """Same kind, same government, same numbers - everything but how it was labelled."""
+    return "|".join(
+        [
+            str(raw.get("kind", "ordinance")),
+            _normalise(raw.get("jurisdiction", "")),
+            numbers_in(raw),
+        ]
+    )
+
+
+def same_fact(raw: dict) -> str:
+    """What makes two proposals the *same fact* even when the sentences differ.
+
+    The first run over the real corpus proposed "Average apartment rent" three times and
+    "Condo rent range" three times, because three pages said the same number in three
+    wordings and the quote alone kept them apart. So a second key: the kind, the
+    jurisdiction, the words of the topic, and every number involved. Same subject and same
+    numbers is one decision.
+
+    The numbers are what keep this honest. Two rules about deposits that say 45 days and 30
+    days stay two rules, which is the whole point - a merge that swallowed a different
+    number would be a rule the owner never agreed to.
+    """
+    from markai.sources.facts import terms_in
+
+    topic = " ".join(sorted(terms_in(str(raw.get("topic", "")))))
+    return f"{number_key(raw)}|{topic}"
+
+
+# Market rents are not job costs. They arrive in the same shape - a topic and a dollar range
+# - and the corpus is full of them, but a tuckpointing quote from 2023 is roughly still true
+# and last season's asking rent is not. They are labelled so the owner can leave them out.
+_RENTISH = re.compile(r"\b(rent|rents|renta|rental rate|asking|market rate)\b", re.IGNORECASE)
+
+
+def is_market_rent(raw: dict) -> bool:
+    """Whether a cost proposal is a rent number rather than what a job costs."""
+    if raw.get("kind") != "cost":
+        return False
+    return bool(_RENTISH.search(str(raw.get("topic", "")) + " " + str(raw.get("unit", ""))))
 
 
 # A word that turns up in nearly every topic is not a subject, it is the vocabulary of the
@@ -513,6 +583,7 @@ class ProposalGroup:
     indices: list[int] = field(default_factory=list)
     topic: str = ""
     known: bool = False
+    rent: bool = False  # a market rent number rather than what a job costs
 
     @property
     def support(self) -> int:
@@ -530,6 +601,33 @@ class ProposalGroup:
             if title and title not in seen:
                 seen.append(title)
         return seen
+
+
+def _absorb_longer_labels(groups: list[ProposalGroup]) -> list[ProposalGroup]:
+    """Merge "Condo rent range" into "Condo rent range (1-2 bedrooms), 2025", and the reverse.
+
+    Same kind, same jurisdiction, exactly the same numbers, and one label's words contained
+    in the other's: that is one fact written down twice, once with more of a caption. The
+    numbers matching exactly is what makes this safe - nothing here can merge $1,800 with
+    $2,600, which is the merge that would matter.
+    """
+    from markai.sources.facts import terms_in
+
+    kept: list[ProposalGroup] = []
+    buckets: dict[str, list[ProposalGroup]] = {}
+    for group in groups:
+        bucket = buckets.setdefault(number_key(group.lead), [])
+        words = terms_in(str(group.lead.get("topic", "")))
+        for target in bucket:
+            theirs = terms_in(str(target.lead.get("topic", "")))
+            if words and theirs and (words <= theirs or theirs <= words):
+                target.raws.extend(group.raws)
+                target.indices.extend(group.indices)
+                break
+        else:
+            bucket.append(group)
+            kept.append(group)
+    return kept
 
 
 def _lead_of(raws: list[dict]) -> dict:
@@ -557,20 +655,31 @@ def group_proposals(
 
     order: list[str] = []
     by_print: dict[str, ProposalGroup] = {}
+    by_fact: dict[str, ProposalGroup] = {}
     for index, raw in enumerate(raws):
         key = fingerprint(raw)
         group = by_print.get(key)
         if group is None:
+            # Not the same sentence; still possibly the same fact said differently.
+            group = by_fact.get(same_fact(raw))
+        if group is None:
             group = ProposalGroup(lead=raw)
-            by_print[key] = group
             order.append(key)
+        by_print.setdefault(key, group)
+        by_fact.setdefault(same_fact(raw), group)
         group.raws.append(raw)
         group.indices.append(index)
 
-    groups = [by_print[key] for key in order]
+    seen_groups: list[ProposalGroup] = []
+    for key in order:
+        group = by_print[key]
+        if group not in seen_groups:
+            seen_groups.append(group)
+    groups = _absorb_longer_labels(seen_groups)
     for group in groups:
         group.lead = _lead_of(group.raws)
         group.known = bool(known_terms and terms_in(str(group.lead.get("topic", ""))) & known_terms)
+        group.rent = is_market_rent(group.lead)
 
     counts: dict[str, int] = {}
     for group in groups:
@@ -621,6 +730,8 @@ def as_yaml_entry(proposal: Proposal, entry_id: str) -> str:
     note = "From: " + proposal.quote
     if proposal.support > 1:
         note += f" (stated in {proposal.support} of your sources)"
+    if proposal.source_date:
+        note += f" [page dated {proposal.source_date}]"
 
     lines = [f"  - id: {entry_id}"]
     if proposal.kind == "ordinance":
@@ -636,6 +747,9 @@ def as_yaml_entry(proposal: Proposal, entry_id: str) -> str:
         lines.append(f"    low: {proposal.low or 0}")
         lines.append(f"    high: {proposal.high or proposal.low or 0}")
         lines.append(f"    unit: {quoted(proposal.unit or 'per job')}")
+        if proposal.source_date:
+            # `as_of` is what stops a 2025 number being read as today's number.
+            lines.append(f"    as_of: {quoted(proposal.source_date)}")
         lines.append(f"    source: {quoted(proposal.source_title)}")
         lines.append(f"    notes: {quoted(note)}")
     return "\n".join(lines)
