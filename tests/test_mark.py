@@ -434,7 +434,7 @@ def test_the_prompt_does_not_ask_jay_to_narrate_what_he_lacks():
     assert "not covered in my training materials" not in prompt
     assert "closest one to three sources" not in prompt
     assert "Do not narrate the gap" in prompt
-    assert "Never fill a gap with general knowledge." in prompt, "the hard rule stays"
+    assert "If the sources do not have it, you do not have it." in prompt, "the hard rule stays"
 
 
 @pytest.mark.parametrize(

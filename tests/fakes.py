@@ -254,6 +254,7 @@ class FakeAdvisor:
         self.text = text
         self.citations = citations or []
         self.questions: list[str] = []
+        self.remembered: list[tuple[str, float]] = []
         # Set to a message to model the failure path: the stream ends with an error event
         # and no final response, which is what an overload or a refusal looks like.
         self.error: str | None = None
@@ -265,6 +266,7 @@ class FakeAdvisor:
         attachments: Any = None,
         portfolio: Any = None,
         neighborhood: str | None = None,
+        remembered: Any = None,
     ):
         from markai.advisor.mark import StreamEvent
         from markai.models import AdvisorResponse
@@ -273,6 +275,7 @@ class FakeAdvisor:
         self.attachments = list(attachments or [])
         self.portfolio = list(portfolio or [])
         self.neighborhood = neighborhood
+        self.remembered = list(remembered or [])
         if self.error:
             yield StreamEvent("error", self.error)
             return

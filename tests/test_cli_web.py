@@ -1530,3 +1530,36 @@ def test_the_corpus_is_loaded_before_anyone_asks(settings, store, caplog):
                     break
                 time.sleep(0.05)
     assert "warm:" in caplog.text, "the warm-up ran on startup, not on the first question"
+
+
+def test_a_returning_landlord_is_remembered_across_conversations(settings, store):
+    """The point of an account: Jay knows they asked about the deposit last week."""
+    advisor = FakeAdvisor()
+    # The wall is not what this is about, and three questions would hit it.
+    client = _client(settings.model_copy(update={"account_required": False}), store, advisor)
+
+    _ask(client, "t1", "How long do I have to return a deposit?")
+    _ask(client, "t2", "The tenant left the unit trashed")
+
+    assert [title for title, _ in advisor.remembered] == ["How long do I have to return a deposit"]
+    _ask(client, "t3", "And the carpet?")
+    assert [title for title, _ in advisor.remembered] == [
+        "The tenant left the unit trashed",
+        "How long do I have to return a deposit",
+    ]
+
+
+def test_the_conversation_they_are_in_is_not_handed_back_as_memory(settings, store):
+    advisor = FakeAdvisor()
+    client = _client(settings, store, advisor)
+    _ask(client, "t1", "First question")
+    _ask(client, "t1", "A follow-up in the same thread")
+    assert advisor.remembered == [], "that is history, not memory"
+
+
+def test_one_landlord_never_gets_anothers_memory(settings, store):
+    advisor = FakeAdvisor()
+    client = _client(settings, store, advisor)
+    _ask(client, "t1", "Something about my building", browser="b1")
+    _ask(client, "t2", "A different question", browser="b2")
+    assert advisor.remembered == []

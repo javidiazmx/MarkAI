@@ -225,3 +225,88 @@ def test_a_very_long_answer_is_trimmed():
     text = build_handoff(_thread(("Q", "word " * 400)))
     assert text.rstrip().endswith("...")
     assert len(text) < 1200
+
+
+# --- what they told you before ------------------------------------------------------------
+
+
+def test_earlier_conversations_come_back_as_their_own_words(tmp_path):
+    """Their question titles, which already exist. No summarising call, no invented
+    profile, nothing they did not type."""
+    import time
+
+    from markai.web.history import History
+
+    store = History(tmp_path / "conversations.db")
+    store.record("account:a1", "t1", "How long to return a deposit?", "45 days.")
+    time.sleep(0.01)
+    store.record("account:a1", "t2", "The tenant left the unit trashed", "Itemize it.")
+    topics = store.recent_topics("account:a1")
+    store.close()
+
+    assert [title for title, _ in topics] == [
+        "The tenant left the unit trashed",
+        "How long to return a deposit",
+    ], "newest first"
+
+
+def test_the_conversation_they_are_in_is_not_memory(tmp_path):
+    from markai.web.history import History
+
+    store = History(tmp_path / "conversations.db")
+    store.record("account:a1", "t1", "First question", "An answer.")
+    assert store.recent_topics("account:a1", exclude="t1") == []
+    store.close()
+
+
+def test_one_landlord_never_remembers_anothers(tmp_path):
+    from markai.web.history import History
+
+    store = History(tmp_path / "conversations.db")
+    store.record("account:a1", "t1", "Mine", "An answer.")
+    assert store.recent_topics("account:a2") == []
+    assert store.recent_topics("") == []
+    store.close()
+
+
+def test_the_block_says_how_long_ago_in_words():
+    from datetime import date
+
+    from markai.advisor.prompt_builder import build_history_block
+
+    today = date(2026, 9, 9)
+    stamps = [
+        ("Deposit timing", date(2026, 9, 9)),
+        ("The boiler quote", date(2026, 9, 8)),
+        ("Screening a tenant", date(2026, 9, 4)),
+        ("A two flat in Berwyn", date(2026, 6, 1)),
+    ]
+    block = build_history_block(
+        [(title, __import__("time").mktime(when.timetuple())) for title, when in stamps],
+        today=today,
+    )
+    assert "Deposit timing (today)" in block
+    assert "The boiler quote (yesterday)" in block
+    assert "Screening a tenant (5 days ago)" in block
+    assert "A two flat in Berwyn (2026-06-01)" in block, "old enough for a date"
+
+
+def test_no_earlier_conversations_means_no_block():
+    from markai.advisor.prompt_builder import build_history_block
+
+    assert build_history_block([]) == ""
+
+
+def test_the_advisor_sends_what_they_asked_before(settings, store):
+    from tests.fakes import text_message
+    from tests.test_mark import build_advisor
+
+    advisor, client = build_advisor(settings, store, [text_message("45 days.")])
+    advisor.ask(
+        "And the damage?",
+        remembered=[("How long to return a deposit", 1788900000.0)],
+    )
+    sent = client.calls[0]["messages"][-1]["content"]
+    text = sent if isinstance(sent, str) else sent[-1]["text"]
+    assert "<earlier_conversations>" in text
+    assert "How long to return a deposit" in text

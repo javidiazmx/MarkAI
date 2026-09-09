@@ -212,6 +212,35 @@ def build_portfolio_block(properties: list[Any], neighborhood: str | None = None
     return "\n".join(parts)
 
 
+MAX_REMEMBERED = 5
+
+
+def build_history_block(topics: list[tuple[str, float]], today: date | None = None) -> str:
+    """What this landlord asked about in earlier conversations, and how long ago.
+
+    Titles only. They are the landlord's own words, they already exist, and nothing here
+    costs a second call or invents a profile out of what somebody typed once.
+    """
+    if not topics:
+        return ""
+    now = today or date.today()
+    lines = ["<earlier_conversations>"]
+    for title, stamp in topics[:MAX_REMEMBERED]:
+        when = date.fromtimestamp(stamp)
+        days = (now - when).days
+        if days <= 0:
+            ago = "today"
+        elif days == 1:
+            ago = "yesterday"
+        elif days < 14:
+            ago = f"{days} days ago"
+        else:
+            ago = when.isoformat()
+        lines.append(f"- {escape_text(title)} ({ago})")
+    lines.append("</earlier_conversations>")
+    return "\n".join(lines)
+
+
 def build_user_message(
     question: str,
     retrieval,  # RetrievalResult (imported lazily to keep this module light)
@@ -221,6 +250,7 @@ def build_user_message(
     facts: str = "",
     portfolio: str = "",
     today: date | None = None,
+    history: str = "",
 ) -> str:
     """The complete user turn: the date, the owner's facts, the passages, the question."""
     chunks = _ordered_chunks(list(retrieval.chunks), carried)
@@ -234,6 +264,8 @@ def build_user_message(
         parts.append(facts)
     if portfolio:
         parts.append(portfolio)
+    if history:
+        parts.append(history)
     parts.append(f'<knowledge_base retrieval_status="{retrieval.coverage}" chunks="{len(chunks)}">')
     for index, rc in enumerate(chunks, start=1):
         parts.append(_source_tag(f"S{index}", rc))

@@ -249,3 +249,36 @@ def test_the_prompt_asks_for_short_answers_and_one_question_at_a_time():
     assert "one thing at a time, never a form" in prompt
     assert "Say what you would do and why" in prompt, "brevity must not cost the judgement"
     assert "handing off is not a reason to stop being useful" in prompt
+
+
+# --- what Jay is allowed to know ----------------------------------------------------------
+
+
+def _prompt() -> str:
+    from pathlib import Path
+
+    return Path("prompts/mark_system_prompt.md").read_text(encoding="utf-8")
+
+
+def test_local_facts_stay_locked_to_the_sources():
+    """The one rule the whole product rests on. A plausible invention here costs a landlord
+    a court date."""
+    prompt = _prompt()
+    for term in ("ordinances", "deadlines", "dollar amounts", "market rents"):
+        assert term in prompt
+    assert "If the sources do not have it, you do not have it." in prompt
+
+
+def test_general_knowledge_is_explicitly_allowed():
+    """It always was, in one clause. Read whole, the rule made Jay hedge on how a boiler
+    works, which is not a local fact and never was."""
+    prompt = _prompt()
+    assert "From your own knowledge and judgment, freely." in prompt
+    assert "boiler" in prompt and "NOI" in prompt
+    assert "in front of a judge, a tenant, or an inspector" in prompt, "the test is stated"
+
+
+def test_length_follows_the_question():
+    prompt = _prompt()
+    assert "Short, unless they are trying to learn." in prompt
+    assert "three-line answer there is not brevity, it is a brush-off" in prompt

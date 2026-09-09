@@ -90,6 +90,8 @@ Then:
 | `mark search --scores` | Same, showing the keyword and semantic scores behind the coverage verdict |
 | `mark episodes "boilers"` | Which episodes cover a topic: number, guest, topics, and a link that lands on the minute |
 | `mark episodes --guest "Jane Doe"` | The catalog, filtered to the episodes whose title names someone |
+| `mark facts mine` | Reads every indexed source and proposes rules and prices out of them |
+| `mark facts review` | Walks the proposals; the ones you accept go into `facts.yaml` |
 | `mark facts validate` | Checks `sources/facts.yaml`: every ordinance cites something, the dates make sense |
 | `mark facts list` | Every rule and price you maintain, and whether each applies today |
 | `mark facts probe "..."` | Which of your facts a real question would put in front of Jay |
@@ -333,6 +335,34 @@ reads, question after question, means the TTL is shorter than the gaps between q
 - All of these sit under `data/`, which is excluded from version control, and all of them
   are worth knowing about before this page goes in front of anyone but you.
 
+## Mining facts out of the sources
+
+Jay never learns a local fact on his own, and that line does not move. This is a different
+thing: the facts are already in the sources, said out loud in a blog post or an episode,
+and `mark facts mine` reads them out into proposals for `sources/facts.yaml`.
+
+```bash
+mark facts mine        # reads everything, tells you the cost first, resumable
+mark facts review      # one at a time, with the sentence from your own source in front of you
+mark facts validate    # then restart the server
+```
+
+Three things make it safe to run over the whole corpus:
+
+- **Every proposal quotes the sentence it came from, and the quote is checked against the
+  passage before you see it.** A paraphrase, a merged sentence, or a number that drifted is
+  thrown away and counted, not shown. A rule your sources never stated would arrive wearing
+  their name, and you would have no way to tell.
+- **Nothing is written while mining.** `facts.yaml` is yours; `mark facts review` is where
+  you decide, and accepting appends the rule, its citation, and a link back to the page.
+- **Your file keeps its comments.** Entries are inserted as text rather than dumped from a
+  parser, and the key is never written twice - YAML keeps the last of two identical keys
+  and silently drops the first, which would delete every rule you had written.
+
+It only reads passages with a number and a binding word in them, because the rest is
+commentary and reading it costs money for nothing. It tells you the estimated cost before
+it starts, and picks up where it left off, so a run you stop is not a run you lose.
+
 ## How an answer feels
 
 Three things decide whether Jay reads as a person thinking or a machine stalling, and all
@@ -350,6 +380,15 @@ three are settings on one request:
 - **The corpus is loaded at startup**, not inside the first question. Building the BM25
   index over every passage takes seconds, and paying that in the first question is the
   worst possible moment: it is the one where somebody decides whether this works.
+
+Jay also remembers. Not a profile it invented: the titles of what this landlord asked
+about before, which are their own words and already stored, so it costs nothing and lets
+him say "same Berwyn unit as last week?". And the line between what he may reason about and
+what he may not is now written out properly: local facts, deadlines, dollar amounts and
+ordinances come from the sources or not at all, while how a boiler works, what DSCR means
+and how to word a firm message to a tenant are his to answer like the professional he is.
+The test in the prompt is "would being wrong about this hurt them in front of a judge, a
+tenant, or an inspector".
 
 Under every answer: copy it and rate it. No source list - the podcast is what Jay learned
 from, not a reading list to hand back, and an answer that has to show its homework is not

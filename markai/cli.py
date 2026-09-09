@@ -1395,6 +1395,242 @@ def facts_list() -> None:
         console.print(table)
 
 
+PROPOSALS_FILE = "facts-proposals.json"
+
+
+def _proposals_path(settings: Any) -> Path:
+    return settings.data_dir / PROPOSALS_FILE
+
+
+def _load_proposals(settings: Any) -> dict:
+    import json
+
+    path = _proposals_path(settings)
+    if not path.exists():
+        return {"read_chunk_ids": [], "proposals": []}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except ValueError:
+        _fail(f"{path} is not readable JSON.", "Delete it and mine again.")
+
+
+def _save_proposals(settings: Any, data: dict) -> None:
+    import json
+
+    settings.ensure_dirs()
+    _proposals_path(settings).write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+@facts_app.command("mine")
+def facts_mine(
+    limit: int = typer.Option(0, "--limit", help="Passages to read. 0 means all of them."),
+    kind: str = typer.Option("all", "--kind", help="all, website, youtube or podcast."),
+    yes: bool = typer.Option(False, "--yes", help="Skip the cost confirmation."),
+    restart: bool = typer.Option(False, "--restart", help="Read everything again from scratch."),
+) -> None:
+    """Read the indexed sources and propose ordinance and cost entries out of them.
+
+    Jay never learns a local fact on his own. This is different: the facts are already in
+    the sources, said out loud in a blog post or an episode, and this reads them out. Every
+    proposal quotes the sentence it came from, the quote is checked against the passage
+    before you ever see it, and nothing lands in facts.yaml until you accept it in
+    `mark facts review`.
+
+    This calls Claude and costs money, so it tells you how much before it starts. It picks
+    up where it left off, so a run you stop is not a run you lose.
+    """
+    from markai.facts_miner import candidates_in, estimate, mine
+    from markai.models import SourceKind
+
+    wanted = {
+        "all": None,
+        "website": (SourceKind.WEBSITE,),
+        "youtube": (SourceKind.YOUTUBE,),
+        "podcast": (SourceKind.PODCAST,),
+    }
+    if kind.lower() not in wanted:
+        _fail(f"Unknown kind {kind!r}.", "Use all, website, youtube or podcast.")
+    kinds = wanted[kind.lower()]
+
+    settings = _settings()
+    store = _store(settings)
+    saved = {"read_chunk_ids": [], "proposals": []} if restart else _load_proposals(settings)
+    already = set(saved.get("read_chunk_ids", []))
+
+    found, seen = candidates_in(store, kinds=kinds, already_read=already)
+    if limit:
+        found = found[:limit]
+    if not found:
+        store.close()
+        console.print(
+            f"[green]✓[/green] Nothing left to read: {seen} passages, all of them either "
+            f"already mined or with no rule in them."
+        )
+        return
+
+    plan = estimate(found)
+    console.print(
+        f"[bold]{plan['passages']}[/bold] passages worth reading out of {seen} "
+        f"({len(already)} already done)\n"
+        f"[dim]{plan['batches']} requests, roughly {plan['input_tokens']:,} in and "
+        f"{plan['output_tokens']:,} out[/dim]\n"
+        f"Estimated cost: [bold]${plan['usd']:.2f}[/bold]"
+    )
+    if not yes and not typer.confirm("Run it?", default=False):
+        store.close()
+        console.print("[dim]Nothing spent.[/dim]")
+        return
+
+    import anthropic
+
+    key = settings.anthropic_key()
+    if not key:
+        store.close()
+        _fail("ANTHROPIC_API_KEY is not set.", "Run `mark init`, or put your key in .env.")
+    client = anthropic.Anthropic(api_key=key)
+
+    with console.status("Reading the sources…") as status:
+
+        def progress(done: int, total: int) -> None:
+            status.update(f"Read {done} of {total} passages…")
+
+        report = mine(
+            store,
+            client,
+            settings.model,
+            limit=limit,
+            kinds=kinds,
+            on_progress=progress,
+            already_read=already,
+        )
+    store.close()
+
+    saved["read_chunk_ids"] = sorted(already | set(report.read_chunk_ids))
+    saved["proposals"] = list(saved.get("proposals", [])) + [p.to_dict() for p in report.proposals]
+    _save_proposals(settings, saved)
+
+    console.print(
+        f"[green]✓[/green] Read {report.passages_read} passages, "
+        f"found {len(report.proposals)} to propose."
+    )
+    if report.dropped_unquoted:
+        console.print(
+            f"[dim]{report.dropped_unquoted} were dropped: the quote was not in the "
+            f"passage, so the sources never actually said it.[/dim]"
+        )
+    if report.batches_failed:
+        console.print(
+            f"[yellow]{report.batches_failed} request(s) failed. Run it again to pick "
+            f"those up.[/yellow]"
+        )
+    console.print(f"[dim]Cost about ${report.cost_usd:.2f}.[/dim]")
+    console.print(f"Now run [bold]mark facts review[/bold] ({len(saved['proposals'])} waiting).")
+
+
+@facts_app.command("review")
+def facts_review(
+    limit: int = typer.Option(0, "-n", "--limit", help="How many to go through this sitting."),
+) -> None:
+    """Walk the mined proposals and accept the ones you want into facts.yaml.
+
+    Nothing was written while mining. This is where you decide, one at a time, with the
+    sentence from your own source in front of you.
+    """
+    from markai.facts_miner import CannotInsert, Proposal, as_yaml_entry, insert_into_facts
+    from markai.sources.facts import facts_path, load_facts
+
+    settings = _settings()
+    saved = _load_proposals(settings)
+    waiting = list(saved.get("proposals", []))
+    if not waiting:
+        console.print("[yellow]Nothing to review. Run `mark facts mine` first.[/yellow]")
+        return
+
+    path = facts_path(settings.sources_file)
+    body = path.read_text(encoding="utf-8") if path.exists() else ""
+    existing_ids = set()
+    if body:
+        try:
+            book = load_facts(path)
+            existing_ids = {item.id for item in [*book.ordinances, *book.costs]}
+        except Exception as exc:
+            _fail(f"{path} is not valid, so nothing can be added to it: {exc}")
+
+    accepted = kept = 0
+    remaining: list[dict] = []
+    for index, raw in enumerate(waiting):
+        if limit and index >= limit:
+            remaining.extend(waiting[index:])
+            break
+        console.print()
+        console.print(
+            f"[bold]{escape(str(raw.get('topic', '')))}[/bold] "
+            f"[dim]({raw.get('kind')}, from {escape(str(raw.get('source', '')))})[/dim]"
+        )
+        console.print(f"  {escape(str(raw.get('rule', '')))}")
+        console.print(f'  [dim]source says: "{escape(str(raw.get("quote", "")))}"[/dim]')
+        choice = typer.prompt("  [a]ccept, [s]kip, [q]uit", default="s").strip().lower()[:1]
+        if choice == "q":
+            remaining.extend(waiting[index:])
+            break
+        if choice != "a":
+            kept += 1
+            continue
+
+        # Plain and predictable, because the owner edits this file by hand.
+        number = 1
+        while f"mined-{number}" in existing_ids:
+            number += 1
+        entry_id = f"mined-{number}"
+        proposal = Proposal(
+            kind=str(raw.get("kind", "ordinance")),
+            topic=str(raw.get("topic", "")),
+            rule=str(raw.get("rule", "")),
+            quote=str(raw.get("quote", "")),
+            source_title=str(raw.get("source", "")),
+            source_url=raw.get("url"),
+            jurisdiction=str(raw.get("jurisdiction", "")),
+            citation=str(raw.get("citation", "")),
+            low=raw.get("low"),
+            high=raw.get("high"),
+            unit=str(raw.get("unit", "")),
+        )
+        section = "ordinances" if proposal.kind == "ordinance" else "costs"
+        try:
+            candidate = insert_into_facts(body, section, as_yaml_entry(proposal, entry_id))
+        except CannotInsert as exc:
+            console.print(f"[red]Skipped: {escape(str(exc))}[/red]")
+            kept += 1
+            continue
+        # Written only once it parses. A file that does not load takes Jay's whole fact
+        # layer with it, and that is not a trade worth making for one entry.
+        try:
+            import yaml
+
+            yaml.safe_load(candidate)
+        except Exception as exc:
+            console.print(f"[red]Skipped: that entry would break the file ({exc}).[/red]")
+            kept += 1
+            continue
+        body = candidate
+        existing_ids.add(entry_id)
+        accepted += 1
+
+    if accepted:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body, encoding="utf-8")
+    saved["proposals"] = remaining
+    _save_proposals(settings, saved)
+
+    console.print()
+    console.print(
+        f"[green]✓[/green] Accepted {accepted} into {path.name}, skipped {kept}, "
+        f"{len(remaining)} left."
+    )
+    if accepted:
+        console.print("[dim]Run `mark facts validate`, then restart `mark serve`.[/dim]")
+
+
 @facts_app.command("probe")
 def facts_probe(
     question: str = typer.Argument(..., help="A question, to see which facts it would pull in."),

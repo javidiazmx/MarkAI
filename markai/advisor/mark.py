@@ -44,6 +44,7 @@ from markai.advisor.prompt_builder import (
     build_business_block,
     build_citations,
     build_facts_block,
+    build_history_block,
     build_portfolio_block,
     build_system_blocks,
     build_user_message,
@@ -212,11 +213,14 @@ class MarkAdvisor:
         attachments: list[Any] | None = None,
         portfolio: list[Any] | None = None,
         neighborhood: str | None = None,
+        remembered: list[tuple[str, float]] | None = None,
     ) -> AdvisorResponse:
         """Answer a question, draining the stream. Errors come back as an AdvisorResponse."""
         response: AdvisorResponse | None = None
         error: str | None = None
-        for event in self.stream(question, conversation, attachments, portfolio, neighborhood):
+        for event in self.stream(
+            question, conversation, attachments, portfolio, neighborhood, remembered
+        ):
             if event.type == "final":
                 response = event.response
             elif event.type == "error":
@@ -232,6 +236,7 @@ class MarkAdvisor:
         attachments: list[Any] | None = None,
         portfolio: list[Any] | None = None,
         neighborhood: str | None = None,
+        remembered: list[tuple[str, float]] | None = None,
     ):
         """Yield text deltas, tool notices, then exactly one ``final`` (or ``error``)."""
         flags = detect_flags(question)
@@ -266,6 +271,7 @@ class MarkAdvisor:
             facts_block,
             build_portfolio_block(list(portfolio or []), neighborhood),
             date.today(),
+            build_history_block(list(remembered or [])),
         )
         api_messages: list[Any] = list(conversation.messages) if conversation else []
         if attachments:

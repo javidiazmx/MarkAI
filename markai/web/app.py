@@ -608,6 +608,9 @@ def create_app(
                 record,
                 get_portfolio().list(owner) if owner else None,
                 signed_in.neighborhood if signed_in else None,
+                # What they asked about before, in their own words. Costs nothing: the
+                # titles already exist, and this is what lets Jay say "same Berwyn unit?".
+                get_history().recent_topics(owner, exclude=payload.session_id) if owner else None,
             )
         )
 
@@ -623,6 +626,7 @@ def _events(
     record: Callable[[str, str], None] | None = None,
     portfolio: list[Any] | None = None,
     neighborhood: str | None = None,
+    remembered: list[tuple[str, float]] | None = None,
 ) -> Iterator[dict]:
     from markai.advisor.mark import MissingApiKeyError
 
@@ -637,7 +641,9 @@ def _events(
             return
 
         response = None
-        for event in advisor.stream(message, conversation, attachments, portfolio, neighborhood):
+        for event in advisor.stream(
+            message, conversation, attachments, portfolio, neighborhood, remembered
+        ):
             if event.type == "text":
                 yield {"event": "text", "data": json.dumps({"text": event.text})}
             elif event.type == "thinking":

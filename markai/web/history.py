@@ -282,6 +282,26 @@ class History:
             for r in rows
         ]
 
+    def recent_topics(
+        self, owner_id: str, limit: int = 5, exclude: str = ""
+    ) -> list[tuple[str, float]]:
+        """What this landlord has asked about before, newest first.
+
+        Their own question titles, which already exist and cost nothing: no summarising
+        call, no invented profile, nothing they did not type themselves. It is enough for
+        Jay to say "you asked about that Berwyn unit last week, same building?", which is
+        the difference between a chat window and someone who knows you.
+        """
+        if not owner_id:
+            return []
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT title, updated_at FROM threads WHERE owner_id = ? AND id != ?"
+                " ORDER BY updated_at DESC LIMIT ?",
+                (owner_id, exclude, max(0, min(limit, MAX_THREADS_PER_BROWSER))),
+            ).fetchall()
+        return [(row["title"], float(row["updated_at"])) for row in rows]
+
     def get(self, owner_id: str, thread_id: str) -> Thread | None:
         with self._lock:
             row = self._conn.execute(
