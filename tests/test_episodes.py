@@ -53,9 +53,43 @@ def test_a_guest_in_the_title_is_read_off_it(title, expected):
 
 
 @pytest.mark.parametrize(
+    ("title", "expected"),
+    [
+        # Every one of these is a real title off the owner's channel.
+        (
+            "Crazy Stories of Off-Market Real Estate Deals with Igor Mike Kajpust",
+            "Igor Mike Kajpust",
+        ),
+        ("Chicago Ground-Up Developments with Matt Katsaros", "Matt Katsaros"),
+        ("0-9 Unit Portfolio in Under Two Years with Hart Turner", "Hart Turner"),
+        (
+            "36th Ward: Future of Chicago with Alderman Gilbert Villegas",
+            "Alderman Gilbert Villegas",
+        ),
+        # Two guests, written two ways.
+        (
+            "Cracking Cash Flow on Chicago's West Side with Jay Patel and Tedi Nati",
+            "Jay Patel and Tedi Nati",
+        ),
+        (
+            "Breaking Down Chicagoland Syndications W/Duke Dennis & Bryan Sonn",
+            "Duke Dennis and Bryan Sonn",
+        ),
+    ],
+)
+def test_the_owners_own_titles_are_read_correctly(title, expected):
+    """`Cracking Cash Flow` came back as the guest until the head pattern learned to
+    stand down when the title already said "with"."""
+    assert guest_from_title(title) == expected
+
+
+@pytest.mark.parametrize(
     "title",
     [
         "Ep. 214: Boilers 101",
+        # Real ones with no guest named. Nothing is better than a guess.
+        "Chicago's Josh Bandoch Using Neuroscience to Win Negotiations",
+        "Brendan McElhaney's Journey To Wholesaling Deal Flow",
         "What to do with a 2 flat in Berwyn",
         "Ep 5: Screening with a co-signer",  # "a co-signer" is not a name
         "Section 8 on the South Side",

@@ -48,6 +48,9 @@ _LEAD_IN = re.compile(
     re.IGNORECASE,
 )
 _NAME_PART = re.compile(r"^(?:[A-Z][\w'’\-]*|de|del|la|van|von|der|di|da|Mc|O')$")
+# "with Jay Patel and Tedi Nati", "W/Duke Dennis & Bryan Sonn": two guests, one episode.
+_ANOTHER_GUEST = re.compile(r"\s+(?:and|&|y)\s+|\s*,\s*", re.IGNORECASE)
+MAX_GUESTS = 3
 _NUMBERED = re.compile(r"\d")
 
 
@@ -65,6 +68,17 @@ def _looks_like_a_name(text: str) -> bool:
     return all(_NAME_PART.match(word.strip(".,")) for word in words)
 
 
+def _names_in(tail: str) -> str | None:
+    """One guest, or the two or three an episode sometimes has, joined as they read."""
+    parts = [part.strip(" .:-–|") for part in _ANOTHER_GUEST.split(tail)]
+    parts = [part for part in parts if part]
+    if not parts or len(parts) > MAX_GUESTS:
+        return None
+    if not all(_looks_like_a_name(part) for part in parts):
+        return None
+    return " and ".join(parts)
+
+
 def guest_from_title(title: str) -> str | None:
     """The guest's name if the title names one, otherwise ``None``.
 
@@ -75,15 +89,22 @@ def guest_from_title(title: str) -> str | None:
     if not text:
         return None
 
-    # "... with Jane Doe", "... ft. Jane Doe", "Guest: Jane Doe"
+    # "... with Jane Doe", "... ft. Jane Doe and John Roe", "Guest: Jane Doe"
+    lead_in = False
     for match in _LEAD_IN.finditer(text):
+        lead_in = True
         tail = text[match.end() :]
-        tail = re.split(r"[|(\[]|\s[-–]\s|,|\bon\b|\babout\b|\bsobre\b", tail)[0]
-        candidate = tail.strip(" .:-–|")
-        if _looks_like_a_name(candidate):
-            return candidate
+        tail = re.split(r"[|(\[]|\s[-–]\s|\bon\b|\babout\b|\bsobre\b", tail)[0]
+        found = _names_in(tail)
+        if found:
+            return found
 
-    # "Jane Doe on Boilers", "Jane Doe: Boilers"
+    # "Jane Doe on Boilers", "Jane Doe: Boilers". Only for a title that never said "with":
+    # "Cracking Cash Flow on Chicago's West Side with Jay Patel" is three capitalised words
+    # in front of "on" and not a person, and a title that names its guest with a lead-in
+    # has already had its say.
+    if lead_in:
+        return None
     head = re.split(r"\bon\b|:|\||\s[-–]\s", text, maxsplit=1)[0].strip(" .:-–|")
     if _looks_like_a_name(head):
         return head
