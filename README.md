@@ -408,6 +408,19 @@ pile purposeful, and they are what `facts proposals` now leads with:
   ordinance with no citation, and these are the ones that can satisfy it honestly.
 - `--min-sources 3` is corroboration: three of your own pages saying the same thing.
 
+A subject counts as one you already cover only when it shares two words with something in
+`facts.yaml`. One word marked two thirds of a thousand proposals as covered off thirty
+entries, and buried the real rules behind them.
+
+**What is not about renting property is labelled too.** A crawl of city and county pages
+brings back every deadline on them - a cannabis zoning petition, an animal adoption hold, a
+vehicle sticker, the state budget - and no landlord will ever ask about one. Those sort to
+the back marked "off topic", `--on-topic` leaves them out, and `mark facts proposals
+--off-topic` shows you exactly what that catches before you drop any of it. One unambiguous
+word settles it ("tenant", "lease", "voucher"); a word that turns up in any government text
+("notice", "tax", "damage") needs a second one, and it is the quoted sentence rather than the
+label that decides.
+
 `mark facts drop` is the other half. Nine hundred subjects waiting is not a to-do list, it
 is a reason to stop opening the command, so this throws a filtered slice away - the rents,
 the single-source ones, the uncited ones, subjects you already cover. It writes nothing and

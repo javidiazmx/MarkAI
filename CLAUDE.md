@@ -69,6 +69,11 @@ The owner runs this on Windows. Commands you hand over go in `cmd` form, or thro
 - **Mining is the only thing that spends.** `mark facts proposals` and `mark facts review`
   make no API call, and `mark facts mine --free` extracts the rule sentences with patterns
   instead of a model: no key, no call, quote and rule the same text.
+- **A proposal has to be about renting property.** `is_landlord_business` in
+  `facts_miner.py` sorts a city page's deadlines to the back: one unambiguous word, or two
+  weak ones, judged on the quoted sentence rather than the label. Nothing is dropped
+  without the owner asking (`mark facts drop --off-topic`), and `--off-topic` shows them
+  first.
 - **The review queue is ranked by demand, not by confidence.** `group_proposals` takes the
   questions from `mark gaps` and the thumbs-down from `mark feedback` and puts the
   proposals that would have answered one of them first. A fact layer is worth what it

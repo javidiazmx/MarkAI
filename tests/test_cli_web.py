@@ -1961,3 +1961,36 @@ def test_facts_proposals_puts_what_landlords_asked_about_first(tmp_path, monkeyp
     assert "asked about" in result.stdout
     rows = [line for line in result.stdout.splitlines() if "│" in line and "ordinance" in line]
     assert "deposit" in rows[0], "the one somebody asked for goes first"
+
+
+def test_facts_drop_clears_what_is_not_about_renting(tmp_path, monkeypatch):
+    manifest, data = _waiting(
+        tmp_path,
+        monkeypatch,
+        [
+            _proposal(
+                "Restricted cannabis zone petition deadline",
+                "30 days.",
+                "A petition must be filed within 30 days of the notice.",
+                "City page",
+            ),
+            _proposal(
+                "Security deposit return deadline",
+                "45 days.",
+                "The landlord must return the deposit within 45 days.",
+                "A post",
+            ),
+        ],
+    )
+    listing = runner.invoke(app, ["facts", "proposals"])
+    assert "off topic" in listing.stdout
+
+    only_stray = runner.invoke(app, ["facts", "proposals", "--off-topic"])
+    assert "cannabis" in only_stray.stdout
+    assert "Security deposit" not in only_stray.stdout, "look before you drop"
+
+    dropped = runner.invoke(app, ["facts", "drop", "--off-topic", "--yes"])
+    assert dropped.exit_code == 0, dropped.stdout
+    left = json.loads((data / "facts-proposals.json").read_text(encoding="utf-8"))["proposals"]
+    assert [raw["topic"] for raw in left] == ["Security deposit return deadline"]
+    assert not (manifest.parent / "facts.yaml").exists()

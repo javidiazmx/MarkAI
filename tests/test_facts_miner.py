@@ -695,3 +695,106 @@ def test_nothing_is_wanted_when_nobody_has_asked_anything():
 
     groups = group_proposals([_raw("snow", "24 hours.", "Snow must go within 24 hours.", "A")])
     assert groups[0].wanted is False
+
+
+# --- what is not about renting property at all --------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "topic",
+    [
+        "Illinois budget adoption deadline",
+        "Restricted cannabis zone petition deadline",
+        "City vehicle sticker purchase deadline",
+        "FOIA appeal deadline",
+        "Animal adoption hold period",
+        "Petition signature gathering period",
+    ],
+)
+def test_a_city_page_deadline_is_off_topic(topic):
+    """The corpus is full of these and no landlord will ever ask about one."""
+    from markai.facts_miner import is_landlord_business
+
+    assert is_landlord_business({"topic": topic}) is False
+
+
+@pytest.mark.parametrize(
+    "topic",
+    ["Security deposit return deadline", "Voucher search period", "1099 deadline"],
+)
+def test_one_unambiguous_word_settles_it_on_the_label_alone(topic):
+    from markai.facts_miner import is_landlord_business
+
+    assert is_landlord_business({"topic": topic}) is True
+
+
+@pytest.mark.parametrize(
+    "topic,quote",
+    [
+        (
+            "Damage statement deadline",
+            "An itemized statement of damages must reach the tenant within 30 days.",
+        ),
+        (
+            "Discrimination charge filing deadline",
+            "A housing discrimination charge must be filed within 300 days.",
+        ),
+        (
+            "Assessment complaint deadline",
+            "A complaint on the assessed value of the property must be filed within 30 days.",
+        ),
+    ],
+)
+def test_a_bureaucratic_label_is_judged_on_its_sentence(topic, quote):
+    """ "Damage", "discrimination" and "assessment" are in every government page.
+
+    On their own they decide nothing; with the sentence they are plainly landlord business.
+    """
+    from markai.facts_miner import is_landlord_business
+
+    assert is_landlord_business({"topic": topic}) is False
+    assert is_landlord_business({"topic": topic, "quote": quote}) is True
+
+
+def test_the_sentence_decides_when_the_label_is_bare():
+    from markai.facts_miner import is_landlord_business
+
+    assert is_landlord_business(
+        {"topic": "Grace period", "quote": "Rent must be paid within a 5 day grace period."}
+    )
+    assert not is_landlord_business(
+        {"topic": "Grace period", "quote": "A sticker ticket must be paid within 7 days."}
+    )
+
+
+def test_off_topic_goes_behind_everything():
+    from markai.facts_miner import group_proposals
+
+    waiting = [
+        _raw(
+            "cannabis petition comment period",
+            "30 days.",
+            "Comments must be filed in 30 days.",
+            "A",
+        ),
+        _raw(
+            "security deposit return", "45 days.", "The deposit must be returned in 45 days.", "B"
+        ),
+    ]
+    groups = group_proposals(waiting)
+    assert groups[0].on_topic is True
+    assert groups[-1].on_topic is False
+
+
+def test_one_shared_word_is_not_a_subject_you_already_cover():
+    """Thirty entries marked two thirds of a thousand proposals as covered. One word is not."""
+    from markai.facts_miner import group_proposals
+
+    waiting = [
+        _raw("radon testing deadline", "30 days.", "A radon test is required within 30 days.", "A")
+    ]
+    (loose,) = group_proposals(waiting, known_terms=frozenset({"deadline", "notice", "rent"}))
+    assert loose.known is False, "sharing the word 'deadline' is not the same rule"
+
+    (tight,) = group_proposals(waiting, known_terms=frozenset({"radon", "testing"}))
+    assert tight.known is True

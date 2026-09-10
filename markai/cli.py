@@ -1649,6 +1649,8 @@ def _pick_groups(
     cited_only: bool = False,
     wanted_only: bool = False,
     max_sources: int = 0,
+    on_topic: bool = False,
+    off_topic: bool = False,
 ) -> tuple[list[Any], list[dict], Path, set[str], str, int]:
     """The proposals worth showing this sitting, grouped, filtered and ordered."""
     from markai.facts_miner import group_proposals, has_a_price
@@ -1673,6 +1675,10 @@ def _pick_groups(
         if new_only and group.known:
             continue
         if no_rents and group.rent:
+            continue
+        if on_topic and not group.on_topic:
+            continue
+        if off_topic and group.on_topic:
             continue
         if cited_only and not group.cited:
             continue
@@ -1700,6 +1706,10 @@ def facts_proposals(
     wanted: bool = typer.Option(
         False, "--wanted", help="Only subjects a landlord actually asked about and missed."
     ),
+    on_topic: bool = typer.Option(False, "--on-topic", help="Only what is about renting property."),
+    off_topic: bool = typer.Option(
+        False, "--off-topic", help="Only what is not, so you can see it before dropping it."
+    ),
 ) -> None:
     """What is waiting in the review queue, by subject, before you sit down to it.
 
@@ -1710,7 +1720,7 @@ def facts_proposals(
     """
     settings = _settings()
     groups, waiting, path, _, _, priceless = _pick_groups(
-        settings, kind, topic, 1, False, no_rents, cited, wanted
+        settings, kind, topic, 1, False, no_rents, cited, wanted, 0, on_topic, off_topic
     )
     if not waiting:
         console.print("[yellow]Nothing waiting. Run `mark facts mine` first.[/yellow]")
@@ -1745,6 +1755,8 @@ def facts_proposals(
     table.add_column("Note")
     for group in groups[: limit or len(groups)]:
         notes = []
+        if not group.on_topic:
+            notes.append("[yellow]off topic[/yellow]")
         if group.wanted:
             notes.append("[bold]asked about[/bold]")
         if group.cited:
@@ -1772,10 +1784,17 @@ def facts_proposals(
         )
     asked_about = [g for g in groups if g.wanted]
     cited_ones = [g for g in groups if g.cited]
+    stray = [g for g in groups if not g.on_topic]
     console.print(
         f"\n[dim]A fact layer is worth what it answers. You do not want {len(groups)} "
         f"entries in it, you want the ones somebody asked for.[/dim]"
     )
+    if stray:
+        console.print(
+            f"  [bold]mark facts proposals --off-topic[/bold]  [dim]{len(stray)} that mention "
+            f"nothing about renting property - a cannabis petition, a vehicle sticker, the "
+            f"state budget. Look, then `mark facts drop --off-topic`.[/dim]"
+        )
     if asked_about:
         console.print(
             f"  [bold]mark facts review --wanted[/bold]  [dim]{len(asked_about)} that would "
@@ -1817,6 +1836,7 @@ def facts_review(
     wanted: bool = typer.Option(
         False, "--wanted", help="Only subjects a landlord actually asked about and missed."
     ),
+    on_topic: bool = typer.Option(False, "--on-topic", help="Only what is about renting property."),
     accept_all: bool = typer.Option(
         False, "--accept-all", help="Accept everything that matches, without asking one by one."
     ),
@@ -1836,7 +1856,7 @@ def facts_review(
 
     settings = _settings()
     groups, waiting, path, existing_ids, body, _ = _pick_groups(
-        settings, kind, topic, min_sources, new_only, no_rents, cited, wanted
+        settings, kind, topic, min_sources, new_only, no_rents, cited, wanted, 0, on_topic
     )
     if not waiting:
         console.print("[yellow]Nothing to review. Run `mark facts mine` first.[/yellow]")
@@ -1918,6 +1938,7 @@ def facts_review(
                 + (", you already cover this subject" if group.known else "")
                 + (", a market rent that will go stale" if group.rent else "")
                 + (", somebody asked about this" if group.wanted else "")
+                + (", nothing to do with renting" if not group.on_topic else "")
                 + (
                     f", page dated {escape(str(group.lead.get('source_date', '')))[:10]}"
                     if group.lead.get("source_date")
@@ -1978,6 +1999,9 @@ def facts_drop(
     uncited: bool = typer.Option(
         False, "--uncited", help="Drop the ones that name no section number."
     ),
+    off_topic: bool = typer.Option(
+        False, "--off-topic", help="Drop what mentions nothing about renting property."
+    ),
     covered: bool = typer.Option(
         False, "--covered", help="Drop subjects facts.yaml already has a rule about."
     ),
@@ -1991,7 +2015,12 @@ def facts_drop(
     what it drops is only ever a proposal: the sentence is still in your sources, and
     `mark facts mine --restart` would find it again.
     """
-    from markai.facts_miner import cites_a_section, group_proposals, is_market_rent
+    from markai.facts_miner import (
+        cites_a_section,
+        group_proposals,
+        is_landlord_business,
+        is_market_rent,
+    )
     from markai.sources.facts import facts_path
 
     settings = _settings()
@@ -2000,11 +2029,13 @@ def facts_drop(
     if not waiting:
         console.print("[yellow]Nothing waiting.[/yellow]")
         return
-    if not (rents or max_sources or uncited or covered or topic or kind.lower() != "all"):
+    if not (
+        rents or max_sources or uncited or covered or off_topic or topic or kind.lower() != "all"
+    ):
         _fail(
             "That would drop everything.",
-            "Name a slice: --rents, --max-sources 1, --uncited, --covered, --kind cost, "
-            "--topic <word>.",
+            "Name a slice: --off-topic, --rents, --max-sources 1, --uncited, --covered, "
+            "--kind cost, --topic <word>.",
         )
 
     known, _, _ = _known_terms(facts_path(settings.sources_file))
@@ -2019,6 +2050,8 @@ def facts_drop(
         if rents and not is_market_rent(group.lead):
             continue
         if uncited and cites_a_section(group.lead):
+            continue
+        if off_topic and is_landlord_business(group.lead):
             continue
         if covered and not group.known:
             continue

@@ -605,6 +605,7 @@ class ProposalGroup:
     rent: bool = False  # a market rent number rather than what a job costs
     cited: bool = False  # names a section number, so it is the rule and not a summary
     wanted: bool = False  # a landlord actually asked something this would have answered
+    on_topic: bool = True  # about renting property, not a deadline off a city page
 
     @property
     def support(self) -> int:
@@ -664,6 +665,61 @@ def _lead_of(raws: list[dict]) -> dict:
 
 
 MIN_WANTED_OVERLAP = 2
+# One word in common is not the same subject. With thirty entries in facts.yaml, matching on
+# any single shared word marked two thirds of a thousand proposals as "already covered" and
+# buried the real rules behind them.
+MIN_KNOWN_OVERLAP = 2
+
+# What this product is about. A crawl of city and county pages is full of deadlines that have
+# nothing to do with renting property - a cannabis zoning petition, an animal adoption hold,
+# a vehicle sticker, the state budget - and no landlord will ever ask about one.
+#
+# Two tiers, because one shared word is not enough here either: "notice", "tax" and "damage"
+# turn up in any government text, so a weak word needs a second one, while "tenant", "lease"
+# or "voucher" settles it alone.
+_STRONG_WORDS = frozenset(
+    """
+    landlord landlords landlording tenant tenants tenancy lease leases leasing sublet
+    subletting sublease rent rents rental renter renters deposit deposits eviction evict
+    evicted evictions habitability habitable rlto holdover lockout lockouts squatter vacate
+    vacating voucher vouchers cha hud subsidized apartment apartments flat flats duplex
+    triplex boiler furnace radiator tuckpointing porch bedbug bedbugs radon asbestos mold
+    escrow foreclosure reassessment roomer roommate 1099
+    inquilino inquilinos arrendador arrendatario alquiler renta deposito desalojo
+    calefaccion propietario arriendo
+    """.split()
+)
+_WEAK_WORDS = frozenset(
+    """
+    notice notices renew renewal heat heating plumbing plumber roof stair stairs smoke
+    carbon detector detectors sprinkler inspection inspector inspections code violation
+    violations ordinance housing subsidy screening applicant applicants application
+    occupancy utilities utility water sewer scavenger garbage recycling snow sidewalk
+    parking unit units property properties owner owners repair repairs maintenance capex
+    mortgage refinance insurance assessment assessments tax taxes title closing damage
+    damages security itemized withhold withholding interest late fee fees discrimination
+    discriminatory fair familial disability disabilities retaliation harassment pet pets
+    lead elevator laundry basement garage guest building buildings
+    propiedad contrato aviso
+    """.split()
+)
+
+
+def is_landlord_business(raw: dict) -> bool:
+    """Whether a proposal is about renting property at all.
+
+    One unambiguous word, or two of the weak ones, read across the topic, the rule and the
+    quote together: a page about something else entirely can still state a rule a landlord
+    lives under, and the sentence is where that shows.
+    """
+    from markai.sources.facts import terms_in
+
+    words = terms_in(
+        " ".join([str(raw.get("topic", "")), str(raw.get("rule", "")), str(raw.get("quote", ""))])
+    )
+    if words & _STRONG_WORDS:
+        return True
+    return len(words & _WEAK_WORDS) >= 2
 
 
 def group_proposals(
@@ -709,9 +765,14 @@ def group_proposals(
     groups = _absorb_longer_labels(seen_groups)
     for group in groups:
         group.lead = _lead_of(group.raws)
-        group.known = bool(known_terms and terms_in(str(group.lead.get("topic", ""))) & known_terms)
+        group.known = (
+            len(terms_in(str(group.lead.get("topic", ""))) & known_terms) >= MIN_KNOWN_OVERLAP
+            if known_terms
+            else False
+        )
         group.rent = is_market_rent(group.lead)
         group.cited = cites_a_section(group.lead)
+        group.on_topic = is_landlord_business(group.lead)
 
     counts: dict[str, int] = {}
     for group in groups:
@@ -741,6 +802,7 @@ def group_proposals(
         has_cite[cluster] = has_cite.get(cluster, False) or group.cited
     groups.sort(
         key=lambda g: (
+            not g.on_topic,
             g.known,
             not asked_for[(g.known, g.topic)],
             not has_cite[(g.known, g.topic)],
