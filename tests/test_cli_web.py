@@ -1994,3 +1994,74 @@ def test_facts_drop_clears_what_is_not_about_renting(tmp_path, monkeypatch):
     left = json.loads((data / "facts-proposals.json").read_text(encoding="utf-8"))["proposals"]
     assert [raw["topic"] for raw in left] == ["Security deposit return deadline"]
     assert not (manifest.parent / "facts.yaml").exists()
+
+
+def test_a_dropped_proposal_can_be_put_back(tmp_path, monkeypatch):
+    """Deciding what a landlord will never ask is a judgement call, so it has to be undoable."""
+    manifest, data = _waiting(
+        tmp_path,
+        monkeypatch,
+        [
+            _proposal(
+                "Dog registration", "30 days.", "A dog must be registered within 30 days.", "City"
+            ),
+            _proposal(
+                "Security deposit return",
+                "45 days.",
+                "The landlord must return the deposit within 45 days.",
+                "A post",
+            ),
+        ],
+    )
+    runner.invoke(app, ["facts", "drop", "--off-topic", "--yes"])
+    saved = json.loads((data / "facts-proposals.json").read_text(encoding="utf-8"))
+    assert [raw["topic"] for raw in saved["proposals"]] == ["Security deposit return"]
+    assert [raw["topic"] for raw in saved["dropped"]] == ["Dog registration"], "kept, not deleted"
+
+    back = runner.invoke(app, ["facts", "undrop"])
+    assert back.exit_code == 0, back.stdout
+    saved = json.loads((data / "facts-proposals.json").read_text(encoding="utf-8"))
+    assert len(saved["proposals"]) == 2 and saved["dropped"] == []
+    assert not (manifest.parent / "facts.yaml").exists()
+
+
+def test_facts_undrop_can_take_back_one_subject(tmp_path, monkeypatch):
+    _, data = _waiting(
+        tmp_path,
+        monkeypatch,
+        [
+            _proposal("Dog registration", "30 days.", "A dog must be registered in 30 days.", "C"),
+            _proposal("FOIA copy fees", "$0.15.", "A copy must cost no more than $0.15.", "C"),
+        ],
+    )
+    runner.invoke(app, ["facts", "drop", "--off-topic", "--yes"])
+    runner.invoke(app, ["facts", "undrop", "--topic", "dog"])
+    saved = json.loads((data / "facts-proposals.json").read_text(encoding="utf-8"))
+    assert [raw["topic"] for raw in saved["proposals"]] == ["Dog registration"]
+    assert [raw["topic"] for raw in saved["dropped"]] == ["FOIA copy fees"]
+
+
+def test_facts_why_explains_the_verdict(tmp_path, monkeypatch):
+    _waiting(
+        tmp_path,
+        monkeypatch,
+        [
+            _proposal(
+                "Section 8 change of ownership",
+                "10 days.",
+                "A change of ownership must be reported to the CHA within 10 days.",
+                "A page",
+            ),
+            _proposal(
+                "Dog registration", "30 days.", "A dog must be registered within 30 days.", "City"
+            ),
+        ],
+    )
+    kept = runner.invoke(app, ["facts", "why", "section 8"])
+    assert kept.exit_code == 0, kept.stdout
+    assert "about renting property" in kept.stdout
+    assert "Section 8" in kept.stdout, "it names the reason, not just the verdict"
+
+    stray = runner.invoke(app, ["facts", "why", "dog"])
+    assert "off topic" in stray.stdout
+    assert "nothing about renting property" in stray.stdout

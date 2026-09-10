@@ -72,8 +72,10 @@ The owner runs this on Windows. Commands you hand over go in `cmd` form, or thro
 - **A proposal has to be about renting property.** `is_landlord_business` in
   `facts_miner.py` sorts a city page's deadlines to the back: one unambiguous word, or two
   weak ones, judged on the quoted sentence rather than the label. Nothing is dropped
-  without the owner asking (`mark facts drop --off-topic`), and `--off-topic` shows them
-  first.
+  without the owner asking (`mark facts drop --off-topic`), what is dropped is kept under
+  `dropped` in the proposals file for `mark facts undrop`, and `mark facts why` prints the
+  word the verdict turned on. The classifier is a judgement call, so it has to be
+  inspectable and reversible.
 - **The review queue is ranked by demand, not by confidence.** `group_proposals` takes the
   questions from `mark gaps` and the thumbs-down from `mark feedback` and puts the
   proposals that would have answered one of them first. A fact layer is worth what it

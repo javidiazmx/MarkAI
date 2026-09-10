@@ -2010,10 +2010,12 @@ def facts_drop(
     """Clear a slice of the queue you are never going to want.
 
     Nine hundred subjects waiting is not a to-do list, it is a reason to stop opening the
-    command. This throws a filtered slice away - `--rents`, `--max-sources 1`, `--uncited` -
-    so what is left is a list you might actually finish. It never touches facts.yaml, and
-    what it drops is only ever a proposal: the sentence is still in your sources, and
-    `mark facts mine --restart` would find it again.
+    command. This sets a filtered slice aside - `--off-topic`, `--rents`, `--max-sources 1`,
+    `--uncited` - so what is left is a list you might actually finish.
+
+    Nothing is lost. What it drops is kept in the same file and `mark facts undrop` puts it
+    back, so being wrong about a slice costs a command rather than a re-mine. It never
+    touches facts.yaml.
     """
     from markai.facts_miner import (
         cites_a_section,
@@ -2063,20 +2065,106 @@ def facts_drop(
         console.print("[yellow]Nothing matches that.[/yellow]")
         return
     console.print(
-        f"About to drop [bold]{len(doomed)}[/bold] proposals from the queue.\n"
-        f"[dim]facts.yaml is untouched and nothing is deleted from your sources - but "
-        f"getting these back means mining again, which costs. Look at them first with the "
-        f"same filters on `mark facts proposals` if you are not sure.[/dim]"
+        f"About to set aside [bold]{len(doomed)}[/bold] proposals.\n"
+        f"[dim]facts.yaml is untouched, and these are kept rather than deleted: "
+        f"`mark facts undrop` puts them all back. Nothing here needs mining again.[/dim]"
     )
     if not yes and not typer.confirm("Go ahead?", default=False):
         console.print("[dim]Nothing dropped.[/dim]")
         return
 
+    # Kept, not deleted. A classifier deciding what a landlord will never ask is a
+    # judgement call, and the owner should be able to disagree with it afterwards.
+    saved["dropped"] = list(saved.get("dropped", [])) + [waiting[index] for index in sorted(doomed)]
     saved["proposals"] = [raw for index, raw in enumerate(waiting) if index not in doomed]
     _save_proposals(settings, saved)
     console.print(
-        f"[green]✓[/green] Dropped {len(doomed)}. {len(saved['proposals'])} proposals left."
+        f"[green]✓[/green] Set aside {len(doomed)}. {len(saved['proposals'])} proposals left, "
+        f"{len(saved['dropped'])} put away.\n"
+        f"[dim]`mark facts undrop` brings them back.[/dim]"
     )
+
+
+@facts_app.command("undrop")
+def facts_undrop(
+    topic: str = typer.Option("", "--topic", help="Only the ones whose topic contains this."),
+) -> None:
+    """Put back what `mark facts drop` set aside.
+
+    Deciding what a landlord will never ask is a judgement call, and mine was wrong about
+    Section 8 once already.
+    """
+    settings = _settings()
+    saved = _load_proposals(settings)
+    put_away = list(saved.get("dropped", []))
+    if not put_away:
+        console.print("[yellow]Nothing has been set aside.[/yellow]")
+        return
+    wanted = topic.lower()
+    back = [raw for raw in put_away if not wanted or wanted in str(raw.get("topic", "")).lower()]
+    if not back:
+        console.print(f"[yellow]None of the {len(put_away)} set aside mention {topic!r}.[/yellow]")
+        return
+    keep = [raw for raw in put_away if raw not in back]
+    saved["proposals"] = list(saved.get("proposals", [])) + back
+    saved["dropped"] = keep
+    _save_proposals(settings, saved)
+    console.print(
+        f"[green]✓[/green] Put {len(back)} back. {len(saved['proposals'])} waiting, "
+        f"{len(keep)} still set aside."
+    )
+
+
+@facts_app.command("why")
+def facts_why(
+    text: str = typer.Argument(..., help="A word from the topic you want explained."),
+    limit: int = typer.Option(10, "-n", "--limit", help="How many to explain."),
+) -> None:
+    """Explain how a proposal was judged: on topic or not, cited, corroborated, asked about.
+
+    For when the queue says something you disagree with. It runs the same code the listing
+    does, so what it prints is the actual reason and not a story about it.
+    """
+    from markai.facts_miner import group_proposals, is_market_rent, why_topical
+    from markai.sources.facts import facts_path
+
+    settings = _settings()
+    saved = _load_proposals(settings)
+    put_away = list(saved.get("dropped", []))
+    pool = list(saved.get("proposals", [])) + put_away
+    if not pool:
+        console.print("[yellow]Nothing to explain. Run `mark facts mine` first.[/yellow]")
+        return
+
+    known, _, _ = _known_terms(facts_path(settings.sources_file))
+    groups = group_proposals(pool, known_terms=known, asked=_questions_that_missed(settings))
+    wanted = text.lower()
+    found = [g for g in groups if wanted in str(g.lead.get("topic", "")).lower()]
+    if not found:
+        console.print(f"[yellow]No proposal's topic contains {text!r}.[/yellow]")
+        return
+
+    set_aside = {id(raw) for raw in put_away}
+    for group in found[: limit or len(found)]:
+        console.print()
+        console.print(f"[bold]{escape(str(group.lead.get('topic', '')))}[/bold] ({group.kind})")
+        console.print(f'  [dim]source says: "{escape(str(group.lead.get("quote", "")))}"[/dim]')
+        verdict = "about renting property" if group.on_topic else "[yellow]off topic[/yellow]"
+        console.print(f"  {verdict}, on {escape(why_topical(group.lead))}")
+        marks = [f"{group.support} source(s) state it"]
+        if group.cited:
+            marks.append("names a section number")
+        if group.wanted:
+            marks.append("answers a question somebody asked")
+        if group.known:
+            marks.append("a subject facts.yaml already covers")
+        if is_market_rent(group.lead):
+            marks.append("a market rent, so it goes stale")
+        if any(id(raw) in set_aside for raw in group.raws):
+            marks.append("[yellow]set aside by `facts drop`[/yellow]")
+        console.print("  " + "; ".join(marks))
+    if limit and len(found) > limit:
+        console.print(f"\n[dim]{len(found) - limit} more match. Use -n 0 for all of them.[/dim]")
 
 
 @facts_app.command("probe")

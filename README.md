@@ -422,10 +422,17 @@ word settles it ("tenant", "lease", "voucher"); a word that turns up in any gove
 label that decides.
 
 `mark facts drop` is the other half. Nine hundred subjects waiting is not a to-do list, it
-is a reason to stop opening the command, so this throws a filtered slice away - the rents,
-the single-source ones, the uncited ones, subjects you already cover. It writes nothing and
-deletes nothing from your sources: the sentence is still there, and `mark facts mine
---restart` would find it again.
+is a reason to stop opening the command, so this sets a filtered slice aside - off topic,
+the rents, the single-source ones, the uncited ones, subjects you already cover.
+
+**Nothing is lost.** What it drops is kept in the same file, and `mark facts undrop` puts it
+back (`--topic <word>` for one subject). Deciding what a landlord will never ask is a
+judgement call, and a wrong call should cost a command rather than a $14 re-mine.
+
+`mark facts why <word>` explains a verdict when you disagree with one: on topic or not and
+which word decided it, whether it names a section number, how many sources state it, whether
+somebody asked about it, whether it is currently set aside. It runs the same code the listing
+does, so it prints the actual reason.
 
 In the one-at-a-time mode, `t` drops a whole subject without deciding it away. A cost
 proposal with no number in it is never offered: "$0 to $0" in the fact block is not a

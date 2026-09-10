@@ -690,6 +690,15 @@ _STRONG_WORDS = frozenset(
     calefaccion propietario arriendo
     """.split()
 )
+# Some of it only means anything as a phrase. "Section" and "8" are nothing on their own,
+# and Section 8 is as central as landlording gets.
+_STRONG_PHRASES = re.compile(
+    r"\b(section\s*8|fair\s+housing|housing\s+choice\s+voucher|accessory\s+dwelling|"
+    r"coach\s+house|single\s+room\s+occupancy|rent\s+control|just\s+cause|"
+    r"source\s+of\s+income|right\s+to\s+counsel|change\s+of\s+ownership)\b",
+    re.IGNORECASE,
+)
+
 _WEAK_WORDS = frozenset(
     """
     notice notices renew renewal heat heating plumbing plumber roof stair stairs smoke
@@ -701,7 +710,8 @@ _WEAK_WORDS = frozenset(
     damages security itemized withhold withholding interest late fee fees preservation
     landmark demolition accessory coach contractor contractors zoned
     fair familial disability disabilities retaliation harassment pet pets
-    lead elevator laundry basement garage guest building buildings
+    lead elevator laundry basement garage guest building buildings ownership residential
+    dwelling occupant occupants
     propiedad contrato aviso
     """.split()
 )
@@ -714,14 +724,37 @@ def is_landlord_business(raw: dict) -> bool:
     quote together: a page about something else entirely can still state a rule a landlord
     lives under, and the sentence is where that shows.
     """
+    return _topical(raw)[0]
+
+
+def why_topical(raw: dict) -> str:
+    """Why a proposal counts as landlord business, or what it was missing.
+
+    A classifier the owner cannot interrogate is one they have to take on trust, and this
+    one decides what disappears from their queue.
+    """
+    return _topical(raw)[1]
+
+
+def _topical(raw: dict) -> tuple[bool, str]:
     from markai.sources.facts import terms_in
 
-    words = terms_in(
-        " ".join([str(raw.get("topic", "")), str(raw.get("rule", "")), str(raw.get("quote", ""))])
+    text = " ".join(
+        [str(raw.get("topic", "")), str(raw.get("rule", "")), str(raw.get("quote", ""))]
     )
-    if words & _STRONG_WORDS:
-        return True
-    return len(words & _WEAK_WORDS) >= 2
+    phrase = _STRONG_PHRASES.search(text)
+    if phrase:
+        return True, f'the phrase "{phrase.group(0)}"'
+    words = terms_in(text)
+    strong = sorted(words & _STRONG_WORDS)
+    if strong:
+        return True, f"the word {', '.join(strong)}"
+    weak = sorted(words & _WEAK_WORDS)
+    if len(weak) >= 2:
+        return True, f"the words {', '.join(weak)}"
+    if weak:
+        return False, f"only {weak[0]}, which needs a second word"
+    return False, "nothing about renting property"
 
 
 def group_proposals(

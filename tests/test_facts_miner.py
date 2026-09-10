@@ -813,3 +813,18 @@ def test_the_rules_that_are_landlord_business_however_they_are_labelled(topic):
     from markai.facts_miner import is_landlord_business
 
     assert is_landlord_business({"topic": topic}) is True
+
+
+def test_section_8_is_landlord_business_even_though_neither_word_is():
+    from markai.facts_miner import is_landlord_business, why_topical
+
+    raw = {"topic": "Section 8 change of ownership", "quote": "Report it to the CHA in 10 days."}
+    assert is_landlord_business(raw) is True
+    assert "Section 8" in why_topical(raw)
+
+
+def test_the_verdict_says_what_it_was_missing():
+    from markai.facts_miner import why_topical
+
+    assert "needs a second word" in why_topical({"topic": "Tax deadline"})
+    assert why_topical({"topic": "Dog registration"}) == "nothing about renting property"
