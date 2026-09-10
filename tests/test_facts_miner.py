@@ -736,10 +736,6 @@ def test_one_unambiguous_word_settles_it_on_the_label_alone(topic):
             "An itemized statement of damages must reach the tenant within 30 days.",
         ),
         (
-            "Discrimination charge filing deadline",
-            "A housing discrimination charge must be filed within 300 days.",
-        ),
-        (
             "Assessment complaint deadline",
             "A complaint on the assessed value of the property must be filed within 30 days.",
         ),
@@ -798,3 +794,22 @@ def test_one_shared_word_is_not_a_subject_you_already_cover():
 
     (tight,) = group_proposals(waiting, known_terms=frozenset({"radon", "testing"}))
     assert tight.known is True
+
+
+@pytest.mark.parametrize(
+    "topic",
+    [
+        "ADU ordinance",
+        "Northwest Side Preservation Ordinance penalties",
+        "Discrimination charge filing deadline",
+    ],
+)
+def test_the_rules_that_are_landlord_business_however_they_are_labelled(topic):
+    """All three sat in the owner's off-topic list, and all three are theirs.
+
+    A coach house, a deconversion ban and a fair-housing charge are as much landlording as
+    a deposit deadline, whatever the page they were read on was called.
+    """
+    from markai.facts_miner import is_landlord_business
+
+    assert is_landlord_business({"topic": topic}) is True

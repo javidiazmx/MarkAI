@@ -2063,9 +2063,10 @@ def facts_drop(
         console.print("[yellow]Nothing matches that.[/yellow]")
         return
     console.print(
-        f"About to drop [bold]{len(doomed)}[/bold] proposals from the queue. "
-        f"[dim]facts.yaml is untouched; nothing is written and nothing is deleted from your "
-        f"sources.[/dim]"
+        f"About to drop [bold]{len(doomed)}[/bold] proposals from the queue.\n"
+        f"[dim]facts.yaml is untouched and nothing is deleted from your sources - but "
+        f"getting these back means mining again, which costs. Look at them first with the "
+        f"same filters on `mark facts proposals` if you are not sure.[/dim]"
     )
     if not yes and not typer.confirm("Go ahead?", default=False):
         console.print("[dim]Nothing dropped.[/dim]")

@@ -684,7 +684,8 @@ _STRONG_WORDS = frozenset(
     evicted evictions habitability habitable rlto holdover lockout lockouts squatter vacate
     vacating voucher vouchers cha hud subsidized apartment apartments flat flats duplex
     triplex boiler furnace radiator tuckpointing porch bedbug bedbugs radon asbestos mold
-    escrow foreclosure reassessment roomer roommate 1099
+    escrow foreclosure reassessment roomer roommate 1099 adu adus deconversion deconvert
+    deconversions discrimination discriminatory
     inquilino inquilinos arrendador arrendatario alquiler renta deposito desalojo
     calefaccion propietario arriendo
     """.split()
@@ -697,8 +698,9 @@ _WEAK_WORDS = frozenset(
     occupancy utilities utility water sewer scavenger garbage recycling snow sidewalk
     parking unit units property properties owner owners repair repairs maintenance capex
     mortgage refinance insurance assessment assessments tax taxes title closing damage
-    damages security itemized withhold withholding interest late fee fees discrimination
-    discriminatory fair familial disability disabilities retaliation harassment pet pets
+    damages security itemized withhold withholding interest late fee fees preservation
+    landmark demolition accessory coach contractor contractors zoned
+    fair familial disability disabilities retaliation harassment pet pets
     lead elevator laundry basement garage guest building buildings
     propiedad contrato aviso
     """.split()
