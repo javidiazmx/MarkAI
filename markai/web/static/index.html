@@ -46,6 +46,10 @@
     display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
   }
   h1 { margin: 0; font-size: 20px; letter-spacing: -0.015em; }
+  .vh {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+  }
   .tag { color: var(--muted); font-size: 13px; }
   .sub { color: var(--muted); font-size: 12px; margin-left: auto; }
   /* Shown under an answer that touched a legal topic, not permanently at the top. */
@@ -274,7 +278,7 @@
   <div class="side-top">
     <h2>Conversations</h2>
     <button id="new-thread" type="button" title="Start a new conversation">+ New</button>
-    <button class="ghost side-close" id="side-close" type="button" title="Close">✕</button>
+    <button class="ghost side-close" id="side-close" type="button" title="Close" aria-label="Close">✕</button>
   </div>
   <div id="threads"></div>
 
@@ -380,7 +384,7 @@
 </div>
 
 <header>
-  <button class="ghost burger" id="burger" type="button" title="Saved conversations">☰</button>
+  <button class="ghost burger" id="burger" type="button" title="Saved conversations" aria-label="Saved conversations">☰</button>
   <h1>Jay</h1>
   <div class="tag">Your Chicagoland AI Advisor</div>
   <div class="sub" id="sub"></div>
@@ -409,6 +413,7 @@
 
 <footer>
   <div class="gate" id="gate">
+    <label class="vh" for="code">Access code</label>
     <input id="code" type="password" placeholder="Access code" autocomplete="off" />
     <button class="ghost" id="save-code" type="button">Save</button>
   </div>
@@ -416,7 +421,8 @@
   <div class="row">
     <input id="file" type="file" multiple hidden
            accept="image/jpeg,image/png,image/gif,image/webp,application/pdf,text/plain,text/csv" />
-    <button class="ghost attach" id="attach" type="button" title="Attach photos or a PDF">📎</button>
+    <button class="ghost attach" id="attach" type="button" title="Attach photos or a PDF" aria-label="Attach photos or a PDF">📎</button>
+    <label class="vh" for="q">Ask Jay a question about renting property in Chicagoland</label>
     <textarea id="q" placeholder="Ask about screening, deposits, leases, a deal you're looking at…"></textarea>
     <button id="send" type="button">Ask</button>
     <button class="ghost" id="stop" type="button" hidden>Stop</button>
@@ -623,6 +629,7 @@
     var wrap = el("div", "msg " + who);
     wrap.appendChild(el("div", "who", label));
     var bubble = el("div", "bubble", "");
+    if (who === "mark") bubble.setAttribute("aria-live", "polite");
     wrap.appendChild(bubble);
     log.appendChild(wrap);
     window.scrollTo(0, document.body.scrollHeight);
@@ -834,6 +841,7 @@
     // Opus 5 thinks before it writes. The reasoning is streamed into this line while it
     // does, so the wait shows work instead of a blank bubble.
     var reasoning = el("div", "reasoning", "");
+    reasoning.setAttribute("aria-live", "polite");
     reasoning.appendChild(el("span", "dots", "●●●"));
     slot.wrap.insertBefore(reasoning, slot.bubble);
     var thought = "";
@@ -845,11 +853,16 @@
     // Once the answer starts, the reasoning folds away into something they can open.
     function foldReasoning() {
       if (!reasoning || !reasoning.parentNode) return;
+      if (!thought) {
+        reasoning.parentNode.removeChild(reasoning);
+        reasoning = null;
+        return;
+      }
       var seconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
       var box2 = el("details", "thought");
       var head = el("summary", null, "Thought for " + seconds + "s");
       box2.appendChild(head);
-      if (thought) box2.appendChild(el("div", "reasoning", thought));
+      box2.appendChild(el("div", "reasoning", thought));
       slot.wrap.replaceChild(box2, reasoning);
       reasoning = null;
     }
@@ -1047,6 +1060,7 @@
       var drop = el("button", null, "✕");
       drop.type = "button";
       drop.title = "Remove";
+      drop.setAttribute("aria-label", "Remove " + item.name);
       drop.addEventListener("click", function () {
         pending.splice(index, 1);
         drawFiles();
@@ -1157,6 +1171,7 @@
       var drop = el("button", "drop", "✕");
       drop.type = "button";
       drop.title = "Delete this conversation";
+      drop.setAttribute("aria-label", "Delete conversation: " + thread.title);
       drop.addEventListener("click", function (event) {
         event.stopPropagation();
         forgetThread(thread.id, thread.title);
@@ -1314,6 +1329,7 @@
       var drop = el("button", "drop", "✕");
       drop.type = "button";
       drop.title = "Remove";
+      drop.setAttribute("aria-label", "Remove " + item.label);
       drop.addEventListener("click", async function () {
         try {
           await fetch("/api/properties/" + encodeURIComponent(item.id), {
@@ -1458,6 +1474,7 @@
       var done = el("button", null, "\u2713");
       done.type = "button";
       done.title = "Mark it done";
+      done.setAttribute("aria-label", "Mark done: " + item.what);
       done.addEventListener("click", async function () {
         try {
           await fetch("/api/log/" + encodeURIComponent(item.id) + "/done", {
@@ -1471,6 +1488,7 @@
     var drop = el("button", null, "\u2715");
     drop.type = "button";
     drop.title = "Delete";
+    drop.setAttribute("aria-label", "Delete log entry: " + item.what);
     drop.addEventListener("click", async function () {
       try {
         await fetch("/api/log/" + encodeURIComponent(item.id), {
