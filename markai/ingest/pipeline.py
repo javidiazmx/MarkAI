@@ -330,10 +330,11 @@ def _iter_sources(
         if settings.youtube_api_client_secret_file is not None:
             from markai.ingest.youtube_api import OAuthNotConfigured, build_youtube_api_client
 
+            secret_file = settings.youtube_api_client_secret_file
+            if not secret_file.is_absolute():
+                secret_file = settings.project_root / secret_file
             try:
-                api_client = build_youtube_api_client(
-                    settings.youtube_api_client_secret_file, settings.youtube_api_token_path
-                )
+                api_client = build_youtube_api_client(secret_file, settings.youtube_api_token_path)
             except OAuthNotConfigured:
                 pass  # opt-in and unset: the scraping routes carry the whole run
             except Exception as exc:  # a channel-owner convenience, never worth failing the run

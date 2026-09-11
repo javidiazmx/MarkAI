@@ -188,6 +188,49 @@ def test_only_limits_which_kinds_run(respx_mock, settings):
     store.close()
 
 
+def test_the_official_api_client_secret_path_is_resolved_against_project_root(
+    respx_mock, tmp_path, monkeypatch
+):
+    """A relative path in .env is relative to the project folder, not wherever `mark` is
+    launched from - the cookies file already worked this way; the OAuth client secret
+    didn't, and would silently fail to be found from any other working directory."""
+    from pathlib import Path
+
+    from markai.config import Settings
+    from markai.ingest.youtube_api import OAuthNotConfigured
+
+    _mock_web(respx_mock)
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    (project_root / "secret.json").write_text("{}", encoding="utf-8")
+
+    settings = Settings(
+        _env_file=None,
+        project_root=project_root,
+        data_dir=tmp_path / "data",
+        sources_file=tmp_path / "sources.yaml",
+        youtube_api_client_secret_file=Path("secret.json"),
+        youtube_delay_seconds=0.0,
+    )
+    settings.ensure_dirs()
+
+    seen: dict[str, Path] = {}
+
+    def fake_build(secret_file, token_file):
+        seen["secret_file"] = secret_file
+        raise OAuthNotConfigured("just checking the path")
+
+    monkeypatch.setattr("markai.ingest.youtube_api.build_youtube_api_client", fake_build)
+
+    store = KnowledgeStore(settings.db_path)
+    with httpx.Client() as client:
+        run_ingest(_manifest(), store, None, settings, client=client)
+    store.close()
+
+    assert seen["secret_file"] == project_root / "secret.json"
+    assert seen["secret_file"].is_absolute()
+
+
 @respx.mock(assert_all_called=False)
 def test_plan_reports_an_unreachable_feed_instead_of_zero(respx_mock, settings):
     respx_mock.get("https://feeds.example.com/suci").mock(return_value=httpx.Response(403))
