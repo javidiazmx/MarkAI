@@ -200,7 +200,6 @@
   }
   #prop-form .pair { display: flex; gap: 6px; }
   #prop-form button { padding: 7px 12px; font-size: 13px; border-radius: 7px; }
-  #log-list { max-height: 32vh; overflow-y: auto; }
   .logline { display: flex; align-items: flex-start; gap: 4px; padding: 4px 4px 4px 9px; }
   .logline .what { flex: 1; min-width: 0; font-size: 13px; line-height: 1.4; }
   .logline .what small { color: var(--muted); display: block; }
@@ -212,9 +211,41 @@
     background: none; border: 0; color: var(--muted); cursor: pointer; font-size: 12px;
     padding: 2px 5px;
   }
-  .logtotal {
-    color: var(--muted); font-size: 12px; padding: 6px 9px 2px; line-height: 1.5;
+  .acct-open {
+    width: 100%; text-align: left; padding: 9px 10px; font-size: 13px; border-radius: 8px;
+    display: flex; align-items: center; justify-content: space-between; gap: 6px;
   }
+  .acct-open::after { content: "\203A"; color: var(--muted); }
+  .acct-card { max-width: 34rem; width: 100%; }
+  .acct-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .acct-head h2 { margin: 0; flex: 1; }
+  #acct-prop {
+    width: 100%; padding: 7px 9px; margin-bottom: 12px; border: 1px solid var(--line);
+    border-radius: 7px; background: var(--bg); color: var(--ink); font: inherit; font-size: 13px;
+  }
+  .acct-summary { display: flex; gap: 8px; margin-bottom: 14px; }
+  .acct-stat {
+    flex: 1; border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px;
+    text-align: center;
+  }
+  .acct-stat .label {
+    display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
+    color: var(--muted); margin-bottom: 4px;
+  }
+  .acct-stat .value { font-size: 18px; font-weight: 700; }
+  .acct-stat.net .value.pos { color: var(--accent); }
+  .acct-breakdown { margin-bottom: 16px; }
+  .acct-kind-row {
+    display: flex; justify-content: space-between; gap: 8px; padding: 6px 2px;
+    border-top: 1px solid var(--line); font-size: 13px;
+  }
+  .acct-kind-row:first-child { border-top: 0; }
+  .acct-kind-row .amount { font-weight: 600; }
+  .acct-subhead {
+    margin: 0 0 6px; font-size: 12px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .06em; color: var(--muted);
+  }
+  #acct-entries { max-height: 34vh; overflow-y: auto; }
   #log-form { padding: 4px 4px 8px 4px; display: grid; gap: 6px; }
   #log-form input, #log-form select {
     width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px;
@@ -332,8 +363,9 @@
         <button class="ghost" id="log-cancel" type="button">Cancel</button>
       </div>
     </form>
-    <div class="logtotal" id="log-total" hidden></div>
-    <div id="log-list"></div>
+    <button class="ghost acct-open" id="open-accounting" type="button">
+      <span id="acct-teaser">Income &amp; expenses</span>
+    </button>
   </div>
 
   <div class="side-foot">
@@ -380,6 +412,20 @@
       <a class="link" id="handoff-link" target="_blank" rel="noopener noreferrer" hidden>Book</a>
       <button class="ghost" id="handoff-close" type="button">Close</button>
     </div>
+  </div>
+</div>
+
+<div class="scrim" id="accounting-card" hidden>
+  <div class="card acct-card">
+    <div class="acct-head">
+      <h2>Income &amp; expenses</h2>
+      <button class="ghost" id="acct-close" type="button" title="Close" aria-label="Close">✕</button>
+    </div>
+    <select id="acct-prop" title="Which building"></select>
+    <div class="acct-summary" id="acct-summary"></div>
+    <div class="acct-breakdown" id="acct-breakdown"></div>
+    <h3 class="acct-subhead">All entries</h3>
+    <div id="acct-entries"></div>
   </div>
 </div>
 
@@ -981,13 +1027,15 @@
       "What should I check on a rental application?",
       "Do I have to accept a housing voucher?",
       "When does the heat ordinance season start?",
-      "Run the cash flow on a $400k two-flat with 25% down"
+      "Run the cash flow on a $400k two-flat with 25% down",
+      "What could I rent my property for? Run a free rental analysis."
     ],
     "chips-es": [
       "¿Cuánto tiempo tengo para devolver el depósito?",
       "¿Cómo desalojo a un inquilino que no paga?",
       "¿Qué documentos le pido a un solicitante?",
-      "¿Puedo cobrar una multa por pago tardío?"
+      "¿Puedo cobrar una multa por pago tardío?",
+      "¿Cuánto podría rentar mi propiedad? Quiero un análisis de renta gratis."
     ]
   };
 
@@ -1346,27 +1394,40 @@
 
   // What's going on ------------------------------------------------------------------
   // Their own record of the buildings: what it cost, who came out, what is still open.
-  // Jay writes to it from the conversation; this is the same log with buttons on it, so
-  // nothing is only knowable by asking.
-  var logRow = document.getElementById("log-list");
+  // Jay writes to it from the conversation; the sidebar only shows a live net teaser and
+  // a button, because the actual browsing - grouped by kind, filtered by building - wants
+  // room a sidebar does not have. That is what the "Income & expenses" panel is for.
   var logForm = document.getElementById("log-form");
   var logWhat = document.getElementById("log-what");
-  var logTotal = document.getElementById("log-total");
   var logProp = document.getElementById("log-prop");
+  var acctTeaser = document.getElementById("acct-teaser");
+  var acctCard = document.getElementById("accounting-card");
+  var acctProp = document.getElementById("acct-prop");
+  var acctSummary = document.getElementById("acct-summary");
+  var acctBreakdown = document.getElementById("acct-breakdown");
+  var acctEntries = document.getElementById("acct-entries");
   var usedTheLog = false;
 
+  // What separates one kind of entry from another, in the order the breakdown reads them.
+  var KIND_LABELS = {
+    income: "Rent & income", expense: "Expenses", bill: "Bills",
+    maintenance: "Maintenance", visit: "Visits", note: "Notes"
+  };
+
   function drawPropPicker(items) {
-    var chosen = logProp.value;
-    logProp.textContent = "";
-    var any = el("option", null, items.length ? "Whole portfolio" : "No buildings added yet");
-    any.value = "";
-    logProp.appendChild(any);
-    items.forEach(function (item) {
-      var option = el("option", null, item.label);
-      option.value = item.id;
-      logProp.appendChild(option);
+    [logProp, acctProp].forEach(function (select) {
+      var chosen = select.value;
+      select.textContent = "";
+      var any = el("option", null, items.length ? "Whole portfolio" : "No buildings added yet");
+      any.value = "";
+      select.appendChild(any);
+      items.forEach(function (item) {
+        var option = el("option", null, item.label);
+        option.value = item.id;
+        select.appendChild(option);
+      });
+      select.value = chosen;
     });
-    logProp.value = chosen;
   }
 
   function clearLogForm() {
@@ -1412,9 +1473,16 @@
     }
     clearLogForm();
     logForm.hidden = true;
-    loadLog();
+    refreshLog();
   });
 
+  function money(value) {
+    var sign = value < 0 ? "-" : "";
+    return sign + "$" + Math.round(Math.abs(value)).toLocaleString();
+  }
+
+  // The sidebar button always speaks for the whole portfolio - the property filter lives
+  // inside the panel, where there is room to say which building it means.
   async function loadLog() {
     var data;
     try {
@@ -1422,33 +1490,83 @@
       if (!response.ok) return;
       data = await response.json();
     } catch (error) {
-      return;  // the panel is a convenience, never a reason to break the chat
+      return;  // the teaser is a convenience, never a reason to break the chat
     }
-    drawLog(data);
+    drawTeaser(data.totals || {});
   }
 
-  function money(value) {
-    return "$" + Math.round(value).toLocaleString();
+  function drawTeaser(totals) {
+    if (!totals.in && !totals.out) {
+      acctTeaser.textContent = "Income & expenses";
+      return;
+    }
+    acctTeaser.textContent = "Income & expenses · Net " + money(totals.net || 0);
   }
 
-  function drawLog(data) {
+  // The panel: opened on demand, scoped to whichever building is picked.
+  async function loadAccounting() {
+    var data;
+    var url = "/api/log" +
+      (acctProp.value ? "?property_id=" + encodeURIComponent(acctProp.value) : "");
+    try {
+      var response = await fetch(url, { headers: headers() });
+      if (!response.ok) return;
+      data = await response.json();
+    } catch (error) {
+      return;
+    }
+    drawAccounting(data);
+  }
+
+  function refreshLog() {
+    loadLog();
+    if (!acctCard.hidden) loadAccounting();
+  }
+
+  function drawSummary(totals) {
+    acctSummary.textContent = "";
+    [
+      ["Money in", totals.in || 0, ""],
+      ["Money out", totals.out || 0, ""],
+      ["Net", totals.net || 0, "net"]
+    ].forEach(function (tile) {
+      var stat = el("div", "acct-stat" + (tile[2] ? " " + tile[2] : ""));
+      stat.appendChild(el("span", "label", tile[0]));
+      var cls = tile[2] === "net" && tile[1] > 0 ? "value pos" : "value";
+      stat.appendChild(el("span", cls, money(tile[1])));
+      acctSummary.appendChild(stat);
+    });
+  }
+
+  function drawBreakdown(totals) {
+    acctBreakdown.textContent = "";
+    Object.keys(KIND_LABELS).forEach(function (kind) {
+      if (!totals[kind]) return;
+      var row = el("div", "acct-kind-row");
+      row.appendChild(el("span", null, KIND_LABELS[kind]));
+      row.appendChild(el("span", "amount", money(totals[kind])));
+      acctBreakdown.appendChild(row);
+    });
+  }
+
+  document.getElementById("open-accounting").addEventListener("click", function () {
+    acctCard.hidden = false;
+    loadAccounting();
+  });
+  document.getElementById("acct-close").addEventListener("click", function () {
+    acctCard.hidden = true;
+  });
+  acctProp.addEventListener("change", loadAccounting);
+
+  function drawAccounting(data) {
     var entries = data.entries || [];
     var open = data.open || [];
-    var totals = data.totals || {};
+    drawSummary(data.totals || {});
+    drawBreakdown(data.totals || {});
 
-    if (totals.out || totals.in) {
-      var bits = [];
-      if (totals.out) bits.push(money(totals.out) + " out");
-      if (totals.in) bits.push(money(totals.in) + " in");
-      logTotal.textContent = bits.join(" · ");
-      logTotal.hidden = false;
-    } else {
-      logTotal.hidden = true;
-    }
-
-    logRow.textContent = "";
+    acctEntries.textContent = "";
     if (!entries.length) {
-      logRow.appendChild(el("div", "side-empty",
+      acctEntries.appendChild(el("div", "side-empty",
         "Tell Jay what happened - \u201cthe plumber came out, $340\u201d - and it goes here. " +
         "Ask about it any time after."));
       return;
@@ -1456,7 +1574,7 @@
     var openIds = {};
     open.forEach(function (item) { openIds[item.id] = true; });
     open.concat(entries.filter(function (item) { return !openIds[item.id]; }))
-      .forEach(function (item) { logRow.appendChild(logLine(item)); });
+      .forEach(function (item) { acctEntries.appendChild(logLine(item)); });
   }
 
   function logLine(item) {
@@ -1481,7 +1599,7 @@
             method: "POST", headers: headers()
           });
         } catch (error) { return; }
-        loadLog();
+        refreshLog();
       });
       row.appendChild(done);
     }
@@ -1495,7 +1613,7 @@
           method: "DELETE", headers: headers()
         });
       } catch (error) { return; }
-      loadLog();
+      refreshLog();
     });
     row.appendChild(drop);
     return row;
