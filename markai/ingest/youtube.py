@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import shutil
 import time
 from collections.abc import Callable, Iterator, Sequence
 from datetime import UTC, datetime
@@ -396,11 +397,13 @@ class CaptionFallback:
         languages: Sequence[str],
         configured_browser: str | None = None,
         log: Callable[[str], None] | None = None,
+        cookies_file: Path | None = None,
     ) -> None:
         self._client = client
         self._languages = list(languages) or ["en"]
         self._log = log
         self._configured = configured_browser
+        self._cookies_file = cookies_file
         self._resolved = False
         self._browser: str | None = configured_browser
         self.attempts: list[str] = []
@@ -418,6 +421,27 @@ class CaptionFallback:
         last: IngestError = RateLimitedError(
             f"YouTube blocked every route for {video_id}.", hint=_BLOCKED_HINT
         )
+        # A configured cookies file first: unlike a browser's cookie store, it does not
+        # depend on yt-dlp being able to decrypt anything, so it is the one route most
+        # likely to actually work, and it costs nothing to try before the blind sweep.
+        if self._cookies_file:
+            try:
+                segments = captions_via_ytdlp(
+                    video_id, self._languages, self._client, cookies_file=self._cookies_file
+                )
+            except NoCaptionsError:
+                self._resolved = True
+                raise
+            except IngestError as exc:
+                self.attempts.append("cookies file")
+                logger.debug("caption route cookies file did not work: %s", exc)
+                last = exc
+            else:
+                self._resolved = True
+                if self._log:
+                    self._log("Captions are coming through the cookies file.")
+                return segments
+
         for browser in (None, *BROWSERS_TO_TRY):
             label = "yt-dlp" if browser is None else f"{browser} cookies"
             try:
@@ -446,6 +470,7 @@ def captions_via_ytdlp(
     languages: Sequence[str],
     client: httpx.Client,
     cookies_from_browser: str | None = None,
+    cookies_file: Path | None = None,
     extractor: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None,
 ) -> list[Segment]:
     """Second way to get captions, for when the first one is blocked.
@@ -453,7 +478,15 @@ def captions_via_ytdlp(
     yt-dlp is already a dependency here (it lists the channels) and it talks to YouTube over
     a different client than the caption library, so it often works when that one is blocked.
     It can also read cookies straight out of an installed browser, which needs no export and
-    no extension - just the browser's name.
+    no extension - just the browser's name. A ``cookies_file`` (Netscape format, the kind a
+    "cookies.txt" browser extension exports) is tried first when one is configured: it does
+    not depend on yt-dlp being able to decrypt a running browser's cookie store, which on
+    Windows Chrome it often cannot.
+
+    ``js_runtimes``/``remote_components`` let yt-dlp solve YouTube's obfuscated "n" parameter
+    when Node is on the machine - without it, a request past the sign-in check can still fail
+    with "the page needs to be reloaded". This fetches a small solver script from yt-dlp's own
+    GitHub releases at runtime; it is yt-dlp's official mechanism for this, not a third party.
 
     Raises ``RateLimitedError`` when YouTube blocks this route too, so the caller can treat
     both routes the same way.
@@ -467,7 +500,15 @@ def captions_via_ytdlp(
         "noprogress": True,
         "logger": _QuietLogger(),  # yt-dlp writes to stderr otherwise, once per blocked video
     }
-    if cookies_from_browser:
+    if shutil.which("node"):
+        # Without this, a request that gets past the sign-in check can still fail with
+        # "the page needs to be reloaded" - YouTube's obfuscated "n" parameter needs a JS
+        # runtime to solve. Skipped entirely on a machine with no Node, rather than fail.
+        options["js_runtimes"] = {"node": {}}
+        options["remote_components"] = ["ejs:github"]
+    if cookies_file:
+        options["cookiefile"] = str(cookies_file)
+    elif cookies_from_browser:
         options["cookiesfrombrowser"] = (cookies_from_browser.strip().lower(),)
 
     info = (extractor or _ytdlp_extract)(watch_url(video_id), options)
@@ -655,6 +696,7 @@ def ingest_youtube(
     log: Callable[[str], None] | None = None,
     delay_seconds: float = 0.0,
     cookies_from_browser: str | None = None,
+    cookies_file: Path | None = None,
 ) -> Iterator[Document | IngestFailure]:
     """Yield one Document (or IngestFailure) per YouTube episode in the manifest."""
     project_root = Path(project_root or Path.cwd())
@@ -665,7 +707,12 @@ def ingest_youtube(
     owns_client = client is None
     client = client or make_client()
 
-    fallback = CaptionFallback(client, languages or ["en"], cookies_from_browser, log)
+    resolved_cookies_file = cookies_file
+    if cookies_file and not cookies_file.is_absolute():
+        resolved_cookies_file = project_root / cookies_file
+    fallback = CaptionFallback(
+        client, languages or ["en"], cookies_from_browser, log, cookies_file=resolved_cookies_file
+    )
 
     try:
         try:

@@ -688,6 +688,54 @@ def test_the_sweep_runs_once_even_when_nothing_works():
         assert fetch.attempts, "and it can say what it tried"
 
 
+def test_a_cookies_file_is_tried_first_and_skips_the_sweep(tmp_path):
+    """A cookies file does not depend on yt-dlp decrypting a running browser's store, so it
+    goes first - and when it works, the seven-browser sweep never has to run at all."""
+    from markai.ingest.youtube import CaptionFallback
+
+    cookies_file = tmp_path / "cookies.txt"
+    cookies_file.write_text("# Netscape HTTP Cookie File\n", encoding="utf-8")
+    tried: list[object] = []
+
+    def extractor(url, options):
+        tried.append((options.get("cookiefile"), options.get("cookiesfrombrowser")))
+        if options.get("cookiefile") == str(cookies_file):
+            return _info()
+        raise RateLimitedError("blocked")
+
+    with httpx.Client() as client, respx.mock, pytest.MonkeyPatch.context() as mp:
+        import markai.ingest.youtube as yt
+
+        mp.setattr(yt, "_ytdlp_extract", extractor)
+        respx.get("https://caption.test/en.vtt").mock(return_value=httpx.Response(200, text=VTT))
+        fetch = CaptionFallback(client, ["en"], cookies_file=cookies_file)
+        assert len(fetch("vid1")) == 2
+        assert tried == [(str(cookies_file), None)], "the sweep never ran"
+
+
+def test_the_sweep_still_runs_when_the_cookies_file_does_not_work(tmp_path):
+    from markai.ingest.youtube import BROWSERS_TO_TRY, CaptionFallback
+
+    cookies_file = tmp_path / "cookies.txt"
+    cookies_file.write_text("# Netscape HTTP Cookie File\n", encoding="utf-8")
+    calls: list[object] = []
+
+    def extractor(url, options):
+        calls.append(options.get("cookiefile"))
+        raise RateLimitedError("blocked")
+
+    with httpx.Client() as client, pytest.MonkeyPatch.context() as mp:
+        import markai.ingest.youtube as yt
+
+        mp.setattr(yt, "_ytdlp_extract", extractor)
+        fetch = CaptionFallback(client, ["en"], cookies_file=cookies_file)
+        with pytest.raises(RateLimitedError):
+            fetch("vid1")
+        # One try with the cookies file, then the anonymous-plus-browsers sweep.
+        assert len(calls) == 1 + len(BROWSERS_TO_TRY) + 1
+        assert "cookies file" in fetch.attempts
+
+
 def test_a_configured_browser_skips_the_sweep():
     from markai.ingest.youtube import CaptionFallback
 
