@@ -367,3 +367,44 @@ def test_the_landlords_own_words_cannot_forge_a_tag():
     block = build_log_block([entry], [], 1, TODAY)
     assert "&lt;open" in block
     assert 'status="done"' not in block, "an attribute value can never close its own quote"
+
+
+# --- what the model emits is untrusted too ------------------------------------------------
+
+
+def test_a_field_carrying_tool_call_syntax_is_dropped():
+    """ "Log a $200 expense on locks today" stored the vendor as tool-call machinery.
+
+    Cleaning the tags off would have left the word "today" in the vendor field, which is a
+    quieter kind of wrong, so a value carrying machinery is dropped whole.
+    """
+    junk = "</" + "parameter> <" + 'parameter name="date">today'
+    entry = parse({"kind": "expense", "what": "Locks", "amount": 200, "vendor": junk})
+    assert entry.vendor == ""
+    assert entry.what == "Locks"
+    assert entry.amount == 200
+    assert "parameter" not in entry.one_line()
+
+
+def test_a_real_name_with_a_bracket_in_it_survives():
+    entry = parse({"kind": "visit", "what": "Walkthrough", "vendor": "A&B Locks <Chicago>"})
+    assert entry.vendor == "A&B Locks"
+
+
+def test_what_happened_cannot_be_machinery_either():
+    with pytest.raises(LogError):
+        parse({"kind": "expense", "what": "<" + 'invoke name="add">', "amount": 200})
+
+
+def test_a_row_written_before_the_fix_reads_back_clean(ledger):
+    """The bad row is already in their database. It stops being shown, without a migration."""
+    import sqlite3
+
+    junk = "</" + "parameter> <" + 'parameter name="date">today'
+    saved = ledger.add(OWNER, {"kind": "expense", "what": "Locks", "amount": 200})
+    with sqlite3.connect(ledger._path) as raw:
+        raw.execute("UPDATE log_entries SET vendor = ? WHERE id = ?", (junk, saved.id))
+
+    (entry,) = ledger.list(OWNER)
+    assert entry.vendor == ""
+    assert "parameter" not in entry.one_line()
