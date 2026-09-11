@@ -69,7 +69,10 @@ LOG_TOOL: dict[str, Any] = {
             },
             "vendor": {
                 "type": "string",
-                "description": "Who did it or who was paid, if they said. Empty otherwise.",
+                "description": (
+                    "Who did it or who was paid, in their words. An empty string when they "
+                    "did not name anyone - never a placeholder and never anything else."
+                ),
             },
             "date": {
                 "type": "string",

@@ -102,8 +102,27 @@ class LogError(ValueError):
     """The entry as given cannot be saved, with a reason worth showing."""
 
 
+# A model's own tool-call syntax, arriving inside a tool argument. "Log $200 on locks"
+# came back with the vendor set to `</parameter> <parameter name="date">today`, and it went
+# into the landlord's records looking like that. Whatever produced it, a value carrying
+# machinery is not something a person said, so it is dropped rather than tidied: cleaning
+# the tags off that example would have left the word "today" sitting in the vendor field,
+# which is a quieter kind of wrong.
+_MACHINERY = re.compile(
+    r"(antml:|</?\s*(?:parameter|invoke|function_calls?|tool_use|tool_result)\b)",
+    re.IGNORECASE,
+)
+_TAG = re.compile(r"<[^<>]{0,300}>")
+
+
 def _clean(text: Any, limit: int) -> str:
-    flat = re.sub(r"[\x00-\x1f\x7f]", " ", str(text or ""))
+    """One line of what somebody actually wrote, or nothing."""
+    raw = str(text or "")
+    if _MACHINERY.search(raw):
+        logger.warning("dropped a log field that arrived carrying tool-call syntax")
+        return ""
+    flat = _TAG.sub(" ", raw)
+    flat = re.sub(r"[\x00-\x1f\x7f]", " ", flat)
     return re.sub(r"\s+", " ", flat).strip()[:limit]
 
 
@@ -353,9 +372,11 @@ class Ledger:
             Entry(
                 id=row["id"],
                 kind=row["kind"],
-                what=row["what"],
+                # Cleaned on the way out as well, so a row written before this stopped
+                # showing the landlord markup and stopped reaching the prompt.
+                what=_clean(row["what"], MAX_WHAT_CHARS),
                 amount=row["amount"],
-                vendor=row["vendor"],
+                vendor=_clean(row["vendor"], MAX_VENDOR_CHARS),
                 status=row["status"],
                 happened_on=row["happened_on"],
                 property_id=row["property_id"],

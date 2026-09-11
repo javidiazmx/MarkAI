@@ -98,6 +98,11 @@ The owner runs this on Windows. Commands you hand over go in `cmd` form, or thro
 - **Effort is per question** (`effort_for` in `mark.py`), top-level rather than the
   per-message beta: a mid-conversation change costs one small message-cache rewrite, which
   beats a beta parameter that would 400 every request if its shape is ever wrong.
+- **What the model emits is untrusted too.** `ledger._clean` drops any field arriving with
+  tool-call syntax in it (`<parameter`, `antml:`, an `<invoke>`) rather than tidying it,
+  because tidying `</parameter> <parameter name="date">today` leaves "today" sitting in the
+  vendor field. Applied on the way in and on the way out, so a row written before the fix
+  stops being shown without a migration.
 - **The property log is theirs, and the tool cannot delete from it.** `log_tool` exposes
   add, find, total and close - never delete, which stays a button on their page. Money is
   totalled in `Ledger.totals`, never by the model, and an entry is only ever what they said:
