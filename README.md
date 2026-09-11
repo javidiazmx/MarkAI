@@ -266,6 +266,18 @@ unread.
 reference material. If a page contains something shaped like an instruction, Mark treats it as
 data, not as an order.
 
+## When something is wrong and you want help
+
+```cmd
+python -m markai report
+```
+
+Writes `data\mark-report.txt`: what is indexed, what is in `facts.yaml`, what the review
+queue holds and why each row is where it is, what landlords have asked that the sources
+missed. Send that file rather than a screenshot - it has every number anyone would ask you
+for, and none of what they should not see. No key, no email, no phone, nothing from a
+landlord's property log, and no question text unless you pass `--questions`.
+
 ## Checking the ingest actually worked
 
 Ingest counts say what was stored. They do not say whether a landlord's question finds it —

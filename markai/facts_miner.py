@@ -381,6 +381,21 @@ def topic_from(sentence: str) -> str:
     return " ".join(seen[:MAX_TOPIC_WORDS]) or "rule"
 
 
+def jurisdiction_of(raw: dict) -> str:
+    """Which government a proposal is about, from what it says. Empty when it does not say.
+
+    The miner's own answer first, then the sentence, then the page it came from. Guessing
+    here is how an Evanston notice period becomes a Chicago one.
+    """
+    named = str(raw.get("jurisdiction", "")).strip()
+    if named:
+        return named[:80]
+    return jurisdiction_from(
+        str(raw.get("quote", "")) + " " + str(raw.get("rule", "")),
+        str(raw.get("source", "")) + " " + str(raw.get("citation", "")),
+    )
+
+
 def jurisdiction_from(sentence: str, passage: str = "") -> str:
     """Which government the sentence is about, named only when it says so.
 
@@ -881,7 +896,9 @@ def as_yaml_entry(proposal: Proposal, entry_id: str) -> str:
 
     lines = [f"  - id: {entry_id}"]
     if proposal.kind == "ordinance":
-        lines.append(f"    jurisdiction: {quoted(proposal.jurisdiction or 'Chicago')}")
+        # Never defaulted. An Evanston rule filed as Chicago is not a missing fact, it is a
+        # wrong one, and it would be handed to a Chicago landlord as their own.
+        lines.append(f"    jurisdiction: {quoted(proposal.jurisdiction)}")
         lines.append(f"    topic: {quoted(proposal.topic)}")
         lines.append(f"    rule: {quoted(proposal.rule)}")
         lines.append(f"    citation: {quoted(proposal.citation or proposal.source_title)}")

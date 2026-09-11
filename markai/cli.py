@@ -920,6 +920,127 @@ def status() -> None:
 
 
 @app.command()
+def report(
+    questions: bool = typer.Option(
+        False, "--questions", help="Include the text of questions the sources missed."
+    ),
+) -> None:
+    """Write one file describing the state of everything, to send to whoever is helping you.
+
+    Screenshots are a bad way to debug a program. This is every number somebody would ask
+    for - what is indexed, what is in facts.yaml, what the review queue holds and why, what
+    landlords have asked that the sources missed - in one text file you can paste or attach.
+
+    It never includes a key, an email, a phone number, or anything from a landlord's
+    property log. Question text is off unless you ask for it with `--questions`, because
+    those are other people's words.
+    """
+    import platform
+    import sys
+    from datetime import datetime
+
+    from markai.facts_miner import group_proposals, is_market_rent, why_topical
+    from markai.sources.facts import facts_path, load_facts
+
+    settings = _settings()
+    lines: list[str] = []
+
+    def say(text: str = "") -> None:
+        lines.append(text)
+
+    head = ""
+    git_head = Path(".git") / "HEAD"
+    if git_head.exists():
+        ref = git_head.read_text(encoding="utf-8").strip()
+        if ref.startswith("ref: "):
+            head = ref[5:]
+            pointer = Path(".git") / head
+            if pointer.exists():
+                head = f"{head} @ {pointer.read_text(encoding='utf-8').strip()[:8]}"
+        else:
+            head = ref[:8]
+
+    say(f"mark report - {datetime.now().isoformat(timespec='seconds')}")
+    say(f"python {sys.version.split()[0]} on {platform.system()} {platform.release()}")
+    say(f"branch {head or 'unknown'}")
+    say(f"model {settings.model}, effort {settings.effort}")
+    say(f"anthropic key {'set' if settings.anthropic_key() else 'NOT SET'}")
+    say()
+
+    say("--- what is indexed ---")
+    try:
+        store = _store(settings)
+        stats = store.stats()
+        for kind, count in stats.documents_by_kind.items():
+            say(f"{kind}: {count} documents")
+        say(f"chunks: {stats.chunks}, embedded: {stats.embedded_chunks}")
+        say(f"last ingest: {stats.last_ingest_at or 'never'}")
+        say(f"questions asked: {stats.questions_total}, not covered: {stats.questions_not_covered}")
+        rows = store.list_gaps(200)
+        missed = [str(row.get("question", "")) for row in rows]
+        say(f"gap rows logged: {len(rows)}")
+        if questions and missed:
+            say("questions the sources missed:")
+            for question in missed[:40]:
+                say(f"  - {question[:120]}")
+        store.close()
+    except Exception as exc:
+        say(f"could not read the store: {type(exc).__name__}: {exc}")
+    say()
+
+    say("--- facts.yaml ---")
+    path = facts_path(settings.sources_file)
+    say(f"path: {path}")
+    try:
+        book = load_facts(path)
+        say(f"valid. ordinances: {len(book.ordinances)}, costs: {len(book.costs)}")
+        for rule in book.ordinances:
+            say(f"  [{rule.id}] {rule.jurisdiction} | {rule.topic} | from {rule.effective_from}")
+        for cost in book.costs:
+            say(f"  [{cost.id}] {cost.item} | {cost.money()} {cost.unit} | as of {cost.as_of}")
+    except Exception as exc:
+        say(f"INVALID: {type(exc).__name__}: {exc}")
+    say()
+
+    say("--- the review queue ---")
+    saved = _load_proposals(settings)
+    waiting = list(saved.get("proposals", []))
+    put_away = list(saved.get("dropped", []))
+    say(f"waiting: {len(waiting)} proposals, set aside: {len(put_away)}")
+    if waiting:
+        known, _, _ = _known_terms(path)
+        groups = group_proposals(waiting, known_terms=known, asked=_questions_that_missed(settings))
+        say(f"distinct rules: {len(groups)}")
+        say(f"  off topic: {sum(1 for g in groups if not g.on_topic)}")
+        say(f"  market rents: {sum(1 for g in groups if is_market_rent(g.lead))}")
+        say(f"  cite a section: {sum(1 for g in groups if g.cited)}")
+        say(f"  asked about: {sum(1 for g in groups if g.wanted)}")
+        say(f"  subjects already covered: {sum(1 for g in groups if g.known)}")
+        say("first 40, in the order review would show them:")
+        for group in groups[:40]:
+            marks = [str(group.support)]
+            if group.cited:
+                marks.append("cited")
+            if group.wanted:
+                marks.append("asked")
+            if group.known:
+                marks.append("covered")
+            if not group.on_topic:
+                marks.append(f"off topic ({why_topical(group.lead)})")
+            say(f"  {group.kind:9} {str(group.lead.get('topic', ''))[:56]:58} {', '.join(marks)}")
+    say()
+
+    settings.ensure_dirs()
+    out = settings.data_dir / "mark-report.txt"
+    out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    console.print(f"[green]✓[/green] Wrote {out}")
+    console.print(
+        "[dim]Nothing in it is a key, an email, a phone number, or anything from a "
+        "landlord's log. Send that file instead of a screenshot.[/dim]"
+    )
+
+
+@app.command()
 def gaps(
     top: int = typer.Option(20, "--top", help="How many to show."),
     forget_declined: bool = typer.Option(
@@ -1852,7 +1973,13 @@ def facts_review(
     `--min-sources 3`) and the pile becomes an evening instead of a week; `--accept-all`
     takes a filtered set in one go, which is the point of the filters.
     """
-    from markai.facts_miner import CannotInsert, Proposal, as_yaml_entry, insert_into_facts
+    from markai.facts_miner import (
+        CannotInsert,
+        Proposal,
+        as_yaml_entry,
+        insert_into_facts,
+        jurisdiction_of,
+    )
 
     settings = _settings()
     groups, waiting, path, existing_ids, body, _ = _pick_groups(
@@ -1882,6 +2009,13 @@ def facts_review(
         """Write one group's lead into the file body. Returns (written, why not)."""
         nonlocal body
         raw = group.lead
+        where = jurisdiction_of(raw)
+        if raw.get("kind") != "cost" and not where:
+            return False, (
+                "the passage never says which city or county this rule is from. Filing it "
+                "as Chicago would be a guess, and a landlord in Evanston would be handed it "
+                "as their own"
+            )
         number = 1
         while f"mined-{number}" in existing_ids:
             number += 1
@@ -1893,7 +2027,7 @@ def facts_review(
             quote=str(raw.get("quote", "")),
             source_title=str(raw.get("source", "")),
             source_url=raw.get("url"),
-            jurisdiction=str(raw.get("jurisdiction", "")),
+            jurisdiction=where,
             citation=str(raw.get("citation", "")),
             low=raw.get("low"),
             high=raw.get("high"),
@@ -1934,6 +2068,11 @@ def facts_review(
             console.print(
                 f"[bold]{escape(str(group.lead.get('topic', '')))}[/bold] "
                 f"[dim]({group.kind}"
+                + (
+                    f", {escape(jurisdiction_of(group.lead))}"
+                    if jurisdiction_of(group.lead)
+                    else ", nowhere named"
+                )
                 + (f", {group.support} sources say it" if group.support > 1 else "")
                 + (", you already cover this subject" if group.known else "")
                 + (", a market rent that will go stale" if group.rent else "")
@@ -2125,7 +2264,7 @@ def facts_why(
     For when the queue says something you disagree with. It runs the same code the listing
     does, so what it prints is the actual reason and not a story about it.
     """
-    from markai.facts_miner import group_proposals, is_market_rent, why_topical
+    from markai.facts_miner import group_proposals, is_market_rent, jurisdiction_of, why_topical
     from markai.sources.facts import facts_path
 
     settings = _settings()
@@ -2151,7 +2290,9 @@ def facts_why(
         console.print(f'  [dim]source says: "{escape(str(group.lead.get("quote", "")))}"[/dim]')
         verdict = "about renting property" if group.on_topic else "[yellow]off topic[/yellow]"
         console.print(f"  {verdict}, on {escape(why_topical(group.lead))}")
+        where = jurisdiction_of(group.lead)
         marks = [f"{group.support} source(s) state it"]
+        marks.append(f"about {where}" if where else "[yellow]names no city or county[/yellow]")
         if group.cited:
             marks.append("names a section number")
         if group.wanted:

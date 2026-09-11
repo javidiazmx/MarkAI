@@ -2065,3 +2065,87 @@ def test_facts_why_explains_the_verdict(tmp_path, monkeypatch):
     stray = runner.invoke(app, ["facts", "why", "dog"])
     assert "off topic" in stray.stdout
     assert "nothing about renting property" in stray.stdout
+
+
+def test_facts_review_refuses_a_rule_that_names_no_city(tmp_path, monkeypatch):
+    """The card and the file both have to say where a rule is from."""
+    manifest, _ = _waiting(
+        tmp_path,
+        monkeypatch,
+        [
+            _proposal(
+                "Non-renewal notice",
+                "90 days' notice not to renew.",
+                "Landlords must give tenants 90 days' notice not to renew a lease.",
+                "A post",
+                jurisdiction="",
+            )
+        ],
+    )
+    refused = runner.invoke(app, ["facts", "review", "--accept-all"], input="y\n")
+    assert refused.exit_code == 0, refused.stdout
+    assert "which city or county" in refused.stdout
+    assert not (manifest.parent / "facts.yaml").exists(), "nothing written on a guess"
+
+
+def test_facts_review_files_an_evanston_rule_under_evanston(tmp_path, monkeypatch):
+    manifest, _ = _waiting(
+        tmp_path,
+        monkeypatch,
+        [
+            _proposal(
+                "Non-renewal notice",
+                "90 days' notice not to renew.",
+                "Under the updated RLTO, Evanston property managers must give tenants 90 days'"
+                " notice if they intend not to renew a lease.",
+                "Evanston RLTO changes landlords must know",
+                jurisdiction="",
+            )
+        ],
+    )
+    result = runner.invoke(app, ["facts", "review", "--accept-all"], input="y\n")
+    assert result.exit_code == 0, result.stdout
+    body = (manifest.parent / "facts.yaml").read_text(encoding="utf-8")
+    assert 'jurisdiction: "Evanston"' in body
+    assert "Chicago" not in body
+
+
+def test_mark_report_says_everything_without_saying_anything_private(tmp_path, monkeypatch):
+    """One file to send instead of a screenshot - and never a key, an email or a question."""
+    manifest, data = _waiting(
+        tmp_path,
+        monkeypatch,
+        [
+            _proposal(
+                "Security deposit return",
+                "45 days.",
+                "The landlord must return the deposit within 45 days.",
+                "A post",
+            ),
+            _proposal(
+                "Dog registration", "30 days.", "A dog must be registered within 30 days.", "City"
+            ),
+        ],
+    )
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-secret-value")
+
+    from markai.knowledge.store import KnowledgeStore
+
+    store = KnowledgeStore(data / "markai.db")
+    store.log_question("s1", "how long do I have to return a deposit", "none", [], True, {})
+    store.close()
+
+    result = runner.invoke(app, ["report"])
+    assert result.exit_code == 0, result.stdout
+    body = (data / "mark-report.txt").read_text(encoding="utf-8")
+
+    assert "sk-ant" not in body and "secret" not in body
+    assert "how long do I have to return" not in body, "other people's words stay out by default"
+    assert "anthropic key set" in body
+    assert "distinct rules: 2" in body
+    assert "off topic" in body and "Dog registration" in body
+    assert str(manifest.parent) in body, "it says which facts.yaml it read"
+
+    asked = runner.invoke(app, ["report", "--questions"])
+    assert asked.exit_code == 0
+    assert "how long do I have to return" in (data / "mark-report.txt").read_text(encoding="utf-8")

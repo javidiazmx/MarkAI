@@ -420,6 +420,7 @@ def test_the_accepted_entry_is_valid_to_the_fact_loader(tmp_path):
         quote="must return the security deposit within 45 days",
         source_title="Post 0",
         citation="RLTO 5-12-080",
+        jurisdiction="Chicago",
     )
     path = tmp_path / "facts.yaml"
     path.write_text(
@@ -428,6 +429,32 @@ def test_the_accepted_entry_is_valid_to_the_fact_loader(tmp_path):
     book = load_facts(path)
     assert book.ordinances[0].citation == "RLTO 5-12-080"
     assert book.ordinances[0].jurisdiction == "Chicago"
+
+
+def test_a_rule_is_never_filed_under_a_city_it_did_not_name():
+    """An Evanston notice period written as Chicago is a wrong answer, not a missing one."""
+    from markai.facts_miner import jurisdiction_of
+
+    evanston = {
+        "quote": "Under the updated RLTO, Evanston property managers must give 90 days' notice.",
+        "source": "Evanston RLTO changes landlords must know",
+    }
+    assert jurisdiction_of(evanston) == "Evanston"
+    assert jurisdiction_of({"jurisdiction": "Oak Park", "quote": "In Chicago you must..."}) == (
+        "Oak Park"
+    ), "what the miner extracted wins over a city mentioned in passing"
+    assert jurisdiction_of({"quote": "The landlord must give 30 days notice."}) == ""
+
+    nowhere = Proposal(
+        kind="ordinance",
+        topic="notice",
+        rule="30 days.",
+        quote="The landlord must give 30 days notice.",
+        source_title="A post",
+    )
+    assert 'jurisdiction: ""' in as_yaml_entry(nowhere, "mined-1"), (
+        "no default: the CLI refuses it rather than guessing Chicago"
+    )
 
 
 def test_a_report_with_no_calls_costs_nothing():

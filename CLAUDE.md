@@ -76,6 +76,12 @@ The owner runs this on Windows. Commands you hand over go in `cmd` form, or thro
   `dropped` in the proposals file for `mark facts undrop`, and `mark facts why` prints the
   word the verdict turned on. The classifier is a judgement call, so it has to be
   inspectable and reversible.
+- **An ordinance is never filed under a city it did not name.** `jurisdiction_of` takes the
+  miner's answer, then the quote, then the page title, and `mark facts review` refuses a
+  rule when all three are silent rather than defaulting to Chicago. An Evanston notice
+  period served to a Chicago landlord is a wrong answer, not a missing one.
+- **`mark report` is how the owner asks for help.** One file, no key, no email, no phone,
+  nothing from a landlord's log, and question text only behind `--questions`.
 - **The review queue is ranked by demand, not by confidence.** `group_proposals` takes the
   questions from `mark gaps` and the thumbs-down from `mark feedback` and puts the
   proposals that would have answered one of them first. A fact layer is worth what it
