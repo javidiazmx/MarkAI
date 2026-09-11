@@ -524,7 +524,7 @@ def test_a_url_in_an_answer_becomes_a_link():
     page = Path("markai/web/static/index.html").read_text(encoding="utf-8")
     assert "function linkify" in page
     assert 'link.rel = "noopener noreferrer"' in page
-    assert "link.href = href" in page, "built from the matched text, never from markup"
+    assert "link.href = target;" in page, "built from the matched text, never from markup"
 
 
 def test_the_page_no_longer_shows_the_corpus_counts():
@@ -2220,3 +2220,29 @@ def test_facts_review_can_print_the_cards_without_deciding(tmp_path, monkeypatch
     assert not (manifest.parent / "facts.yaml").exists()
     left = json.loads((data / "facts-proposals.json").read_text(encoding="utf-8"))["proposals"]
     assert len(left) == 1, "listing decides nothing"
+
+
+def test_the_page_links_a_bare_domain_a_phone_and_an_address():
+    """Jay writes "gcrealtyinc.com/free-rental-analysis", not a full URL. It has to be a link.
+
+    Checked against the page source rather than a browser, so the patterns stay honest: the
+    endings list is what stops "facts.yaml" and an ordinance number becoming links.
+    """
+    import re
+    from pathlib import Path as _Path
+
+    page = (_Path(__file__).parent.parent / "markai/web/static/index.html").read_text(
+        encoding="utf-8"
+    )
+    tlds = re.search(r'var TLDS = "([^"]+)"', page)
+    assert tlds, "the endings list is what keeps this from linking everything"
+    assert "com" in tlds.group(1).split("|")
+
+    # The four shapes the answer path actually produces, and the ones it must leave alone.
+    source = page[page.index("var URL_RE") : page.index("function inline")]
+    for shape in ("https?", "@", "TLDS", r"\\d{3}"):
+        assert shape in source, f"{shape} is not matched any more"
+    assert 'anchor("https://" + href)' in page, "a bare domain gets the scheme added here"
+    assert 'anchor("tel:+"' in page, "a phone number is one tap on the device reading it"
+    assert 'anchor("mailto:" + href)' in page
+    assert "link.href = target;" in page, "the href is built, never taken from the answer"

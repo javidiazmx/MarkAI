@@ -2087,7 +2087,7 @@ def facts_review(
         existing_ids.add(entry_id)
         return True, ""
 
-    accepted = declined = 0
+    accepted = passed_over = 0
     decided: set[int] = set()
     skip_topics: set[str] = set()
 
@@ -2138,7 +2138,7 @@ def facts_review(
         else:
             show(group)
             choice = (
-                typer.prompt("  [a]ccept, [s]kip, skip this [t]opic, [q]uit", default="s")
+                typer.prompt("  [a]ccept, [s]kip for now, skip this [t]opic, [q]uit", default="s")
                 .strip()
                 .lower()[:1]
             )
@@ -2148,7 +2148,9 @@ def facts_review(
             skip_topics.add(group.topic)
             continue
         if choice != "a":
-            declined += 1
+            # Left where it was, not thrown away: skipping used to delete the proposal
+            # outright, which is a decision nobody asked for.
+            passed_over += 1
             continue
 
         written, why = take(group)
@@ -2169,8 +2171,8 @@ def facts_review(
 
     console.print()
     console.print(
-        f"[green]✓[/green] Accepted {accepted} into {path.name}, turned down {declined}, "
-        f"{len(remaining)} proposals left."
+        f"[green]✓[/green] Accepted {accepted} into {path.name}, left {passed_over} for "
+        f"later, {len(remaining)} proposals still waiting."
     )
     if accepted:
         console.print("[dim]Run `mark facts validate`, then restart `mark serve`.[/dim]")
