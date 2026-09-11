@@ -288,3 +288,37 @@ def test_the_date_is_in_the_turn_and_never_in_the_system_prompt(store, settings)
     prompt = Path("prompts/mark_system_prompt.md").read_text(encoding="utf-8")
     assert "<today>" in prompt, "the prompt tells Jay the date arrives with the question"
     assert "2026" not in prompt, "but never carries a date of its own"
+
+
+# --- a number with the wrong symbol on it -------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "low,high,unit,expected",
+    [
+        (8000, 16000, "per job", "$8,000 to $16,000"),
+        (20, 60, "USD per unit per year", "$20 to $60"),
+        (1500, 2600, "USD/month", "$1,500 to $2,600"),
+        (17, 20, "days", "17 to 20"),
+        (45, 60, "days vacant", "45 to 60"),
+        (5, 15, "percent concession", "5 to 15"),
+        (1.8, 1.8, "percent less rent", "1.8"),
+        (7, 8, "percent of monthly rent", "7 to 8"),
+        (500, 500, "per job", "$500"),
+    ],
+)
+def test_a_range_is_only_dollars_when_it_is_dollars(low, high, unit, expected):
+    """ "Peak season days on market: $17 to $20" was in the authoritative block."""
+    from markai.sources.facts import CostRange
+
+    cost = CostRange(id="c1", item="x", low=low, high=high, unit=unit)
+    assert cost.money() == expected
+
+
+def test_a_fraction_is_not_rounded_away():
+    from markai.sources.facts import CostRange
+
+    assert CostRange(id="c1", item="x", low=1.8, high=1.8, unit="percent").money() == "1.8"
+    assert CostRange(id="c2", item="x", low=1.5, high=2.25, unit="per job").money() == (
+        "$1.5 to $2.25"
+    )

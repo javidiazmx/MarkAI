@@ -102,6 +102,22 @@ class Ordinance(BaseModel):
         return _terms(" ".join([self.topic, self.jurisdiction, self.rule, " ".join(self.keywords)]))
 
 
+# Units that are measures rather than money. Checked at the front of the unit so "USD per
+# unit per year" stays money and "days vacant" does not.
+_NOT_MONEY = re.compile(
+    r"\s*(days?|weeks?|months?|years?|hours?|nights?|percent|pct|%|points?|basis\s+points|"
+    r"units?\b(?!\s*of\s*currency)|times?|visits?)\b",
+    re.IGNORECASE,
+)
+
+
+def _figure(value: float) -> str:
+    """A number the way a person writes it: no cents on a round one, no rounding off 1.8."""
+    if float(value) == int(value):
+        return f"{int(value):,}"
+    return f"{value:,.2f}".rstrip("0").rstrip(".")
+
+
 class CostRange(BaseModel):
     """What a job actually costs around here, and the month that was true."""
 
@@ -126,9 +142,19 @@ class CostRange(BaseModel):
         return _terms(" ".join([self.item, self.market, self.unit, " ".join(self.keywords)]))
 
     def money(self) -> str:
+        """The range as it should read, which is not always dollars.
+
+        A mined entry arrives with whatever unit the sentence used, and half of them are not
+        money: "days on market", "percent concession", "days vacant". Printing those with a
+        dollar sign told a landlord that peak-season days on market cost $17 to $20, in the
+        block that outranks everything else Jay knows. A number with the wrong symbol on it
+        is a wrong answer, not a formatting nit.
+        """
+        low, high = _figure(self.low), _figure(self.high)
+        prefix = "" if _NOT_MONEY.match(self.unit or "") else "$"
         if self.low == self.high:
-            return f"${self.low:,.0f}"
-        return f"${self.low:,.0f} to ${self.high:,.0f}"
+            return f"{prefix}{low}"
+        return f"{prefix}{low} to {prefix}{high}"
 
 
 class FactBook(BaseModel):
