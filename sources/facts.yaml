@@ -1,4 +1,11 @@
 ordinances:
+  - id: mined-85
+    jurisdiction: "Chicago"
+    topic: "mounted wall top detector"
+    rule: "- If mounted on the wall, the top of the detector cannot be more than 12 inches from the highest point of the ceiling."
+    citation: "What are the requirements to qualify for the Section 8 housing program?"
+    url: "https://www.gcrealtyinc.com/blog/what-are-the-requirements-to-qualify-for-the-section-8-housing-program"
+    notes: "From: - If mounted on the wall, the top of the detector cannot be more than 12 inches from the highest point of the ceiling. (stated in 3 of your sources)"
   - id: mined-84
     jurisdiction: "Chicago"
     topic: "Tenant EV charging requests"
