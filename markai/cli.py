@@ -2149,7 +2149,6 @@ def facts_review(
             continue
         if choice != "a":
             declined += 1
-            decided.update(group.indices)
             continue
 
         written, why = take(group)

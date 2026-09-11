@@ -1676,6 +1676,24 @@ def test_facts_review_can_skip_a_whole_topic(tmp_path, monkeypatch):
     assert len(left) == 2, "skipping a topic leaves it for later, it does not throw it away"
 
 
+def test_facts_review_skipping_one_card_leaves_it_for_later(tmp_path, monkeypatch):
+    manifest, data = _waiting(
+        tmp_path,
+        monkeypatch,
+        [
+            _proposal(
+                "deposit interest", "Pay it.", "Interest is due on deposits over 6 months.", "A"
+            ),
+            _proposal("deposit return", "45 days.", "Return the deposit within 45 days.", "B"),
+        ],
+    )
+    result = runner.invoke(app, ["facts", "review"], input="s\ns\n")
+    assert result.exit_code == 0, result.stdout
+    assert not (manifest.parent / "facts.yaml").exists(), "nothing accepted, nothing written"
+    left = json.loads((data / "facts-proposals.json").read_text(encoding="utf-8"))["proposals"]
+    assert len(left) == 2, "skipping a card leaves it for later, same as skipping its topic"
+
+
 def test_facts_review_refuses_a_price_with_no_number(tmp_path, monkeypatch):
     _waiting(
         tmp_path,
