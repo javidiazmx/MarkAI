@@ -270,9 +270,16 @@ def resolve_property(properties: list[Any], text: Any) -> Any | None:
     id first, then the label containing what they said or the other way round, then the
     city. No fuzzy scoring - guessing the wrong building would file an expense against the
     wrong property, which is worse than filing it against none.
+
+    The tool sends an empty string both when they did not say a building and when they own
+    only one - there is nothing to disambiguate either way. With exactly one property, that
+    is the one they mean; a blank ``property_id`` on a landlord who owns a single building
+    was never "unassigned", it was this gone unresolved.
     """
     wanted = _clean(text, 120).lower()
-    if not wanted or not properties:
+    if not wanted:
+        return properties[0] if len(properties) == 1 else None
+    if not properties:
         return None
     for item in properties:
         if wanted == str(item.id).lower():

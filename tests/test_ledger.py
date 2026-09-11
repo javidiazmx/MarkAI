@@ -130,6 +130,28 @@ def test_a_building_they_do_not_own_matches_nothing():
     )
 
 
+def test_naming_no_building_resolves_to_their_only_one():
+    """The tool sends an empty string both when they said nothing and when they own just
+    one - a landlord reported exactly this: their only property, and a log entry that came
+    back unassigned because an empty string with one property still matched nothing."""
+    properties = [FakeProperty("p1", "2145 W Division", "Chicago")]
+    assert resolve_property(properties, "").id == "p1"
+
+
+def test_naming_no_building_stays_unresolved_with_more_than_one():
+    properties = [
+        FakeProperty("p1", "2145 W Division", "Chicago"),
+        FakeProperty("p2", "Berwyn six flat", "Berwyn"),
+    ]
+    assert resolve_property(properties, "") is None, (
+        "which of two buildings is a real question; guessing one is worse than neither"
+    )
+
+
+def test_naming_no_building_stays_unresolved_with_none_owned():
+    assert resolve_property([], "") is None
+
+
 # --- the store -----------------------------------------------------------------------------
 
 
