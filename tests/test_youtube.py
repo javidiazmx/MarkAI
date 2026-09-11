@@ -662,6 +662,31 @@ def test_the_fallback_tries_each_browser_and_remembers_the_one_that_works():
             assert tried == ["edge"], "the working route is remembered, not rediscovered"
 
 
+def test_a_video_missing_the_language_stops_the_sweep_immediately():
+    """A video that only has German and French captions still only has German and French
+    captions under every browser. Trying all seven anyway wastes real requests on a route
+    that was never going to work, and can turn one video's known-good answer (no English
+    here) into the block that looks like the whole run is rate-limited."""
+    from markai.ingest.youtube import CaptionFallback
+
+    calls: list[object] = []
+
+    def extractor(url, options):
+        calls.append(options.get("cookiesfrombrowser"))
+        return _info(langs=("de", "fr"))
+
+    with httpx.Client() as client, pytest.MonkeyPatch.context() as mp:
+        import markai.ingest.youtube as yt
+
+        mp.setattr(yt, "_ytdlp_extract", extractor)
+        fetch = CaptionFallback(client, ["en"])
+        with pytest.raises(IngestError):
+            fetch("vid1")
+        assert calls == [None], (
+            "one try, not a seven-browser sweep for an answer that cannot change"
+        )
+
+
 def test_the_sweep_runs_once_even_when_nothing_works():
     """Seven dead browsers per video, 1,142 times, would be its own kind of failure."""
     from markai.ingest.youtube import BROWSERS_TO_TRY, CaptionFallback

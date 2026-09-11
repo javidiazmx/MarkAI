@@ -519,7 +519,11 @@ def captions_via_ytdlp(
     url = _pick_caption_track(tracks, languages)
     if url is None:
         available = ", ".join(sorted(tracks)[:8]) or "none"
-        raise IngestError(
+        # Not a route problem - no browser or cookies file changes which languages this
+        # video has. Raised as NoCaptionsError so the sweep stops for this video instead
+        # of burning through every remaining route (and, worse, letting one of those
+        # routes' own block get mistaken for this video's real, terminal problem).
+        raise NoCaptionsError(
             f"No captions for {video_id} in {', '.join(languages)}.",
             hint=f"Languages this video does have: {available}.",
         )
