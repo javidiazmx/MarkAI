@@ -7,6 +7,7 @@ still works before the rest of the project is configured.
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +38,34 @@ app.add_typer(facts_app, name="facts")
 app.add_typer(accounts_app, name="accounts")
 app.add_typer(leads_app, name="leads")
 
+
+def _printable(stream: Any) -> Any:
+    """Make a stream that cannot kill a command over one character.
+
+    The owner runs this in a Windows console, where the code page is often cp1252 and a
+    "✓" is not in it. Every command here ends with one, so `mark report` wrote its file,
+    printed the confirmation, and died on the tick - a crash after the work was done, which
+    reads as total failure and is not.
+
+    UTF-8 first, because Windows Terminal renders it properly. ``errors="replace"`` is the
+    part that matters: on a console that cannot be switched, a character it has no glyph for
+    becomes a "?" instead of a traceback.
+    """
+    reconfigure = getattr(stream, "reconfigure", None)
+    if reconfigure is None:
+        return stream
+    for encoding in ("utf-8", None):
+        try:
+            reconfigure(encoding=encoding, errors="replace")
+            return stream
+        except Exception:
+            continue
+    return stream
+
+
+# Fixed up in place rather than handed to the Console, which resolves ``sys.stdout`` at
+# write time: binding it here would cut out anything that swaps the stream afterwards.
+_printable(sys.stdout)
 console = Console()
 err = Console(stderr=True)
 
@@ -1961,6 +1990,9 @@ def facts_review(
     accept_all: bool = typer.Option(
         False, "--accept-all", help="Accept everything that matches, without asking one by one."
     ),
+    list_only: bool = typer.Option(
+        False, "--list", help="Print the cards and decide nothing, for reading them elsewhere."
+    ),
 ) -> None:
     """Walk the mined proposals and accept the ones you want into facts.yaml.
 
@@ -2058,35 +2090,53 @@ def facts_review(
     accepted = declined = 0
     decided: set[int] = set()
     skip_topics: set[str] = set()
+
+    def show(group: Any, number: int = 0) -> None:
+        """One card: the rule, where it is from, and everything known about it."""
+        console.print()
+        label = f"[bold]{escape(str(group.lead.get('topic', '')))}[/bold]"
+        console.print(
+            (f"[dim]{number}.[/dim] " if number else "")
+            + label
+            + f" [dim]({group.kind}"
+            + (
+                f", {escape(jurisdiction_of(group.lead))}"
+                if jurisdiction_of(group.lead)
+                else ", nowhere named"
+            )
+            + (f", {group.support} sources say it" if group.support > 1 else "")
+            + (", you already cover this subject" if group.known else "")
+            + (", a market rent that will go stale" if group.rent else "")
+            + (", somebody asked about this" if group.wanted else "")
+            + (", nothing to do with renting" if not group.on_topic else "")
+            + (
+                f", page dated {escape(str(group.lead.get('source_date', '')))[:10]}"
+                if group.lead.get("source_date")
+                else ""
+            )
+            + f", from {escape(group.sources()[0][:44] if group.sources() else '?')})[/dim]"
+        )
+        console.print(f"  {escape(str(group.lead.get('rule', '')))}")
+        console.print(f'  [dim]source says: "{escape(str(group.lead.get("quote", "")))}"[/dim]')
+
+    if list_only:
+        # For reading somewhere other than a prompt. Decides nothing and writes nothing.
+        for number, group in enumerate(groups, start=1):
+            show(group, number)
+        console.print()
+        console.print(
+            f"[dim]{len(groups)} cards. Nothing was decided; add --accept-all, or drop "
+            f"--list to go through them one at a time.[/dim]"
+        )
+        return
+
     for group in groups:
         if not accept_all and group.topic in skip_topics:
             continue
         if accept_all:
             choice = "a"
         else:
-            console.print()
-            console.print(
-                f"[bold]{escape(str(group.lead.get('topic', '')))}[/bold] "
-                f"[dim]({group.kind}"
-                + (
-                    f", {escape(jurisdiction_of(group.lead))}"
-                    if jurisdiction_of(group.lead)
-                    else ", nowhere named"
-                )
-                + (f", {group.support} sources say it" if group.support > 1 else "")
-                + (", you already cover this subject" if group.known else "")
-                + (", a market rent that will go stale" if group.rent else "")
-                + (", somebody asked about this" if group.wanted else "")
-                + (", nothing to do with renting" if not group.on_topic else "")
-                + (
-                    f", page dated {escape(str(group.lead.get('source_date', '')))[:10]}"
-                    if group.lead.get("source_date")
-                    else ""
-                )
-                + f", from {escape(group.sources()[0][:44] if group.sources() else '?')})[/dim]"
-            )
-            console.print(f"  {escape(str(group.lead.get('rule', '')))}")
-            console.print(f'  [dim]source says: "{escape(str(group.lead.get("quote", "")))}"[/dim]')
+            show(group)
             choice = (
                 typer.prompt("  [a]ccept, [s]kip, skip this [t]opic, [q]uit", default="s")
                 .strip()

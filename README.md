@@ -441,6 +441,9 @@ the rents, the single-source ones, the uncited ones, subjects you already cover.
 back (`--topic <word>` for one subject). Deciding what a landlord will never ask is a
 judgement call, and a wrong call should cost a command rather than a $14 re-mine.
 
+`mark facts review --list` prints the cards and decides nothing, for reading the queue
+somewhere other than a prompt.
+
 `mark facts why <word>` explains a verdict when you disagree with one: on topic or not and
 which word decided it, whether it names a section number, how many sources state it, whether
 somebody asked about it, whether it is currently set aside. It runs the same code the listing

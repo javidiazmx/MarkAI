@@ -2149,3 +2149,56 @@ def test_mark_report_says_everything_without_saying_anything_private(tmp_path, m
     asked = runner.invoke(app, ["report", "--questions"])
     assert asked.exit_code == 0
     assert "how long do I have to return" in (data / "mark-report.txt").read_text(encoding="utf-8")
+
+
+def test_a_windows_codepage_never_kills_a_command():
+    """`mark report` wrote its file, then died printing the tick. The work was done."""
+    import io
+
+    from rich.console import Console
+
+    from markai.cli import _printable
+
+    raw = io.TextIOWrapper(io.BytesIO(), encoding="cp1252", errors="strict", line_buffering=True)
+    with pytest.raises(UnicodeEncodeError):
+        Console(file=raw, force_terminal=False).print("[green]✓[/green] Wrote the report")
+
+    safe = io.TextIOWrapper(io.BytesIO(), encoding="cp1252", errors="strict", line_buffering=True)
+    Console(file=_printable(safe), force_terminal=False).print("[green]✓[/green] Wrote the report")
+    assert "Wrote the report" in safe.buffer.getvalue().decode("utf-8", "replace")
+
+
+def test_a_stream_that_cannot_be_reconfigured_is_left_alone():
+    from markai.cli import _printable
+
+    class Plain:
+        pass
+
+    stream = Plain()
+    assert _printable(stream) is stream
+
+
+def test_facts_review_can_print_the_cards_without_deciding(tmp_path, monkeypatch):
+    """So the queue can be read somewhere other than a prompt."""
+    manifest, data = _waiting(
+        tmp_path,
+        monkeypatch,
+        [
+            _proposal(
+                "Non-renewal notice",
+                "90 days.",
+                "Under the updated RLTO, Evanston landlords must give 90 days' notice.",
+                "A post",
+                jurisdiction="",
+            )
+        ],
+    )
+    result = runner.invoke(app, ["facts", "review", "--list"])
+    assert result.exit_code == 0, result.stdout
+    assert "Non-renewal notice" in result.stdout
+    assert "Evanston" in result.stdout, "the card has to say which city before anyone accepts it"
+    assert "Nothing was decided" in result.stdout
+
+    assert not (manifest.parent / "facts.yaml").exists()
+    left = json.loads((data / "facts-proposals.json").read_text(encoding="utf-8"))["proposals"]
+    assert len(left) == 1, "listing decides nothing"
