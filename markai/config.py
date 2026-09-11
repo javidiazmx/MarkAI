@@ -252,8 +252,10 @@ class Settings(BaseSettings):
         default=None,
         description=(
             "OAuth client secret JSON from Google Cloud Console, for the official YouTube "
-            "Data API v3. Only works for a channel you own or manage, but sidesteps the "
-            "anti-scraping checks entirely - it is not scraping."
+            "Data API v3. Only works for a channel you own or manage, and even then only "
+            "for a manually-uploaded caption track - Google's API refuses to hand back "
+            "auto-generated captions at all, even to the owner. A narrow win, tried first, "
+            "with the scraping routes still carrying the rest of the run."
         ),
     )
     youtube_api_token_file: Path = Field(

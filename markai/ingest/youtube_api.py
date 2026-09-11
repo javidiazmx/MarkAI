@@ -2,11 +2,15 @@
 
 Sidesteps every anti-scraping check yt-dlp and youtube-transcript-api eventually run into,
 because it is not scraping: Google's own API, authorized by the channel owner through OAuth.
-Auto-generated (ASR) captions can only be downloaded this way by the owner - never by a
-third party, however they authenticate - which is why this exists alongside the other two
-routes rather than replacing them. A landlord-advice channel not owned by the person running
-this ingest still needs the scraping routes; this is a fast, reliable path when it applies,
-not a universal fix.
+
+In practice this only covers manually-uploaded caption tracks. ``captions.download``
+refuses auto-generated (ASR) tracks with a 403 ("permissions... not sufficient... video
+owner might not have enabled third-party contributions") even when the caller owns the
+channel - a long-standing, intentional restriction on Google's side, confirmed against a
+real video on a channel this OAuth grant owns. Most of a podcast channel's episodes rely on
+YouTube's auto-captions rather than an uploaded track, so this route is a narrow win, not
+the fix for the blocked-scraper problem it was built to solve - which is exactly why it
+falls through to the scraping routes on any IngestError rather than failing the video.
 """
 
 from __future__ import annotations
