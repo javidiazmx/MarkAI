@@ -533,9 +533,22 @@
   }
 
   // **bold** and links. Everything else stays literal, which is the safe direction to err.
-  // An address is linked too: the answer that says to email Mark for a vendor referral is
-  // worth one tap, not a copy by hand.
-  var URL_RE = /(https?:\/\/[^\s<>()\[\]"']+[^\s<>()\[\]"'.,;:!?]|[\w.+-]+@[\w-]+\.[\w.-]*[a-zA-Z])/g;
+  //
+  // Four shapes, because that is what an answer actually contains. A full URL; a bare
+  // domain, which is how anyone writes their own site out loud ("gcrealtyinc.com/free-
+  // rental-analysis") and which used to render as dead text; an address; and a phone
+  // number, worth a tap on the phone somebody is reading this on.
+  //
+  // The bare-domain half is limited to a list of endings on purpose. Without it "facts.yaml"
+  // and "5-12-080.a" become links, and a wrong link in an answer is worse than no link.
+  var TLDS = "com|org|net|edu|gov|io|co|us|info|biz|app|ai|dev|me|tv";
+  var URL_RE = new RegExp(
+    "(https?:\\/\\/[^\\s<>()\\[\\]\"']+[^\\s<>()\\[\\]\"'.,;:!?]" +
+      "|[\\w.+-]+@[\\w-]+\\.[\\w.-]*[a-zA-Z]" +
+      "|\\b(?:[\\w-]+\\.)+(?:" + TLDS + ")\\b(?:\\/[^\\s<>()\\[\\]\"']*[^\\s<>()\\[\\]\"'.,;:!?])?" +
+      "|\\b(?:\\+1[\\s.-]?)?(?:\\(\\d{3}\\)|\\d{3})[\\s.-]\\d{3}[\\s.-]\\d{4}\\b)",
+    "g"
+  );
 
   function inline(parent, text) {
     text.split(/\*\*/).forEach(function (piece, index) {
@@ -560,18 +573,32 @@
         parent.appendChild(document.createTextNode(text.slice(last, match.index)));
       }
       var href = match[0];
-      if (/^https?:\/\//i.test(href)) {
-        var link = el("a", "link", href.replace(/^https?:\/\//, ""));
-        link.href = href;
-        link.target = "_blank";
-        link.rel = "noopener noreferrer";
+      var before = match.index ? text.charAt(match.index - 1) : "";
+      var digits = href.replace(/\D/g, "");
+
+      function anchor(target, shown) {
+        var link = el("a", "link", shown || href);
+        link.href = target;          // built here, never taken from markup in the answer
+        if (/^https?:/.test(target)) {
+          link.target = "_blank";
+          link.rel = "noopener noreferrer";
+        }
         parent.appendChild(link);
+      }
+
+      if (/^https?:\/\//i.test(href)) {
+        anchor(href, href.replace(/^https?:\/\//, ""));
       } else if (href.indexOf("@") > 0) {
-        var mail = el("a", "link", href);
-        mail.href = "mailto:" + href;
-        parent.appendChild(mail);
+        anchor("mailto:" + href);
+      } else if (/^[\d(+]/.test(href)) {
+        // Not a phone number if it is the tail of a longer run of digits.
+        if (/[\d.-]/.test(before) || digits.length < 10 || digits.length > 11) {
+          parent.appendChild(document.createTextNode(href));
+        } else {
+          anchor("tel:+" + (digits.length === 10 ? "1" + digits : digits));
+        }
       } else {
-        parent.appendChild(document.createTextNode(href));
+        anchor("https://" + href);
       }
       last = match.index + href.length;
     }
