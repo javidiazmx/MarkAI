@@ -1435,10 +1435,12 @@
   var acctEntries = document.getElementById("acct-entries");
   var usedTheLog = false;
 
-  // What separates one kind of entry from another, in the order the breakdown reads them.
+  // Only the kinds that are an actual transaction, so every dollar shown here reconciles
+  // with the money in/out/net tiles above it. A dollar figure attached to a maintenance
+  // issue, a visit, or a note ("tenant promised $600 payment on Tuesday") is context, not
+  // money that moved, and showing it here read as a discrepancy the totals could not explain.
   var KIND_LABELS = {
-    income: "Rent & income", expense: "Expenses", bill: "Bills",
-    maintenance: "Maintenance", visit: "Visits", note: "Notes"
+    income: "Rent & income", expense: "Expenses", bill: "Bills"
   };
 
   function drawPropPicker(items) {

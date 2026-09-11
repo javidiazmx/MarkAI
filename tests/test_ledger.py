@@ -301,6 +301,28 @@ def test_the_tool_totals_without_the_model_doing_arithmetic(ledger):
     assert result["currency"] == "USD"
 
 
+def test_a_note_about_a_promised_payment_does_not_count_as_an_expense(ledger):
+    """A landlord reported this exact discrepancy: told Jay a tenant paid, Jay logged it as
+    a note (a promise, not a receipt), and the $600 silently came off their net as if it
+    were money out - net can never be right if every kind but income is money spent."""
+    log = _owner_log(ledger)
+    log.add({"kind": "income", "what": "Rent from tenant, autopay", "amount": 600})
+    log.add({"kind": "note", "what": "Tenant promised $600 payment on Tuesday", "amount": 600})
+    result = run_log_tool(log, {"action": "total", "property": "", "since_days": 0})
+    assert result["totals"]["out"] == 0, "a note is not a transaction, whatever number is in it"
+    assert result["totals"]["net"] == 600
+
+
+def test_a_maintenance_issue_with_no_expense_logged_yet_does_not_count_as_spent(ledger):
+    log = _owner_log(ledger)
+    log.add({"kind": "maintenance", "what": "Boiler is dead", "amount": 8000})
+    result = run_log_tool(log, {"action": "total", "property": "", "since_days": 0})
+    assert result["totals"]["out"] == 0, (
+        "maintenance is the problem, not the payment - the cost is its own expense row "
+        "once it is actually paid"
+    )
+
+
 def test_the_tool_closes_an_item_by_id(ledger):
     log = _owner_log(ledger)
     saved = log.add({"kind": "maintenance", "what": "No heat in unit 2"})

@@ -472,7 +472,12 @@ class Ledger:
             ).fetchall()
         by_kind = {row["kind"]: round(float(row["total"] or 0), 2) for row in rows}
         money_in = by_kind.get("income", 0.0)
-        money_out = sum(value for kind, value in by_kind.items() if kind != "income")
+        # Only the two kinds that are actually a transaction. A dollar figure on a
+        # "maintenance" row is the cost of the problem, not the problem itself - it is
+        # supposed to be logged again as its own "expense" once paid, per KINDS above - and
+        # a figure on a "visit" or a "note" ("tenant promised $600 payment on Tuesday") is
+        # context for something that has not happened yet, not money that moved.
+        money_out = sum(by_kind.get(kind, 0.0) for kind in ("expense", "bill"))
         by_kind["in"] = round(money_in, 2)
         by_kind["out"] = round(money_out, 2)
         by_kind["net"] = round(money_in - money_out, 2)
