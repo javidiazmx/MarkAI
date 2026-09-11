@@ -248,6 +248,21 @@ class Settings(BaseSettings):
             "brave, opera, vivaldi, safari. Nothing to export and nothing to install."
         ),
     )
+    youtube_api_client_secret_file: Path | None = Field(
+        default=None,
+        description=(
+            "OAuth client secret JSON from Google Cloud Console, for the official YouTube "
+            "Data API v3. Only works for a channel you own or manage, but sidesteps the "
+            "anti-scraping checks entirely - it is not scraping."
+        ),
+    )
+    youtube_api_token_file: Path = Field(
+        default=Path("youtube_api_token.json"),
+        description=(
+            "Where the OAuth token is cached after the one-time browser consent, relative "
+            "to the data dir unless absolute. Re-used silently on later runs."
+        ),
+    )
 
     youtube_delay_seconds: float = Field(
         default=2.0,
@@ -375,6 +390,11 @@ class Settings(BaseSettings):
     @property
     def youtube_cache_dir(self) -> Path:
         return self.raw_dir / "youtube"
+
+    @property
+    def youtube_api_token_path(self) -> Path:
+        path = self.youtube_api_token_file
+        return path if path.is_absolute() else self.data_dir / path
 
     @property
     def podcast_audio_dir(self) -> Path:

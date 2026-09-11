@@ -778,3 +778,96 @@ def test_a_configured_browser_skips_the_sweep():
         CaptionFallback(client, ["en"], "firefox")("vid1")
 
     assert tried == [("firefox",)], "asked for, so not second-guessed"
+
+
+# --- the official API, for a channel the owner controls ---------------------------------
+
+
+def test_the_official_api_is_tried_first_and_the_scraping_routes_never_run(
+    respx_mock, tmp_path, settings, monkeypatch
+):
+    """When it works, nothing has to be scraped at all."""
+    import markai.ingest.youtube as yt
+    from markai.models import Segment
+
+    respx_mock.get("https://www.youtube.com/oembed").mock(
+        return_value=httpx.Response(200, json={"title": "Screening", "author_name": "SUCI"})
+    )
+    calls: list[str] = []
+
+    def fake_captions_via_api(client, video_id, languages):
+        calls.append(video_id)
+        return [Segment(start=0.0, end=1.0, text="from the owner's own channel")]
+
+    monkeypatch.setattr("markai.ingest.youtube_api.captions_via_api", fake_captions_via_api)
+    section = YouTubeSection(episodes=[YouTubeEpisode(url=VIDEO)])
+    api = FakeTranscriptApi(error=AssertionError("scraping should not have run"))
+    with httpx.Client() as client:
+        documents = [
+            r
+            for r in yt.ingest_youtube(
+                section,
+                tmp_path,
+                client=client,
+                api=api,
+                project_root=settings.project_root,
+                api_client=object(),
+            )
+            if isinstance(r, Document)
+        ]
+
+    assert calls == [VIDEO]
+    assert "from the owner's own channel" in documents[0].text
+    assert (tmp_path / f"{VIDEO}.json").exists(), "the official result is cached too"
+
+
+def test_the_official_api_falls_through_to_scraping_on_failure(
+    respx_mock, tmp_path, settings, monkeypatch
+):
+    """Not every video is covered by the channel's own OAuth grant - the scraping routes
+    still get a turn rather than the video failing outright."""
+    import markai.ingest.youtube as yt
+
+    respx_mock.get("https://www.youtube.com/oembed").mock(
+        return_value=httpx.Response(200, json={"title": "Screening", "author_name": "SUCI"})
+    )
+
+    def failing_captions_via_api(client, video_id, languages):
+        raise IngestError("not covered by this OAuth grant")
+
+    monkeypatch.setattr("markai.ingest.youtube_api.captions_via_api", failing_captions_via_api)
+    section = YouTubeSection(episodes=[YouTubeEpisode(url=VIDEO)])
+    api = FakeTranscriptApi()
+    with httpx.Client() as client:
+        documents = [
+            r
+            for r in yt.ingest_youtube(
+                section,
+                tmp_path,
+                client=client,
+                api=api,
+                project_root=settings.project_root,
+                api_client=object(),
+            )
+            if isinstance(r, Document)
+        ]
+
+    assert len(documents) == 1, "the ordinary transcript API rescued it"
+
+
+def test_no_api_client_skips_the_official_route_entirely(respx_mock, tmp_path, settings):
+    """The default: nothing configured, nothing attempted, no import even touched."""
+    respx_mock.get("https://www.youtube.com/oembed").mock(
+        return_value=httpx.Response(200, json={"title": "Screening", "author_name": "SUCI"})
+    )
+    section = YouTubeSection(episodes=[YouTubeEpisode(url=VIDEO)])
+    api = FakeTranscriptApi()
+    with httpx.Client() as client:
+        documents = [
+            r
+            for r in ingest_youtube(
+                section, tmp_path, client=client, api=api, project_root=settings.project_root
+            )
+            if isinstance(r, Document)
+        ]
+    assert len(documents) == 1

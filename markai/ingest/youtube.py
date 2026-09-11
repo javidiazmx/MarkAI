@@ -659,12 +659,15 @@ def _segments_with_backoff(
     project_root: Path,
     log: Callable[[str], None] | None,
     fallback: Callable[[str], list[Segment]] | None = None,
+    api_client: Any | None = None,
 ) -> list[Segment]:
     """Fetch captions, trying the other route and waiting out a block before giving up."""
     last: RateLimitedError | None = None
     for wait in (*BACKOFF_SECONDS, None):
         try:
-            return _segments_for(entry, video_id, cache_dir, api, languages, project_root)
+            return _segments_for(
+                entry, video_id, cache_dir, api, languages, project_root, api_client=api_client
+            )
         except RateLimitedError as exc:
             last = exc
             # Before waiting, try the other route. yt-dlp talks to YouTube differently and
@@ -701,8 +704,15 @@ def ingest_youtube(
     delay_seconds: float = 0.0,
     cookies_from_browser: str | None = None,
     cookies_file: Path | None = None,
+    api_client: Any | None = None,
 ) -> Iterator[Document | IngestFailure]:
-    """Yield one Document (or IngestFailure) per YouTube episode in the manifest."""
+    """Yield one Document (or IngestFailure) per YouTube episode in the manifest.
+
+    ``api_client`` is an already-authorized official YouTube Data API v3 client (see
+    ``markai.ingest.youtube_api.build_youtube_api_client``), tried first when given. Building
+    it is the caller's job: the one-time OAuth consent opens a browser, which does not belong
+    inside a generator.
+    """
     project_root = Path(project_root or Path.cwd())
     cache_dir = Path(cache_dir)
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -746,7 +756,15 @@ def ingest_youtube(
 
             try:
                 segments = _segments_with_backoff(
-                    entry, video_id, cache_dir, api, languages, project_root, log, fallback
+                    entry,
+                    video_id,
+                    cache_dir,
+                    api,
+                    languages,
+                    project_root,
+                    log,
+                    fallback,
+                    api_client=api_client,
                 )
                 blocked_in_a_row = 0
             except RateLimitedError as exc:
@@ -813,6 +831,7 @@ def _segments_for(
     api: Any | None,
     languages: Sequence[str],
     project_root: Path,
+    api_client: Any | None = None,
 ) -> list[Segment]:
     if entry.transcript_file:
         path = Path(entry.transcript_file)
@@ -831,6 +850,20 @@ def _segments_for(
             return _snippets_to_segments(json.loads(cache_path.read_text(encoding="utf-8")))
         except Exception as exc:
             logger.debug("ignoring bad cache %s: %s", cache_path, exc)
+
+    if api_client is not None:
+        from markai.ingest.youtube_api import captions_via_api
+
+        try:
+            segments = captions_via_api(api_client, video_id, languages)
+        except IngestError as exc:
+            # A video the API says has no captions may still have ASR captions the API
+            # only exposes to its owning channel - the scraping routes get a turn rather
+            # than the video being failed outright on the API's word alone.
+            logger.debug("official API did not work for %s: %s", video_id, exc)
+        else:
+            _cache_segments(cache_dir, video_id, segments)
+            return segments
 
     segments = fetch_transcript_segments(video_id, api=api, languages=languages)
     _cache_segments(cache_dir, video_id, segments)

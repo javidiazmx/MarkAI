@@ -326,6 +326,20 @@ def _iter_sources(
                 yield IngestFailure(SourceKind.YOUTUBE, "youtube", str(exc), exc.hint)
                 return
 
+        api_client = None
+        if settings.youtube_api_client_secret_file is not None:
+            from markai.ingest.youtube_api import OAuthNotConfigured, build_youtube_api_client
+
+            try:
+                api_client = build_youtube_api_client(
+                    settings.youtube_api_client_secret_file, settings.youtube_api_token_path
+                )
+            except OAuthNotConfigured:
+                pass  # opt-in and unset: the scraping routes carry the whole run
+            except Exception as exc:  # a channel-owner convenience, never worth failing the run
+                if log:
+                    log(f"YouTube Data API v3 sign-in did not work, skipping it: {exc}")
+
         yield from _guarded(
             SourceKind.YOUTUBE,
             lambda: ingest_youtube(
@@ -340,6 +354,7 @@ def _iter_sources(
                 delay_seconds=settings.youtube_delay_seconds,
                 cookies_from_browser=settings.youtube_cookies_from_browser,
                 cookies_file=settings.youtube_cookies_file,
+                api_client=api_client,
             ),
         )
 

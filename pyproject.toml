@@ -40,6 +40,14 @@ dependencies = [
 [project.optional-dependencies]
 # Local speech-to-text for podcast audio (large download; CPU works, GPU faster).
 transcribe = ["faster-whisper>=1.1"]
+# Official YouTube Data API v3, for pulling captions as the channel owner - sidesteps the
+# anti-scraping IP/bot checks that yt-dlp and youtube-transcript-api eventually run into,
+# but only works for a channel you own or manage.
+youtube-api = [
+  "google-api-python-client>=2.140",
+  "google-auth-oauthlib>=1.2",
+  "google-auth-httplib2>=0.2",
+]
 dev = [
   "pytest>=8.0",
   "pytest-asyncio>=0.23",
