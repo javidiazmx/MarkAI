@@ -1,4 +1,11 @@
 ordinances:
+  - id: mined-84
+    jurisdiction: "Chicago"
+    topic: "Tenant EV charging requests"
+    rule: "Landlords must give reasonable approval to tenant requests to install EV charging stations at the tenant's own expense, as long as safety and building codes are met."
+    citation: "Chicago Landlords & PMs: Master the Electric Vehicle Charging Curve with 2024's New Law!"
+    url: "https://www.gcrealtyinc.com/blog/chicago-landlords--pms-master-the-electric-vehicle-charging-curve-with-2024s-new-law"
+    notes: "From: As a landlord, you must give reasonable approval to these requests, as long as safety and building codes are me (stated in 2 of your sources)"
   - id: mined-83
     jurisdiction: "Federal (Section 8 / HUD)"
     topic: "Bedroom minimum size"
