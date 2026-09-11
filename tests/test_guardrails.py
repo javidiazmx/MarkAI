@@ -9,6 +9,7 @@ from markai.advisor.guardrails import (
     FLAG_GEO_OUT,
     FLAG_HIGH_RISK,
     FLAG_LEGAL,
+    FLAG_PM_INTEREST,
     HIGH_RISK_RESPONSE,
     IDENTITY_NOTICE,
     LEGAL_DISCLAIMER,
@@ -21,6 +22,7 @@ from markai.advisor.guardrails import (
     is_high_risk_request,
     is_legal_topic,
     is_not_covered_answer,
+    is_pm_interest_question,
 )
 
 
@@ -178,6 +180,40 @@ def test_a_full_question_is_not_a_follow_up():
 def test_not_covered_answer_detection():
     assert is_not_covered_answer(f"{NOT_COVERED_PHRASE} Try episode 12.")
     assert not is_not_covered_answer("Here is what the sources say.")
+
+
+# --- asking about hiring a property manager, the lead-generation signal ---------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Should I hire a property manager for my two flat?",
+        "How much does a property manager cost in Chicago?",
+        "What do property managers charge as a percent of rent?",
+        "Do you manage properties in Roselle?",
+        "Does GC Realty manage buildings like mine?",
+        "I'm considering hiring a property manager, is it worth it?",
+        "What's a typical management fee?",
+        "Looking for a property manager for my six flat.",
+    ],
+)
+def test_pm_interest_questions_are_flagged(text):
+    assert is_pm_interest_question(text) is True
+    assert FLAG_PM_INTEREST in detect_flags(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "What does a property manager actually do day to day?",
+        "How do I screen tenants myself?",
+        "What's the notice period for a month to month lease?",
+        "How do I manage a leaking pipe complaint?",
+    ],
+)
+def test_ordinary_questions_are_not_flagged_as_pm_interest(text):
+    assert is_pm_interest_question(text) is False
 
 
 # --- Spanish -------------------------------------------------------------------------------

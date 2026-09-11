@@ -37,6 +37,7 @@ FLAG_GEO_OUT = "geo_out_of_scope"
 FLAG_GEO_IL_NON_CHICAGO = "geo_illinois_non_chicagoland"
 FLAG_HIGH_RISK = "high_risk_request"
 FLAG_FOLLOW_UP = "follow_up"
+FLAG_PM_INTEREST = "pm_interest"
 
 _LEGAL_TERMS = (
     "evict",
@@ -716,6 +717,29 @@ def is_small_talk(question: str) -> bool:
     return bool(_SMALL_TALK.match(text)) and len(text.split()) <= SMALL_TALK_MAX_WORDS
 
 
+_PM_INTEREST = re.compile(
+    r"\b(hire|hiring|get|need|looking for|find|considering|switch(?:ing)? to|use|"
+    r"outsource(?:ing)? to)\b[^.?!]{0,40}\bproperty managers?\b"
+    r"|\bproperty managers?\b[^.?!]{0,40}\b(cost|charge|fee|worth it|percent|% )\b"
+    r"|\bhow much (?:does|do|would|will)\b[^.?!]{0,40}\bproperty manag(?:er|ement)\b"
+    r"|\b(?:do|does|can|could) (?:you|gc realty|mark ainley)\b[^.?!]{0,40}\bmanage\b[^.?!]"
+    r"{0,20}\b(propert|building|unit)\w*\b"
+    r"|\bmanagement (?:fee|cost|company|companies)\b",
+    re.IGNORECASE,
+)
+
+
+def is_pm_interest_question(question: str) -> bool:
+    """True for a landlord asking, in some form, whether to hire a property manager.
+
+    Deliberately narrow: general education about what a property manager does ("what does
+    a property manager do") should not fire this, only a question that is actually about
+    hiring one, its cost, or whether GC Realty itself manages properties - the signal a
+    lead-generation alert is built on, not a topic tag.
+    """
+    return bool(_PM_INTEREST.search(_norm(question)))
+
+
 def detect_flags(question: str) -> list[str]:
     """All flags that apply to a question, sorted for deterministic prompts."""
     flags: set[str] = set()
@@ -727,6 +751,8 @@ def detect_flags(question: str) -> list[str]:
     if is_high_risk_request(question):
         flags.add(FLAG_HIGH_RISK)
         flags.add(FLAG_LEGAL)
+    if is_pm_interest_question(question):
+        flags.add(FLAG_PM_INTEREST)
     return sorted(flags)
 
 

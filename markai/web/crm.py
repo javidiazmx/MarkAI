@@ -246,6 +246,29 @@ class Crm:
             )
         return int(cursor.lastrowid or 0)
 
+    def already_sent(self, account_id: str, signal: str) -> bool:
+        """True if this account already has a lead carrying this ``signal``.
+
+        A behavioral alert - "asked about hiring a PM", "now manages 2 properties" - fires
+        once. Without this a landlord who asks the same question twice, or a chatty
+        conversation that mentions it three times, would page the CRM three times for one
+        fact that was already true the first time.
+        """
+        if not account_id or not signal:
+            return False
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT payload FROM leads WHERE account_id = ?", (account_id,)
+            ).fetchall()
+        for row in rows:
+            try:
+                payload = json.loads(row["payload"])
+            except ValueError:
+                continue
+            if payload.get("signal") == signal:
+                return True
+        return False
+
     @staticmethod
     def _row_to_lead(row: sqlite3.Row) -> Lead:
         try:

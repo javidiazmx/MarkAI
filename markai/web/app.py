@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
-from markai.advisor.guardrails import IDENTITY_NOTICE
+from markai.advisor.guardrails import FLAG_PM_INTEREST, IDENTITY_NOTICE
 
 logger = logging.getLogger(__name__)
 
@@ -491,6 +491,24 @@ def create_app(
         except Exception:  # a CRM problem is never a failed signup
             logger.exception("could not queue the lead")
 
+    def _queue_candidate_lead(account: Any, signal: str, reason: str) -> None:
+        """A landlord showed a sign they might be worth a call about a property manager.
+
+        Same queue as a signup lead, one alert per signal per account (`already_sent`), and
+        the same rule: a CRM problem is never allowed to break the chat or the property they
+        were adding.
+        """
+        from markai.web.crm import build_payload
+
+        try:
+            crm = get_crm()
+            if crm.already_sent(account.id, signal):
+                return
+            crm.enqueue(account.id, build_payload(account, {"signal": signal, "reason": reason}))
+            crm.deliver_soon()
+        except Exception:
+            logger.exception("could not queue a candidate lead")
+
     @app.get("/api/log")
     def read_log(
         property_id: str = "",
@@ -555,6 +573,7 @@ def create_app(
     def add_property(
         payload: PropertyRequest,
         owner: str = Depends(owner_of),
+        signed_in: Any = Depends(signed_in_of),
         _: None = Depends(require_access),
     ) -> dict[str, Any]:
         from markai.web.portfolio import PropertyError
@@ -564,6 +583,10 @@ def create_app(
         except PropertyError as exc:
             # The message names the field and the limit, so it is useful to show.
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if signed_in is not None and len(get_portfolio().list(owner)) == 2:
+            # Exactly 2, not >= 2: this fires once, the turn a single-building landlord
+            # becomes a portfolio. A tenth building is not new information.
+            _queue_candidate_lead(signed_in, "portfolio_growth", "Now manages 2 properties")
         return {"property": saved.to_dict()}
 
     @app.delete("/api/properties/{property_id}")
@@ -684,6 +707,15 @@ def create_app(
                 # produce an answer has not spent anything.
                 accounts.count_question(owner)
 
+        on_flags: Callable[[list[str]], None] | None = None
+        if signed_in is not None:
+
+            def on_flags(flags: list[str]) -> None:
+                if FLAG_PM_INTEREST in flags:
+                    _queue_candidate_lead(
+                        signed_in, "pm_interest", "Asked Jay about hiring a property manager"
+                    )
+
         return EventSourceResponse(
             _events(
                 get_advisor,
@@ -700,6 +732,7 @@ def create_app(
                 # Their own record of the buildings: what it cost, who came out, what is
                 # still open. Jay can add to it and search it while answering.
                 owner_log(owner),
+                on_flags,
             )
         )
 
@@ -717,6 +750,7 @@ def _events(
     neighborhood: str | None = None,
     remembered: list[tuple[str, float]] | None = None,
     log: Any | None = None,
+    on_flags: Callable[[list[str]], None] | None = None,
 ) -> Iterator[dict]:
     from markai.advisor.mark import MissingApiKeyError
 
@@ -752,6 +786,12 @@ def _events(
 
         if record is not None:
             record(message, response.text)
+
+        if on_flags is not None:
+            try:
+                on_flags(response.flags)
+            except Exception:  # a lead-alert problem must not break the answer
+                logger.exception("could not check the answer for a candidate signal")
 
         yield {
             "event": "citations",

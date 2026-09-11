@@ -273,10 +273,14 @@ class FakeAdvisor:
     """Minimal advisor for web tests: streams a fixed answer."""
 
     def __init__(
-        self, text: str = "Here is the answer [S1].", citations: list[Any] | None = None
+        self,
+        text: str = "Here is the answer [S1].",
+        citations: list[Any] | None = None,
+        flags: list[str] | None = None,
     ) -> None:
         self.text = text
         self.citations = citations or []
+        self.flags = flags or []
         self.questions: list[str] = []
         self.remembered: list[tuple[str, float]] = []
         self.log: Any = None
@@ -313,7 +317,7 @@ class FakeAdvisor:
                 text=self.text,
                 citations=self.citations,
                 coverage="covered",
-                flags=[],
+                flags=self.flags,
                 usage={"input_tokens": 1, "output_tokens": 2},
                 model="claude-opus-5",
                 stop_reason="end_turn",

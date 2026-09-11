@@ -1350,6 +1350,11 @@ def _crm(settings: Any) -> Any:
 @leads_app.command("list")
 def leads_list(
     limit: int = typer.Option(25, "-n", "--limit", help="How many to show."),
+    candidates: bool = typer.Option(
+        False,
+        "--candidates",
+        help="Only behavioral alerts (asked about a PM, portfolio growth) - not every signup.",
+    ),
 ) -> None:
     """Every lead and whether the CRM has it yet."""
     from datetime import UTC, datetime
@@ -1357,7 +1362,11 @@ def leads_list(
     settings = _settings()
     crm = _crm(settings)
     counts = crm.counts()
-    rows = crm.all(limit=limit)
+    # Signals are a minority of leads, so filtering has to look past plain signups too -
+    # a flat cap of `limit` rows before filtering could come back empty on an active queue.
+    rows = crm.all(limit=limit if not candidates else max(limit * 20, 500))
+    if candidates:
+        rows = [lead for lead in rows if "signal" in lead.payload][:limit]
     configured, describe = crm.configured, crm.describe
     crm.close()
 
@@ -1374,11 +1383,14 @@ def leads_list(
         f"{counts['waiting']} waiting · {counts['gave_up']} gave up[/dim]"
     )
     if not rows:
+        if candidates:
+            console.print("[dim]No behavioral alerts yet.[/dim]")
         return
     table = Table(show_header=True, header_style="bold", title="Leads")
     table.add_column("When")
     table.add_column("Name", overflow="fold")
     table.add_column("Email", overflow="fold")
+    table.add_column("Why", overflow="fold")
     table.add_column("State")
     table.add_column("Why not", overflow="fold")
     for lead in rows:
@@ -1388,10 +1400,13 @@ def leads_list(
             state = "[red]gave up[/red]"
         else:
             state = f"waiting ({lead.attempts})"
+        # A plain signup has neither field; a behavioral alert always names its reason.
+        why = str(lead.payload.get("reason") or "Signed up")
         table.add_row(
             datetime.fromtimestamp(lead.created_at, UTC).strftime("%Y-%m-%d"),
             escape(str(lead.payload.get("name", ""))),
             escape(str(lead.payload.get("email", ""))),
+            escape(why),
             state,
             escape(lead.last_error[:60]),
         )

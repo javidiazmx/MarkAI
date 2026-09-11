@@ -1088,6 +1088,87 @@ def test_the_account_routes_are_gated_by_the_access_code(settings, store):
     assert client.post("/api/account", json={}, headers=headers).status_code == 401
 
 
+# --- signals worth a call about a property manager --------------------------------------
+
+
+def _signals(settings):
+    """Just the candidate-alert leads, not the signup lead signing up always queues."""
+    from markai.web.crm import Crm
+
+    crm = Crm(settings.data_dir / "leads.db")
+    leads = crm.all()
+    crm.close()
+    return [lead.payload["signal"] for lead in leads if "signal" in lead.payload]
+
+
+def test_asking_about_a_pm_queues_a_candidate_lead(settings, store):
+    from markai.advisor.guardrails import FLAG_PM_INTEREST
+
+    client = _client(settings, store, FakeAdvisor(flags=[FLAG_PM_INTEREST]))
+    headers = {"X-Browser-Id": "b1"}
+    client.post("/api/account", json=SIGNUP, headers=headers)
+
+    _ask(client, "t1", "How much does a property manager cost?")
+
+    assert _signals(settings) == ["pm_interest"]
+
+
+def test_asking_twice_only_queues_the_lead_once(settings, store):
+    from markai.advisor.guardrails import FLAG_PM_INTEREST
+
+    client = _client(settings, store, FakeAdvisor(flags=[FLAG_PM_INTEREST]))
+    headers = {"X-Browser-Id": "b1"}
+    client.post("/api/account", json=SIGNUP, headers=headers)
+
+    _ask(client, "t1", "Should I hire a property manager?")
+    _ask(client, "t2", "How much would a property manager cost?")
+
+    assert _signals(settings) == ["pm_interest"], "one fact, told twice, is still one lead"
+
+
+def test_an_anonymous_visitor_asking_about_a_pm_queues_nothing(settings, store):
+    from markai.advisor.guardrails import FLAG_PM_INTEREST
+
+    client = _client(settings, store, FakeAdvisor(flags=[FLAG_PM_INTEREST]))
+    _ask(client, "t1", "How much does a property manager cost?")
+
+    assert _signals(settings) == [], "there is nobody to call yet"
+
+
+def test_a_question_with_no_pm_interest_queues_nothing(settings, store):
+    client = _client(settings, store, FakeAdvisor())
+    headers = {"X-Browser-Id": "b1"}
+    client.post("/api/account", json=SIGNUP, headers=headers)
+
+    _ask(client, "t1", "How long do I have to return a deposit?")
+
+    assert _signals(settings) == []
+
+
+def test_a_second_property_queues_a_candidate_lead(settings, store):
+    client = _client(settings, store)
+    headers = {"X-Browser-Id": "b1"}
+    client.post("/api/account", json=SIGNUP, headers=headers)
+
+    client.post("/api/properties", json={"label": "2145 W Division"}, headers=headers)
+    assert _signals(settings) == [], "one building is not a portfolio"
+
+    client.post("/api/properties", json={"label": "Berwyn six flat"}, headers=headers)
+    assert _signals(settings) == ["portfolio_growth"]
+
+    client.post("/api/properties", json={"label": "A third building"}, headers=headers)
+    assert _signals(settings) == ["portfolio_growth"], "a tenth building is not new information"
+
+
+def test_an_anonymous_visitors_second_property_queues_nothing(settings, store):
+    client = _client(settings, store)
+    headers = {"X-Browser-Id": "b1"}
+    client.post("/api/properties", json={"label": "2145 W Division"}, headers=headers)
+    client.post("/api/properties", json={"label": "Berwyn six flat"}, headers=headers)
+
+    assert _signals(settings) == [], "there is nobody to call yet"
+
+
 def test_the_page_has_the_signup_form_with_the_four_fields():
     from pathlib import Path
 
@@ -1203,6 +1284,38 @@ def test_mark_leads_lists_and_sends(tmp_path, monkeypatch):
     blocked = runner.invoke(app, ["leads", "send"])
     assert blocked.exit_code == 1
     assert "MARKAI_LEAD_EMAIL_TO" in blocked.stdout + str(blocked.stderr)
+
+
+def test_mark_leads_candidates_shows_only_the_behavioral_alerts(tmp_path, monkeypatch):
+    from markai.web.accounts import Account
+    from markai.web.crm import Crm, build_payload
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True)
+    account = Account(id="a1", email="javier@example.com", name="Javier Diaz", phone="312-555-0134")
+    queue = Crm(data_dir / "leads.db")
+    queue.enqueue("a1", build_payload(account))  # a plain signup, no signal
+    queue.enqueue(
+        "a1",
+        build_payload(account, {"signal": "pm_interest", "reason": "Asked about hiring a PM"}),
+    )
+    queue.close()
+
+    manifest = tmp_path / "sources.yaml"
+    manifest.write_text("websites: []\n", encoding="utf-8")
+    monkeypatch.setenv("MARKAI_SOURCES_FILE", str(manifest))
+    monkeypatch.setenv("MARKAI_DATA_DIR", str(data_dir))
+
+    everything = runner.invoke(app, ["leads", "list"])
+    assert everything.stdout.count("javier@example.com") == 2
+    assert "Signed up" in everything.stdout
+    assert "Asked about hiring a PM" in everything.stdout
+
+    only_signals = runner.invoke(app, ["leads", "list", "--candidates"])
+    assert only_signals.exit_code == 0
+    assert only_signals.stdout.count("javier@example.com") == 1
+    assert "Asked about hiring a PM" in only_signals.stdout
+    assert "Signed up" not in only_signals.stdout
 
 
 def test_doctor_reports_on_the_page_the_accounts_and_the_crm(tmp_path, monkeypatch):

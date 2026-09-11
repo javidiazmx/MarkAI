@@ -81,6 +81,19 @@ def test_a_lead_is_written_down_then_sent(crm, sender):
     assert crm.pending() == [], "a delivered lead is not tried again"
 
 
+def test_a_behavioral_signal_is_only_sent_once(crm):
+    """A landlord who asks the same PM question three times pages the CRM once."""
+    assert crm.already_sent("a1", "pm_interest") is False
+    crm.enqueue("a1", build_payload(ACCOUNT, {"signal": "pm_interest"}))
+    assert crm.already_sent("a1", "pm_interest") is True
+    assert crm.already_sent("a1", "portfolio_growth") is False, (
+        "a different signal is not the same fact"
+    )
+    assert crm.already_sent("a2", "pm_interest") is False, (
+        "a different account is not the same lead"
+    )
+
+
 def test_a_failure_is_retried_later_not_lost(tmp_path):
     sender = Sender(fail_times=1)
     crm = Crm(tmp_path / "leads.db", url="https://crm.test/hook", sender=sender)
