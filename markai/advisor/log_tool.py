@@ -142,6 +142,29 @@ def _int(value: Any, default: int = 0) -> int:
         return default
 
 
+def add_dedupe_key(tool_input: dict[str, Any]) -> tuple[str, ...] | None:
+    """The fields that make two ``add`` calls the same entry, or ``None`` for other actions.
+
+    Parallel tool use lets one turn carry two ``tool_use`` blocks. If Claude calls ``add``
+    twice for the same thing the landlord said once, both would otherwise land as separate
+    rows - a duplicate the model created, not one the landlord asked for. This key lets the
+    caller in ``mark.py`` recognize the second call within the same turn and answer it from
+    the first save instead of writing again. It is deliberately scoped to one turn: a
+    landlord logging the same-sounding expense in a different month later is not a duplicate.
+    """
+    args = tool_input or {}
+    if str(args.get("action") or "").strip().lower() != "add":
+        return None
+    return (
+        str(args.get("kind") or "").strip().lower(),
+        str(args.get("what") or "").strip().lower(),
+        str(args.get("amount") or "").strip(),
+        str(args.get("vendor") or "").strip().lower(),
+        str(args.get("date") or "").strip().lower(),
+        str(args.get("property") or "").strip().lower(),
+    )
+
+
 def run_log_tool(log: Any, tool_input: dict[str, Any]) -> dict[str, Any]:
     """Serve ``property_log``. Always returns a JSON-serializable dict, never raises."""
     from markai.web.ledger import LogError

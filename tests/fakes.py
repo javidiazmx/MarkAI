@@ -94,6 +94,30 @@ def tool_use_message(
     )
 
 
+def parallel_tool_use_message(
+    calls: list[tuple[str, dict[str, Any]]], model: str = "claude-opus-5"
+) -> BetaMessage:
+    """An assistant message that calls more than one tool in the same turn.
+
+    Real parallel tool use: each block gets its own ``tool_use_id`` so the matching
+    ``tool_result`` blocks sent back stay distinct, the way the API actually pairs them.
+    """
+    content: list[Any] = [
+        BetaToolUseBlock(type="tool_use", id=f"toolu_{i + 1}", name=name, input=tool_input)
+        for i, (name, tool_input) in enumerate(calls)
+    ]
+    return BetaMessage(
+        id="msg_tool",
+        type="message",
+        role="assistant",
+        model=model,
+        content=content,
+        stop_reason="tool_use",
+        stop_sequence=None,
+        usage=BetaUsage(input_tokens=12, output_tokens=8),
+    )
+
+
 def refusal_message(model: str = "claude-opus-5") -> BetaMessage:
     """A message the safety classifiers declined, with a partial text block."""
     return BetaMessage(

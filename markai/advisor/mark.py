@@ -40,7 +40,7 @@ from markai.advisor.guardrails import (
     plain_punctuation,
     strip_disclaimer,
 )
-from markai.advisor.log_tool import LOG_TOOL, run_log_tool
+from markai.advisor.log_tool import LOG_TOOL, add_dedupe_key, run_log_tool
 from markai.advisor.prompt_builder import (
     build_business_block,
     build_citations,
@@ -345,6 +345,11 @@ class MarkAdvisor:
         # is ever wrong.
         effort = effort_for(question, retrieval, flags, bool(attachments), self.settings)
 
+        # One turn, not one entry per call: parallel tool use (or the model reconsidering
+        # across iterations) can call `property_log` add twice for the same thing the
+        # landlord said once. Answered from the first save instead of writing it twice.
+        logged_adds: dict[tuple[str, ...], dict[str, Any]] = {}
+
         for iteration in range(MAX_TOOL_ITERATIONS):
             cache_messages = reuses_history or iteration > 0
             try:
@@ -442,13 +447,19 @@ class MarkAdvisor:
                     name = block.name
                     tool_calls.append(name)
                     yield StreamEvent("tool_call", name)
+                    tool_input = dict(block.input or {})
+                    dedupe_key = name == LOG_TOOL["name"] and add_dedupe_key(tool_input)
                     try:
-                        if name == EPISODE_TOOL["name"]:
-                            result = run_episode_tool(self.retriever, dict(block.input or {}))
+                        if dedupe_key and dedupe_key in logged_adds:
+                            result = logged_adds[dedupe_key]
+                        elif name == EPISODE_TOOL["name"]:
+                            result = run_episode_tool(self.retriever, tool_input)
                         elif name == LOG_TOOL["name"]:
-                            result = run_log_tool(log, dict(block.input or {}))
+                            result = run_log_tool(log, tool_input)
+                            if dedupe_key:
+                                logged_adds[dedupe_key] = result
                         else:
-                            result = dispatch_tool(name, dict(block.input or {}))
+                            result = dispatch_tool(name, tool_input)
                     except Exception as exc:  # the dispatchers are defensive; belt and braces
                         result = {"error": str(exc)}
                     results.append(

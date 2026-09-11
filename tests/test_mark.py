@@ -13,7 +13,13 @@ from markai.advisor.mark import (
     MissingApiKeyError,
 )
 from markai.knowledge.retriever import Retriever
-from tests.fakes import FakeAnthropic, refusal_message, text_message, tool_use_message
+from tests.fakes import (
+    FakeAnthropic,
+    parallel_tool_use_message,
+    refusal_message,
+    text_message,
+    tool_use_message,
+)
 
 PROMPT = "You are Mark. " + "Answer from the sources. " * 40
 
@@ -496,6 +502,38 @@ def test_the_log_is_written_to_and_read_back_through_the_tool_loop(settings, sto
 
     assert response.tool_calls == ["property_log"]
     assert [e.what for e in log.recent()] == ["Water bill"]
+    assert log.totals()["out"] == 340
+    ledger.close_db()
+
+
+def test_a_repeated_add_call_in_one_turn_only_logs_once(settings, store, tmp_path):
+    """Parallel tool use can put two identical `add` calls in one turn. One entry, not two."""
+    from markai.web.ledger import Ledger, OwnerLog
+
+    ledger = Ledger(tmp_path / "ledger.db")
+    log = OwnerLog(ledger, "account:abc", [])
+    add_args = {
+        "action": "add",
+        "kind": "bill",
+        "what": "Water bill",
+        "amount": 340,
+        "vendor": "",
+        "date": "2026-09-03",
+        "property": "",
+        "status": "done",
+        "search": "",
+        "since_days": 0,
+        "entry_id": "",
+    }
+    finals = [
+        parallel_tool_use_message([("property_log", add_args), ("property_log", dict(add_args))]),
+        text_message("Logged: $340 water bill, Sept 3."),
+    ]
+    advisor, client = build_advisor(settings, store, finals)
+    response = advisor.ask("The water bill was $340 on the 3rd", log=log)
+
+    assert response.tool_calls == ["property_log", "property_log"]
+    assert [e.what for e in log.recent()] == ["Water bill"], "one thing said once is one entry"
     assert log.totals()["out"] == 340
     ledger.close_db()
 
