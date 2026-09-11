@@ -344,6 +344,7 @@ def _merge_episodes(
 ) -> list[YouTubeEpisode]:
     episodes: list[YouTubeEpisode] = []
     seen: set[str] = set()
+    skip = set(section.skip_video_ids)
 
     def add(entry: YouTubeEpisode) -> None:
         try:
@@ -351,7 +352,7 @@ def _merge_episodes(
         except IngestError:
             episodes.append(entry)  # keep it so the caller can report the failure
             return
-        if video_id in seen:
+        if video_id in seen or video_id in skip:
             return
         seen.add(video_id)
         episodes.append(entry)

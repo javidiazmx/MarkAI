@@ -303,6 +303,27 @@ def test_two_channels_are_merged_and_hand_written_titles_win(tmp_path, settings)
     assert first.episode == "212"
 
 
+def test_skip_video_ids_never_reach_the_episode_list(tmp_path):
+    """Not a missing-captions video (a normal, permanent failure) - one YouTube blocks on
+    every route and every address, which otherwise spends a retry slot every single run."""
+    from markai.ingest.youtube import _merge_episodes
+
+    section = YouTubeSection(
+        channels=["https://www.youtube.com/@a"],
+        episodes=[YouTubeEpisode(url="blocked0000")],
+        skip_video_ids=["blocked0000", "blocked0001"],
+    )
+    listings = {
+        "https://www.youtube.com/@a": [
+            {"id": "blocked0001", "title": "Also blocked"},
+            {"id": "fine0000000", "title": "Fine"},
+        ],
+    }
+    episodes = _merge_episodes(section, tmp_path, tmp_path, lister=lambda url, limit: listings[url])
+    assert len(episodes) == 1
+    assert extract_video_id(episodes[0].url) == "fine0000000"
+
+
 @respx.mock(assert_all_called=False)
 def test_ingest_reads_videos_from_a_channel(respx_mock, tmp_path, settings):
     respx_mock.get("https://www.youtube.com/oembed").mock(

@@ -235,6 +235,12 @@ youtube:
   channel_name: Straight Up Chicago Investor
   urls_file: sources/youtube_urls.txt   # opcional, para videos sueltos de otros canales
   episodes: []                          # opcional, para nombrar un video a mano
+  # Videos que YouTube bloquea en cada intento (IP nueva, cookies, VPN, hasta la API oficial
+  # con OAuth del dueno del canal) - no es un problema de credenciales, es este video en
+  # particular. Sin esto, cada corrida gasta sus 2 reintentos consecutivos aqui y se detiene
+  # antes de llegar al resto del catalogo.
+  skip_video_ids:
+    - I3XTfirzDs0
 
 # ---------------------------------------------------------------------------------------
 # PODCAST

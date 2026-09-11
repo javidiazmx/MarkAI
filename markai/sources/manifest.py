@@ -89,6 +89,10 @@ class YouTubeSection(BaseModel):
     channel_name: str | None = None
     urls_file: str | None = None
     episodes: list[YouTubeEpisode] = Field(default_factory=list)
+    # Video ids that are never worth retrying: not missing captions (that is a normal,
+    # permanent failure already handled), but a request YouTube blocks on every route and
+    # every address tried, which otherwise burns a retry slot that costs the whole run.
+    skip_video_ids: list[str] = Field(default_factory=list)
 
     def has_sources(self) -> bool:
         return bool(self.channels or self.episodes or self.urls_file)
