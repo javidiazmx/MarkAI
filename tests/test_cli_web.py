@@ -422,7 +422,7 @@ def test_the_usage_line_shows_writes_beside_reads():
 # --- the stream the page has to parse ------------------------------------------------------
 
 
-def test_the_server_separates_frames_with_crlf_and_the_page_expects_it():
+def test_the_server_separates_frames_with_crlf_and_the_page_expects_it(tmp_path):
     """Every answer arrived, was billed, and rendered as an empty bubble.
 
     sse-starlette ends every line with CRLF, so frames are separated by "\\r\\n\\r\\n". The
@@ -433,7 +433,7 @@ def test_the_server_separates_frames_with_crlf_and_the_page_expects_it():
     import re
     from pathlib import Path
 
-    settings = Settings(_env_file=None, data_dir="/tmp/markai-sse-check")
+    settings = Settings(_env_file=None, data_dir=tmp_path / "markai-sse-check")
     settings.ensure_dirs()
     advisor = FakeAdvisor("Chicago gives you 45 days.")
     client = TestClient(create_app(settings=settings, advisor=advisor))

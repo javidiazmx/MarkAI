@@ -44,6 +44,23 @@ HEAT_SEGMENTS = [
 
 
 @pytest.fixture(autouse=True)
+def no_real_env_file(monkeypatch):
+    """`Settings()` must never read this developer's real `.env`.
+
+    The stated convention is `Settings(_env_file=None, ...)` in a test - but every CLI test
+    goes through `runner.invoke(app, [...])`, which calls the CLI's own `_settings()`, a bare
+    `Settings()` with no override. `env_file` is a fixed absolute path on the class
+    (`markai/config.py`), so on a machine with a real `.env` configured (this one has real
+    `MARKAI_LEAD_EMAIL_TO`/SMTP settings), those real values leak into `mark leads`/`mark
+    doctor` output for every field a test doesn't itself monkeypatch an env var for - a false
+    failure that has nothing to do with the test's own logic.
+    """
+    from markai.config import Settings
+
+    monkeypatch.setitem(Settings.model_config, "env_file", None)
+
+
+@pytest.fixture(autouse=True)
 def offline(monkeypatch):
     """No real seconds and no real network.
 
@@ -62,6 +79,32 @@ def offline(monkeypatch):
         raise youtube.RateLimitedError(f"stubbed: no network in tests ({url})")
 
     monkeypatch.setattr(youtube, "_ytdlp_extract", blocked)
+
+
+@pytest.fixture(autouse=True)
+def plain_console(monkeypatch):
+    """`mark`'s output, asserted on as plain text, with no ANSI in it to strip.
+
+    `NO_COLOR` alone does not do this: Rich's Windows terminal detection can decide the
+    process is attached to a real console (checking the OS console handle, not
+    `sys.stdout.isatty()`) even though `CliRunner` has swapped in a non-tty capture
+    stream, so `console.is_terminal` comes back true and bold/dim SGR codes still go out
+    even with color disabled. `force_terminal=False` is the one setting that overrides
+    that detection outright, which is why every test-time console gets rebuilt with it
+    rather than trusting environment variables Rich might second-guess.
+
+    ``width=200`` too: a non-terminal Console falls back to 79 columns, and a table with
+    several columns (``mark leads list``'s When/Name/Email/Why/State/Why-not, six wide)
+    folds a long cell - "javier@example.com" - across a line break at that width, which
+    breaks a plain `in result.stdout` substring check without the underlying data being
+    wrong at all. Wide enough that nothing this project prints wraps.
+    """
+    import markai.cli as cli
+
+    monkeypatch.setattr(cli, "console", cli.Console(force_terminal=False, no_color=True, width=200))
+    monkeypatch.setattr(
+        cli, "err", cli.Console(stderr=True, force_terminal=False, no_color=True, width=200)
+    )
 
 
 @pytest.fixture
