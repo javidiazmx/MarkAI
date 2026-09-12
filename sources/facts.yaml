@@ -1,4 +1,74 @@
 ordinances:
+  - id: mined-100
+    jurisdiction: "Chicago"
+    topic: "carbon monoxide detector located"
+    rule: "- Carbon monoxide detector must be located within 15 feet of any room used for sleeping purposes."
+    citation: "What are the requirements to qualify for the Section 8 housing program?"
+    url: "https://www.gcrealtyinc.com/blog/what-are-the-requirements-to-qualify-for-the-section-8-housing-program"
+    notes: "From: - Carbon monoxide detector must be located within 15 feet of any room used for sleeping purposes. (stated in 2 of your sources)"
+  - id: mined-98
+    jurisdiction: "Cook County"
+    topic: "Second court date ERP extension"
+    rule: "At the second court date a tenant may request an extension to continue using ERP resources, up to 30 days."
+    citation: "Everything You Don\u2019t Know about Cook County Evictions in 2024"
+    url: "https://www.gcrealtyinc.com/blog/everything-you-dont-know-about-cook-county-evictions-in-2024"
+    notes: "From: This extension can be up to 30 days. (stated in 2 of your sources)"
+  - id: mined-96
+    jurisdiction: "Illinois"
+    topic: "Out-of-state LLC registration"
+    rule: "An LLC formed outside Illinois that owns and rents Illinois property must register in Illinois as a foreign entity, or it may lack standing to file an eviction."
+    citation: "Landlords Counter Mayor Johnson's Proposal, Chicag\u2026 Bears Stadium, Sump Pumps, and Out of State LLC'"
+    url: "https://www.gcrealtyinc.com/blog/landlords-counter-mayor-johnsons-proposal-chicag-bears-stadium-sump-pumps-and-out-of-state-llc"
+    notes: "From: That may be fine for entity structure, but if that LLC owns rental property and is doing business in Illinois, it needs to be registered in Illinois as a foreign entity. (stated in 2 of your sources)"
+  - id: mined-95
+    jurisdiction: "Unincorporated Cook County"
+    topic: "Contractor registration"
+    rule: "All contractors performing work in unincorporated Cook County must register with the Cook County Department of Building and Zoning"
+    citation: "Cook County Department of Building and Zoning"
+    url: "https://www.cookcountyil.gov/service-groups/permits"
+    notes: "From: All contractors performing work in unincorporated Cook County are required to register with the Cook County Department of Building and Zonin\u2026 (stated in 2 of your sources)"
+  - id: mined-94
+    jurisdiction: "Illinois"
+    topic: "Assistance animals"
+    rule: "Assistance animals are not pets; no certification or training required, no size/weight/breed restrictions based on speculation, no limit to number if disability-related need exists, but the animal must be vaccinated and housebroken. Providers cannot charge pet fees, deposits, or rent, require liability insurance, deny based on breed alone, or deny based on other residents' allergies without evidence of actual direct threat."
+    citation: "Illinois Department of Human Rights \u2013 Disability Rights"
+    url: "https://dhr.illinois.gov/rights/disability-rights.html"
+    notes: "From: - Assistance animals can be any type of animal\n- There are no size, weight, or breed restrictions based on speculation\n- You do not need certification or training\n- There is no limit to number if disability-related need exists\n- Your assistance animal must be vaccinated and housebroken\nProviders cannot:\n- Charge pet fees, deposits, or rent\n- Require liability insurance\n- Deny based on breed alone\n- Deny based on other residents' allergies without evidence of actual direct threat (stated in 2 of your sources)"
+  - id: mined-92
+    jurisdiction: "Cook County (unincorporated)"
+    topic: "Multi-dwelling unit registration"
+    rule: "Any building with more than four residential units, including condominiums, must register as a multi-dwelling unit."
+    citation: "SEC 102-10\u2026 (adopted 2015)"
+    url: "https://www.cookcountyil.gov/service-groups/property-and-housing"
+    notes: "From: Multi Dwelling RegistrationAny building that has more than four residential units including condominiums (NEWLY ADOPTED AS OF 2015 SEC102-10\u2026 (stated in 2 of your sources)"
+  - id: mined-91
+    jurisdiction: "Federal (HUD/FHA)"
+    topic: "Service and assistance animal fees"
+    rule: "Landlords may not charge pet fees or pet rent for service or assistance animals, but may charge a security deposit and seek money for animal-caused damage."
+    citation: "Service Animals And Assistance Animals"
+    url: "https://www.gcrealtyinc.com/blog/service-animals-and-assistance-animals"
+    notes: "From: Service and assistance animals are not technically pets and owners do not have to pay any pet fees or pet rent. (stated in 2 of your sources)"
+  - id: mined-90
+    jurisdiction: "Kane County, IL"
+    topic: "ADA grievance filing deadline"
+    rule: "ADA discrimination complaints must be submitted no later than 60 calendar days after the alleged violation."
+    citation: "Kane County ADA Grievance Procedure"
+    url: "https://www.kanecountyil.gov/Documents/Department%20of%20Human%20Resources%20Management/ADA%20Complaints.pdf"
+    notes: "From: The complaint should be submitted by the grievant and/or his/her designee as soon as possible but no \nlater than 60 calendar days after the alleged violation to: (stated in 2 of your sources)"
+  - id: mined-87
+    jurisdiction: "Chicago"
+    topic: "rent increases submitted between"
+    rule: "Rent increases must be submitted between 60 and 120 days prior to the lease end date."
+    citation: "Requesting a Section 8 Rent Increase"
+    url: "https://www.gcrealtyinc.com/blog/requesting-a-section-8-rent-increase"
+    notes: "From: Rent increases must be submitted between 60 and 120 days prior to the lease end date. (stated in 2 of your sources)"
+  - id: mined-86
+    jurisdiction: "Des Plaines, IL"
+    topic: "Rent limits"
+    rule: "There is no limit on the rent amount a landlord may ask from a tenant."
+    citation: "What You Must Know About Renting Your Property In Des Plaines"
+    url: "https://www.gcrealtyinc.com/blog/what-you-must-know-about-renting-your-property-in-des-plaines"
+    notes: "From: There is no limit to what amount you can ask for but the renter pool will dictate supply and demand reaction. (stated in 2 of your sources)"
   - id: mined-85
     jurisdiction: "Chicago"
     topic: "mounted wall top detector"
@@ -497,6 +567,41 @@ ordinances:
     url: "https://traffic.libsyn.com/secure/straightupchicagoinvestor/SUCI168.mp3"
     notes: "From: 02:22 House Provider Tip: Be aware of the new Illinois law requiring 10-year smoke detectors!"
 costs:
+  - id: mined-99
+    item: "Leasing timeline"
+    low: 22
+    high: 45
+    unit: "days"
+    source: "Renting Your Property in Oak Lawn: Rental Market Guide"
+    notes: "From: Most condos and small townhomes lease within 22-30 days, while single\u2011family homes typically rent in 30-45 days. (stated in 2 of your sources)"
+  - id: mined-97
+    item: "Real estate transfer tax"
+    low: 0.75
+    high: 0.75
+    unit: "percent of sale price"
+    source: "Housing Taxes in Chicago: What Landlords Need to Know"
+    notes: "From: It is 0.75% of the property's sale price, split between the buyer and seller. (stated in 2 of your sources)"
+  - id: mined-93
+    item: "Hot water heater replacement"
+    low: 1600
+    high: 1600
+    unit: "USD"
+    source: "Why a Good Chicagoland Property Manager Might Say No to You as a Client"
+    notes: "From: One unexpected cost (a $3,000 furnace replacement, a $1,600 hot water heater, an $800 village rental license requirement that lands with an (stated in 2 of your sources)"
+  - id: mined-89
+    item: "Maintenance labor fee"
+    low: 25
+    high: 40
+    unit: "USD per worker"
+    source: "Do I Need a Rental Property Management Company? A Guide For Chicago Real Estate Investors"
+    notes: "From: These prices are usually negotiated beforehand, but at times additional labor fees of $25 to $40 per worker, plus materials costs, are required. (stated in 2 of your sources)"
+  - id: mined-88
+    item: "Lease-up time by property type"
+    low: 18
+    high: 45
+    unit: "days"
+    source: "Renting Your Property in Skokie: Rental Market Guide"
+    notes: "From: Most condos and small townhomes lease within 18-25 days, while single\u2011family homes typically rent in 25-45 days. (stated in 2 of your sources)"
   - id: mined-29
     item: "Proposed rental registry fee"
     low: 20
