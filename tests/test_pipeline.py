@@ -8,7 +8,7 @@ import respx
 from markai.ingest.pipeline import IngestReport, plan_ingest, run_ingest
 from markai.knowledge.chunking import chunk_document
 from markai.knowledge.store import KnowledgeStore
-from markai.models import SourceKind
+from markai.models import Document, SourceKind
 from markai.sources.manifest import (
     PodcastEpisode,
     PodcastSection,
@@ -153,6 +153,131 @@ def test_prune_removes_sources_that_left_the_manifest(respx_mock, settings, toy_
         )
     assert stale.locator in pruned.pruned
     assert store.get_document(stale.id) is None
+    store.close()
+
+
+class _PerVideoTranscriptApi:
+    """Captions that vary by video id, so two different videos are never mistaken for
+    duplicates of each other (``FakeTranscriptApi`` returns identical text for every id,
+    which is fine for tests with a single video but collides here)."""
+
+    def fetch(self, video_id: str, languages: list[str] | None = None):
+        from tests.fakes import FakeFetched, FakeSnippet
+
+        return FakeFetched([FakeSnippet(f"Unique commentary for video {video_id}", 0.0, 5.0)])
+
+
+def _channel_manifest(channel: str, channel_name: str) -> SourceManifest:
+    """A manifest scoped to a single channel - exactly the shape of the temporary,
+    channel-scoped manifests used to split a big YouTube backlog across parallel
+    ingest processes (one channel per process, merged back into the same database)."""
+    return SourceManifest(youtube=YouTubeSection(channels=[channel], channel_name=channel_name))
+
+
+@respx.mock(assert_all_called=False)
+def test_prune_never_deletes_another_channels_videos(respx_mock, settings):
+    """Two concurrent ingest runs, each pointed at a manifest covering only one of two
+    YouTube channels. Neither passes --prune today, but if one ever did, "not in my
+    seen_ids" must never be read as "removed from the owner's sources" for a channel this
+    manifest never mentions at all - that would wipe out the other run's entire channel.
+    """
+    from markai.ingest.youtube import expand_channel
+
+    channel_a = "https://www.youtube.com/@straightupchicagoinvestor"
+    channel_b = "https://www.youtube.com/@markainleygcrealty"
+    video_a, video_b = "AAAAAAAAAAA", "BBBBBBBBBBB"
+
+    settings.ensure_dirs()
+    store = KnowledgeStore(settings.db_path)
+    expand_channel(
+        channel_a,
+        settings.youtube_cache_dir,
+        lister=lambda u, limit: [{"id": video_a, "title": "SUCI episode"}],
+    )
+    expand_channel(
+        channel_b,
+        settings.youtube_cache_dir,
+        lister=lambda u, limit: [{"id": video_b, "title": "Ainley episode"}],
+    )
+
+    manifest_a = _channel_manifest(channel_a, "Straight Up Chicago Investor")
+    manifest_b = _channel_manifest(channel_b, "Mark Ainley - GC Realty")
+
+    with httpx.Client() as client:
+        report_a = run_ingest(
+            manifest_a, store, None, settings, client=client, api=_PerVideoTranscriptApi()
+        )
+        report_b = run_ingest(
+            manifest_b, store, None, settings, client=client, api=_PerVideoTranscriptApi()
+        )
+    assert len(report_a.added) == 1
+    assert len(report_b.added) == 1
+    assert store.stats().documents_by_kind["youtube"] == 2
+
+    id_a = Document.make_id(SourceKind.YOUTUBE, f"https://www.youtube.com/watch?v={video_a}")
+    id_b = Document.make_id(SourceKind.YOUTUBE, f"https://www.youtube.com/watch?v={video_b}")
+
+    # Channel A's manifest never mentions channel B - a --prune run against it must leave
+    # channel B's video untouched.
+    with httpx.Client() as client:
+        pruned = run_ingest(
+            manifest_a, store, None, settings, prune=True, client=client, api=_PerVideoTranscriptApi()
+        )
+
+    assert pruned.pruned == []
+    assert store.get_document(id_a) is not None
+    assert store.get_document(id_b) is not None
+    store.close()
+
+
+@respx.mock(assert_all_called=False)
+def test_prune_still_removes_a_video_that_left_its_own_channel(respx_mock, settings):
+    """The scoping fix must not turn --prune into a no-op: a video the owner actually
+    dropped from a channel's manifest is still cleaned up, because it shares that
+    manifest's own channel name."""
+    from markai.ingest.youtube import expand_channel
+
+    channel = "https://www.youtube.com/@straightupchicagoinvestor"
+    kept_video, dropped_video = "CCCCCCCCCCC", "DDDDDDDDDDD"
+
+    settings.ensure_dirs()
+    store = KnowledgeStore(settings.db_path)
+    expand_channel(
+        channel,
+        settings.youtube_cache_dir,
+        lister=lambda u, limit: [
+            {"id": kept_video, "title": "Kept"},
+            {"id": dropped_video, "title": "Dropped"},
+        ],
+    )
+    manifest = _channel_manifest(channel, "Straight Up Chicago Investor")
+
+    with httpx.Client() as client:
+        first = run_ingest(
+            manifest, store, None, settings, client=client, api=_PerVideoTranscriptApi()
+        )
+    assert len(first.added) == 2
+
+    dropped_id = Document.make_id(
+        SourceKind.YOUTUBE, f"https://www.youtube.com/watch?v={dropped_video}"
+    )
+
+    # The channel listing shrinks to just the kept video (the owner un-published or the
+    # cache is refreshed) - re-cache it directly rather than forcing a real channel refresh.
+    expand_channel(
+        channel,
+        settings.youtube_cache_dir,
+        lister=lambda u, limit: [{"id": kept_video, "title": "Kept"}],
+        refresh=True,
+    )
+
+    with httpx.Client() as client:
+        pruned = run_ingest(
+            manifest, store, None, settings, prune=True, client=client, api=_PerVideoTranscriptApi()
+        )
+
+    assert f"https://www.youtube.com/watch?v={dropped_video}" in pruned.pruned
+    assert store.get_document(dropped_id) is None
     store.close()
 
 

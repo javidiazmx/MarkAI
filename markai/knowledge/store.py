@@ -265,6 +265,19 @@ class KnowledgeStore:
             rows = self._conn.execute(sql, params).fetchall()
         return {r["id"]: r["locator"] for r in rows}
 
+    def list_channels(self, kind: SourceKind) -> dict[str, str | None]:
+        """id -> channel for every stored document of one kind.
+
+        Used to scope orphan pruning to the channel(s) a manifest actually names, without
+        pulling a potentially enormous transcript ``text`` column into memory just to check
+        that.
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, channel FROM documents WHERE kind = ?", (kind.value,)
+            ).fetchall()
+        return {r["id"]: r["channel"] for r in rows}
+
     def delete_document(self, doc_id: str) -> None:
         with self._lock, self._conn:
             self._conn.execute("DELETE FROM chunks WHERE doc_id = ?", (doc_id,))

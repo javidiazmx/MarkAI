@@ -25,8 +25,10 @@ from markai.ingest.websites import ingest_websites, make_client
 from markai.ingest.youtube import (
     build_transcript_api,
     expand_channel,
+    extract_video_id,
     ingest_youtube,
     read_urls_file,
+    watch_url,
 )
 from markai.knowledge.chunking import chunk_document
 from markai.models import Document, IngestError, IngestFailure, SourceKind
@@ -283,7 +285,7 @@ def run_ingest(
                     IngestFailure(item.kind, item.locator, f"Could not save: {exc}", None)
                 )
 
-        _handle_orphans(store, only, seen_ids, prune, report, log)
+        _handle_orphans(store, manifest, settings, only, seen_ids, prune, report, log)
         report.embedded = _backfill_embeddings(store, embedder, settings, log).done
     finally:
         if owns_client:
@@ -615,8 +617,77 @@ def _backfill_embeddings(
     return result
 
 
+@dataclass
+class _YouTubeScope:
+    """What this manifest's YouTube section could plausibly have produced.
+
+    ``channel_names`` compares against the ``channel`` a stored Document was tagged with
+    (see ``ingest_youtube``, which stamps every video pulled from ``youtube.channels`` with
+    ``youtube.channel_name``) - not the channel URLs themselves, which are never the value
+    stored on a Document and so can never be compared against one directly.
+    """
+
+    channel_names: set[str]
+    locators: set[str]
+
+
+def _youtube_scope(manifest: SourceManifest, settings: Settings) -> _YouTubeScope:
+    """Build the scope used to decide whether a stored YouTube document is this manifest's
+    to prune.
+
+    Two independent ingest runs are sometimes pointed at manifests that each cover only one
+    of several channels (splitting a big channel backlog across parallel processes). Each
+    such manifest's ``seen_ids`` only ever contains its own channel's videos, so comparing
+    "not seen" against every stored YouTube document - regardless of which channel it
+    belongs to - would treat the other run's videos as removed and delete them.
+    """
+    channel_names: set[str] = set()
+    if manifest.youtube.has_sources() and manifest.youtube.channel_name:
+        # ``channel_name`` labels every video this section produces, however it was
+        # named (an explicit episode, a urls_file line, or a ``channels`` expansion) -
+        # see ``ingest_youtube``. A manifest with nothing configured for YouTube this run
+        # contributes no name at all, so a stray ``channel_name`` left over from an
+        # emptied-out section can never make an unrelated stored document look covered.
+        channel_names.add(manifest.youtube.channel_name.strip().lower())
+
+    locators: set[str] = set()
+    for entry in manifest.youtube.episodes:
+        try:
+            locators.add(watch_url(extract_video_id(entry.url)))
+        except IngestError:
+            continue
+    if manifest.youtube.urls_file:
+        try:
+            listed = read_urls_file(settings.project_root / manifest.youtube.urls_file)
+        except IngestError:
+            listed = []
+        for entry in listed:
+            try:
+                locators.add(watch_url(extract_video_id(entry.url)))
+            except IngestError:
+                continue
+    return _YouTubeScope(channel_names=channel_names, locators=locators)
+
+
+def _youtube_in_scope(locator: str, channel: str | None, scope: _YouTubeScope) -> bool:
+    """True only when this manifest could plausibly have produced this document.
+
+    Named explicitly (an episode entry or a urls_file line) always counts. Otherwise the
+    stored channel must match one this manifest's ``channels`` actually names via
+    ``channel_name`` - a document with no channel recorded, or a manifest that names no
+    channel at all, is never treated as covered. Failing closed here is the point: "not
+    seen this run" must never be read as "belongs to no one" for a channel this run never
+    even looked at.
+    """
+    if locator in scope.locators:
+        return True
+    return bool(channel) and channel.strip().lower() in scope.channel_names
+
+
 def _handle_orphans(
     store: Any,
+    manifest: SourceManifest,
+    settings: Settings,
     only: set[SourceKind] | None,
     seen_ids: set[str],
     prune: bool,
@@ -629,12 +700,31 @@ def _handle_orphans(
         logger.debug("could not list stored documents: %s", exc)
         return
 
+    candidates = [
+        (doc_id, locator)
+        for doc_id, locator in stored.items()
+        if doc_id not in seen_ids
+        and (only is None or any(doc_id.startswith(f"{k.value}-") for k in only))
+    ]
+
+    youtube_prefix = f"{SourceKind.YOUTUBE.value}-"
+    youtube_ids = [doc_id for doc_id, _ in candidates if doc_id.startswith(youtube_prefix)]
+    channel_by_id: dict[str, str | None] = {}
+    scope = _YouTubeScope(channel_names=set(), locators=set())
+    if youtube_ids:
+        scope = _youtube_scope(manifest, settings)
+        try:
+            channel_by_id = store.list_channels(SourceKind.YOUTUBE)
+        except Exception as exc:
+            logger.debug("could not read youtube channels for pruning: %s", exc)
+            # No channel information to compare against - never guess; every youtube
+            # candidate below is filtered out by _youtube_in_scope's default instead.
+
     orphans = []
-    for doc_id, locator in stored.items():
-        if doc_id in seen_ids:
-            continue
-        if only is not None and not any(doc_id.startswith(f"{k.value}-") for k in only):
-            continue
+    for doc_id, locator in candidates:
+        if doc_id.startswith(youtube_prefix):
+            if not _youtube_in_scope(locator, channel_by_id.get(doc_id), scope):
+                continue
         orphans.append((doc_id, locator))
 
     for doc_id, locator in orphans:
