@@ -62,6 +62,9 @@ class SitemapDiff:
     listed: list[str] = field(default_factory=list)
     stored: list[str] = field(default_factory=list)
     missing: list[str] = field(default_factory=list)
+    # Every URL the sitemap listed, before ``path_contains`` narrowed it - so an empty
+    # ``listed`` can be told apart from "the sitemap had pages, none in this section."
+    total_on_site: int = 0
 
     @property
     def coverage(self) -> float:
@@ -121,7 +124,9 @@ def diff_against_store(
     posts in there?" rather than "is the whole site in there?".
     """
     diff = SitemapDiff()
-    diff.sitemaps = discover_sitemaps(base_url, client)
+    # robots.txt commonly repeats the same "Sitemap:" line once per user-agent block; the
+    # loop below only needs each address once.
+    diff.sitemaps = list(dict.fromkeys(discover_sitemaps(base_url, client)))
 
     listed: list[str] = []
     for sitemap in diff.sitemaps:
@@ -129,9 +134,10 @@ def diff_against_store(
         if listed:
             break  # the first one that answers is the site's real index
 
+    diff.total_on_site = len(listed)
     known = {canonical_url(locator) for locator in store_locators.values()}
     for url in listed:
-        if path_contains and path_contains.lower() not in urlsplit(url).path.lower():
+        if path_contains and path_contains.strip("/").lower() not in urlsplit(url).path.lower():
             continue
         canon = canonical_url(url)
         if canon in diff.listed:

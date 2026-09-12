@@ -566,7 +566,10 @@ def _print_probe(url: str, rows: list[tuple[str, str]]) -> None:
 def sources_missing(
     url: str = typer.Argument(..., help="The site to check, e.g. https://www.gcrealtyinc.com"),
     section: str = typer.Option(
-        None, "--section", help='Only this part of the site, e.g. "/blog".'
+        None,
+        "--section",
+        help='Only this part of the site, e.g. "blog" (a leading slash works too, but some '
+        "bash-style shells on Windows rewrite it into a local path before Mark sees it).",
     ),
     write: str = typer.Option(
         None, "--write", help="Write the missing URLs to this file, one per line."
@@ -594,8 +597,16 @@ def sources_missing(
         diff = diff_against_store(url, locators, client, section)
 
     if not diff.listed:
+        if section and diff.total_on_site:
+            _fail(
+                f"The sitemap has {diff.total_on_site:,} pages, but none matched "
+                f"--section {section!r}.",
+                "Check the spelling. If you typed a leading slash (--section /blog) in a "
+                "bash-style shell on Windows, it may have been silently rewritten into a "
+                "local file path before Mark ever saw it - try --section blog instead.",
+            )
         _fail(
-            "The sitemap listed nothing for that site or section.",
+            "The sitemap listed nothing for that site.",
             f"Tried: {', '.join(diff.sitemaps[:3])}. Some sites publish none, in which case "
             "this check cannot be made.",
         )

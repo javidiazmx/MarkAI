@@ -101,6 +101,48 @@ def test_a_stored_url_matches_whatever_form_the_sitemap_uses(respx_mock):
 
 
 @respx.mock(assert_all_called=False)
+def test_a_section_matching_nothing_is_told_apart_from_an_empty_sitemap(respx_mock):
+    """The CLI needs to tell "this site has no sitemap" from "the sitemap has pages, just
+    none in that section" - the second one is a wrong --section value, not a dead site."""
+    _mock(respx_mock)
+    with httpx.Client() as client:
+        diff = diff_against_store("https://gc.test", {}, client, path_contains="/nonexistent")
+    assert diff.listed == []
+    assert diff.total_on_site == 4, "the sitemap had pages - none matched the section"
+
+
+@respx.mock(assert_all_called=False)
+def test_a_leading_or_missing_slash_matches_the_same_section(respx_mock):
+    """A shell that mangles a leading slash still has a sane value to try: no slash at all."""
+    _mock(respx_mock)
+    with httpx.Client() as client:
+        with_slash = diff_against_store("https://gc.test", {}, client, path_contains="/blog")
+    with httpx.Client() as client:
+        without_slash = diff_against_store("https://gc.test", {}, client, path_contains="blog")
+    assert with_slash.listed == without_slash.listed and len(with_slash.listed) == 3
+
+
+@respx.mock(assert_all_called=False)
+def test_a_sitemap_named_twice_in_robots_txt_is_only_tried_once(respx_mock):
+    """Some sites repeat "Sitemap:" once per user-agent block in robots.txt."""
+    respx_mock.get("https://gc.test/robots.txt").mock(
+        return_value=httpx.Response(
+            200,
+            text=(
+                "User-agent: *\nSitemap: https://gc.test/sitemap.xml\n\n"
+                "User-agent: GPTBot\nSitemap: https://gc.test/sitemap.xml\n"
+            ),
+        )
+    )
+    respx_mock.get("https://gc.test/sitemap.xml").mock(return_value=_xml(INDEX))
+    respx_mock.get("https://gc.test/sitemap-posts.xml").mock(return_value=_xml(POSTS))
+    respx_mock.get("https://gc.test/sitemap-pages.xml").mock(return_value=_xml(PAGES))
+    with httpx.Client() as client:
+        diff = diff_against_store("https://gc.test", {}, client)
+    assert diff.sitemaps == ["https://gc.test/sitemap.xml"]
+
+
+@respx.mock(assert_all_called=False)
 def test_a_site_with_no_sitemap_reports_nothing_listed(respx_mock):
     respx_mock.get("https://bare.test/robots.txt").mock(return_value=httpx.Response(404))
     respx_mock.get(url__regex=r"https://bare\.test/.*").mock(return_value=httpx.Response(404))
