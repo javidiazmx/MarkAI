@@ -773,7 +773,10 @@ def _events(
             elif event.type == "thinking":
                 yield {"event": "thinking", "data": json.dumps({"text": event.text})}
             elif event.type == "tool_call":
-                yield {"event": "tool", "data": json.dumps({"name": event.text})}
+                yield {
+                    "event": "tool",
+                    "data": json.dumps({"name": event.text, "input": event.tool_input or {}}),
+                }
             elif event.type == "error":
                 yield {"event": "error", "data": json.dumps({"message": event.text})}
                 return

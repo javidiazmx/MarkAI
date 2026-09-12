@@ -108,7 +108,13 @@
   .cites { margin-top: 8px; font-size: 13px; }
   .cites a, .cites span.nolink { display: block; padding: 5px 0; border-top: 1px dashed var(--line); color: inherit; }
   .badge { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 20px; background: var(--accent); color: var(--accent-ink); margin-right: 6px; text-transform: uppercase; letter-spacing: .04em; }
+  /* An ordinance page and a podcast anecdote carry very different weight; the badge should
+     say which one at a glance, not just repeat the same accent color for every kind. */
+  .badge-website { background: #2f6f4f; color: #fff; }
+  .badge-youtube { background: #b23b3b; color: #fff; }
+  .badge-podcast { background: #7a4fb2; color: #fff; }
   .meta { color: var(--muted); font-size: 12px; margin-top: 6px; }
+  .free-counter { color: var(--muted); font-size: 12px; padding: 4px 2px 0; }
   sup a { color: var(--accent); text-decoration: none; font-weight: 600; }
   .scrim {
     position: fixed; inset: 0; z-index: 20; display: flex; align-items: center;
@@ -464,6 +470,7 @@
     <button class="ghost" id="save-code" type="button">Save</button>
   </div>
   <div class="files" id="files" hidden></div>
+  <div class="free-counter" id="free-counter" hidden></div>
   <div class="row">
     <input id="file" type="file" multiple hidden
            accept="image/jpeg,image/png,image/gif,image/webp,application/pdf,text/plain,text/csv" />
@@ -762,7 +769,7 @@
       } else {
         node = el("span", "nolink", "");
       }
-      node.appendChild(el("span", "badge", c.kind));
+      node.appendChild(el("span", "badge badge-" + (c.kind || "website"), c.kind));
       node.appendChild(document.createTextNode(label));
       box.appendChild(node);
     });
@@ -825,6 +832,22 @@
     whoami.hidden = !signedIn;
     if (signedIn) {
       document.getElementById("whoami-name").textContent = account.name || account.email || "";
+    }
+    drawFreeCounter();
+  }
+
+  // A wall that appears with no warning reads as broken, not as an expected limit. A quiet
+  // running count near the input is the difference between "why did it stop" and "I knew
+  // that was coming."
+  var freeCounter = document.getElementById("free-counter");
+  function drawFreeCounter() {
+    var showing = account.required && !account.signed_in && account.free_left !== null &&
+      account.free_left !== undefined;
+    freeCounter.hidden = !showing;
+    if (showing) {
+      freeCounter.textContent = account.free_left === 1
+        ? "1 free question left"
+        : account.free_left + " free questions left";
     }
   }
 
@@ -995,7 +1018,7 @@
               usedTheLog = true;
               if (reasoning) reasoning.textContent = "Checking your log…";
             } else if (reasoning) {
-              reasoning.textContent = "Working out the numbers…";
+              reasoning.textContent = toolSummary(data.name, data.input || {});
             }
           } else if (name === "citations") {
             citations = data.citations || [];
@@ -1005,9 +1028,9 @@
             renderCitations(slot.wrap, citations);
             addActions(slot);
             var usage = data.usage || {};
-            var meta = el("div", "meta",
-              (data.model || "") + " · coverage " + (data.coverage || "?") +
-              " · " + (usage.output_tokens || 0) + " tokens out");
+            var meta = el("div", "meta", coverageLabel(data.coverage));
+            meta.title = (data.model || "") + " · coverage " + (data.coverage || "?") +
+              " · " + (usage.output_tokens || 0) + " tokens out";
             slot.wrap.appendChild(meta);
             loadThreads();  // the thread and its title exist only once an answer landed
             // Jay may have written something down while answering, so the panel is
@@ -1015,6 +1038,7 @@
             if (usedTheLog) { usedTheLog = false; loadLog(); }
             if (account.required && !account.signed_in) {
               account.free_left = Math.max((account.free_left || 0) - 1, 0);
+              drawFreeCounter();
               if (account.free_left === 0) {
                 slot.wrap.appendChild(el("div", "meta",
                   "One more question needs a free account. It takes a minute."));
@@ -1508,6 +1532,40 @@
   function money(value) {
     var sign = value < 0 ? "-" : "";
     return sign + "$" + Math.round(Math.abs(value)).toLocaleString();
+  }
+
+  // A number that just appears is a number nobody can sanity-check. Naming the tool's own
+  // inputs turns "Working out the numbers…" into something a landlord could catch a mistake
+  // in themselves - which is exactly the class of error this line exists to surface.
+  function toolSummary(name, input) {
+    if (name === "mortgage_payment") {
+      return "Mortgage calculator: " + money(input.principal || 0) + " @ " +
+        ((input.annual_rate || 0) * 100).toFixed(2).replace(/\.?0+$/, "") + "%, " +
+        (input.years || "?") + "yr";
+    }
+    if (name === "analyze_deal") {
+      var bits = ["Deal analysis: " + money(input.price || 0)];
+      if (input.down_payment_pct) {
+        bits.push(Math.round(input.down_payment_pct * 100) + "% down");
+      }
+      if (input.annual_rate) {
+        bits.push((input.annual_rate * 100).toFixed(2).replace(/\.?0+$/, "") + "%");
+      }
+      if (input.monthly_rent) bits.push(money(input.monthly_rent) + "/mo rent");
+      return bits.join(", ");
+    }
+    return "Working out the numbers…";
+  }
+
+  // The one signal that actually says "how much should you trust this," and it was being
+  // shown as raw jargon ("coverage covered") a landlord has no reason to know how to read.
+  var COVERAGE_LABELS = {
+    covered: "Well-covered by your sources",
+    weak: "Thin coverage in your sources - worth double-checking",
+    none: "Not covered by your sources"
+  };
+  function coverageLabel(coverage) {
+    return COVERAGE_LABELS[coverage] || "Coverage unknown";
   }
 
   // The sidebar button always speaks for the whole portfolio - the property filter lives

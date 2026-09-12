@@ -157,6 +157,9 @@ class StreamEvent:
     type: Literal["text", "thinking", "tool_call", "final", "error"]
     text: str = ""
     response: AdvisorResponse | None = None
+    # The tool's own arguments, for a "tool_call" event - so the page can say what Mark is
+    # actually computing (e.g. "$280,000 @ 6.75%, 30yr") instead of a vague status line.
+    tool_input: dict[str, Any] | None = None
 
 
 @dataclass
@@ -446,8 +449,8 @@ class MarkAdvisor:
                         continue
                     name = block.name
                     tool_calls.append(name)
-                    yield StreamEvent("tool_call", name)
                     tool_input = dict(block.input or {})
+                    yield StreamEvent("tool_call", name, tool_input=tool_input)
                     dedupe_key = name == LOG_TOOL["name"] and add_dedupe_key(tool_input)
                     try:
                         if dedupe_key and dedupe_key in logged_adds:
