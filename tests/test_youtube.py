@@ -375,6 +375,42 @@ def test_the_run_stops_once_youtube_starts_blocking(tmp_path, settings):
     assert "cached" in last.hint
 
 
+def test_the_delay_is_skipped_for_a_cache_hit_but_not_a_real_fetch(tmp_path, settings, monkeypatch):
+    """Replaying an already-cached prefix after a restart must not pay the politeness delay
+    meant for real network requests - a long resumed run is mostly cache hits."""
+    import markai.ingest.youtube as yt
+
+    waited: list[float] = []
+    monkeypatch.setattr(yt, "_sleep", lambda seconds: waited.append(seconds))
+
+    cached_video = "cached00000"
+    (tmp_path / f"{cached_video}.json").write_text(
+        json.dumps([{"text": "cached line", "start": 0.0, "duration": 3.0}]), encoding="utf-8"
+    )
+    section = YouTubeSection(
+        episodes=[
+            YouTubeEpisode(url="fresh000001", title="First"),
+            YouTubeEpisode(url=cached_video, title="Cached"),
+            YouTubeEpisode(url="fresh000002", title="Second fresh"),
+        ]
+    )
+    with httpx.Client() as client:
+        list(
+            yt.ingest_youtube(
+                section,
+                tmp_path,
+                client=client,
+                api=FakeTranscriptApi(),
+                project_root=settings.project_root,
+                delay_seconds=1.0,
+            )
+        )
+    assert waited == [1.0], (
+        "no wait before the first video (nothing to be polite about yet) "
+        "or the cache hit - only before the real fetch that follows it"
+    )
+
+
 def test_a_video_without_captions_does_not_trip_the_breaker(tmp_path, settings):
     """Missing captions are normal and must not look like rate limiting."""
     section = YouTubeSection(episodes=[YouTubeEpisode(url=f"vid{i:08d}") for i in range(12)])

@@ -750,9 +750,12 @@ def ingest_youtube(
             if log:
                 log(f"YouTube: {entry.title or video_id}")
 
-            if delay_seconds and index > 1:
+            already_local = bool(entry.transcript_file) or (cache_dir / f"{video_id}.json").exists()
+            if delay_seconds and index > 1 and not already_local:
                 # Politeness, and self-interest: hammering the caption endpoint is what got
-                # the machine blocked after 47 videos out of 1142.
+                # the machine blocked after 47 videos out of 1142. A cache hit or a hand-
+                # written transcript never touches the network, so waiting before one buys
+                # nothing - and on a long resumed run, most of the list is already cached.
                 _sleep(delay_seconds)
 
             try:
