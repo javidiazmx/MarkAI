@@ -18,7 +18,7 @@ from markai.ingest.youtube import (
     read_urls_file,
     watch_url,
 )
-from markai.models import Document, IngestError, IngestFailure
+from markai.models import Document, IngestError, IngestFailure, Segment
 from markai.sources.manifest import YouTubeEpisode, YouTubeSection
 from tests.fakes import FakeTranscriptApi
 
@@ -928,3 +928,44 @@ def test_no_api_client_skips_the_official_route_entirely(respx_mock, tmp_path, s
             if isinstance(r, Document)
         ]
     assert len(documents) == 1
+
+
+# --- atomic transcript cache writes ------------------------------------------------------
+
+
+def test_cache_write_leaves_no_temp_file_behind_on_success(tmp_path):
+    from markai.ingest.youtube import _cache_segments
+
+    video_id = "cleanupvid1"
+    _cache_segments(tmp_path, video_id, [Segment(start=0.0, end=1.0, text="hello")])
+
+    assert list(tmp_path.iterdir()) == [tmp_path / f"{video_id}.json"]
+    assert json.loads((tmp_path / f"{video_id}.json").read_text())[0]["text"] == "hello"
+
+
+def test_a_crash_between_the_write_and_the_rename_never_corrupts_the_cache(tmp_path, monkeypatch):
+    """The old direct ``write_text`` could leave a truncated file if it died mid-write.
+
+    Simulate the same failure window for the temp-file-plus-rename version: the new
+    content is fully written to the temp file, then the rename itself blows up. The
+    reader-visible cache file must come through untouched - still the complete old
+    content, never a partial new one.
+    """
+    from markai.ingest import youtube as yt
+
+    video_id = "atomicvid01"
+    cache_path = tmp_path / f"{video_id}.json"
+    old_payload = json.dumps([{"text": "old line", "start": 0.0, "duration": 1.0}])
+    cache_path.write_text(old_payload, encoding="utf-8")
+
+    def boom(_src, _dst):
+        raise OSError("simulated crash between write and rename")
+
+    monkeypatch.setattr(yt.os, "replace", boom)
+
+    with pytest.raises(OSError):
+        yt._cache_segments(tmp_path, video_id, [Segment(start=0.0, end=2.0, text="new line")])
+
+    assert cache_path.read_text(encoding="utf-8") == old_payload, (
+        "a crash mid-write must never leave the visible cache truncated or half-new"
+    )

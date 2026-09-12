@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import shutil
 import time
+import uuid
 from collections.abc import Callable, Iterator, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -875,10 +877,18 @@ def _segments_for(
 
 
 def _cache_segments(cache_dir: Path, video_id: str, segments: list[Segment]) -> None:
-    """Store captions so a re-run costs nothing, whichever route fetched them."""
-    (cache_dir / f"{video_id}.json").write_text(
-        json.dumps(
-            [{"text": s.text, "start": s.start, "duration": s.end - s.start} for s in segments]
-        ),
-        encoding="utf-8",
+    """Store captions so a re-run costs nothing, whichever route fetched them.
+
+    Written atomically: the JSON goes to a uniquely-named temp file next to the target,
+    then ``os.replace`` swaps it into place in one filesystem operation. Two concurrent
+    ingest processes caching the same video, or a crash mid-write, can then never leave a
+    reader looking at a truncated or interleaved cache file - it is always either the
+    previous complete cache or the new complete one.
+    """
+    cache_path = cache_dir / f"{video_id}.json"
+    payload = json.dumps(
+        [{"text": s.text, "start": s.start, "duration": s.end - s.start} for s in segments]
     )
+    tmp_path = cache_dir / f".{video_id}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
+    tmp_path.write_text(payload, encoding="utf-8")
+    os.replace(tmp_path, cache_path)
