@@ -241,6 +241,8 @@ youtube:
   # antes de llegar al resto del catalogo.
   skip_video_ids:
     - I3XTfirzDs0
+    - iAcf6m3trN0
+    - oGUpaJJdkPI
 
 # ---------------------------------------------------------------------------------------
 # PODCAST
