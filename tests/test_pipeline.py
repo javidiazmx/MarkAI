@@ -221,7 +221,13 @@ def test_prune_never_deletes_another_channels_videos(respx_mock, settings):
     # channel B's video untouched.
     with httpx.Client() as client:
         pruned = run_ingest(
-            manifest_a, store, None, settings, prune=True, client=client, api=_PerVideoTranscriptApi()
+            manifest_a,
+            store,
+            None,
+            settings,
+            prune=True,
+            client=client,
+            api=_PerVideoTranscriptApi(),
         )
 
     assert pruned.pruned == []
