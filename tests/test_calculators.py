@@ -104,6 +104,20 @@ def test_tool_descriptions_state_the_unit_for_every_rate():
         )
 
 
+def test_tool_descriptions_warn_against_dropping_digits():
+    # A behavioral audit found the model occasionally mis-transcribing a comma-formatted
+    # dollar figure into the tool call (e.g. $280,000 -> 80000), producing a plausible but
+    # wrong payment. The schema can't fix model reasoning, but every dollar-amount field the
+    # model has to copy a number into should spell out, with a worked example, that digits
+    # must not be dropped or rounded.
+    analyze_properties = TOOL_DEFINITIONS[0]["input_schema"]["properties"]
+    mortgage_properties = TOOL_DEFINITIONS[1]["input_schema"]["properties"]
+    for field, props in (("price", analyze_properties), ("principal", mortgage_properties)):
+        description = props[field]["description"]
+        assert "280,000" in description and "280000" in description
+        assert "drop" in description or "round" in description
+
+
 def test_dispatch_rejects_a_percent_where_a_fraction_belongs():
     result = dispatch_tool(
         "mortgage_payment", {"principal": 225000, "annual_rate": 6.5, "years": 30}

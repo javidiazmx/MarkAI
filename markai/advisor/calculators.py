@@ -188,7 +188,13 @@ def analyze_deal(
 
 
 _ANALYZE_PROPERTIES = {
-    "price": {"type": "number", "description": "Purchase price in dollars."},
+    "price": {
+        "type": "number",
+        "description": (
+            "Purchase price in dollars, copied digit-for-digit from what the user gave. "
+            "$280,000 is 280000, not 28000 or 80000 - do not round or drop digits."
+        ),
+    },
     "down_payment_pct": {
         "type": "number",
         "description": (
@@ -282,7 +288,12 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "properties": {
                 "principal": {
                     "type": "number",
-                    "description": "Loan amount in dollars (price minus down payment).",
+                    "description": (
+                        "Loan amount in dollars (price minus down payment, or the amount the "
+                        "user stated directly). Copy it digit-for-digit: $280,000 is 280000, "
+                        "not 28000 or 80000. Do not round or drop digits when converting a "
+                        "comma-formatted dollar amount into this field."
+                    ),
                 },
                 "annual_rate": {
                     "type": "number",
