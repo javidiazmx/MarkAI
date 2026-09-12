@@ -115,6 +115,10 @@
   .badge-podcast { background: #7a4fb2; color: #fff; }
   .meta { color: var(--muted); font-size: 12px; margin-top: 6px; }
   .free-counter { color: var(--muted); font-size: 12px; padding: 4px 2px 0; }
+  /* A client-side file rule ("too big", "too many") is not Jay saying anything - it never
+     reached the model at all. Routing it through the chat log as a "Jay" bubble made a
+     local validation check look like the advisor itself had an error. */
+  .file-notice { color: #a33; font-size: 12px; padding: 4px 2px 0; }
   sup a { color: var(--accent); text-decoration: none; font-weight: 600; }
   .scrim {
     position: fixed; inset: 0; z-index: 20; display: flex; align-items: center;
@@ -305,7 +309,10 @@
     footer { left: var(--side); }
     .burger, .side-close { display: none; }
   }
-  .gate { max-width: 780px; margin: 0 auto 8px; display: none; gap: 8px; }
+  .gate { max-width: 780px; margin: 0 auto 8px; display: flex; gap: 8px; }
+  /* Same story as .scrim above: an inline style.display override once bypassed this and
+     could leave the gate invisible-but-present again if the rule order ever shifted. */
+  .gate[hidden] { display: none; }
   .gate input { flex: 1; padding: 9px 11px; border: 1px solid var(--line); border-radius: 9px; background: var(--bg); color: var(--ink); font: inherit; }
   .err { color: #b3261e; }
 </style>
@@ -464,12 +471,13 @@
 </main>
 
 <footer>
-  <div class="gate" id="gate">
+  <div class="gate" id="gate" hidden>
     <label class="vh" for="code">Access code</label>
     <input id="code" type="password" placeholder="Access code" autocomplete="off" />
     <button class="ghost" id="save-code" type="button">Save</button>
   </div>
   <div class="files" id="files" hidden></div>
+  <div class="file-notice" id="file-notice" hidden aria-live="polite"></div>
   <div class="free-counter" id="free-counter" hidden></div>
   <div class="row">
     <input id="file" type="file" multiple hidden
@@ -664,6 +672,7 @@
     var row = el("div", "acts");
     var copy = el("button", null, "Copy");
     copy.type = "button";
+    copy.setAttribute("aria-live", "polite");
     copy.addEventListener("click", function () {
       var text = slot.bubble.textContent || "";
       function done(ok) { copy.textContent = ok ? "Copied" : "Select and copy"; }
@@ -677,10 +686,13 @@
     row.appendChild(copy);
 
     var said = el("span", "said", "");
+    said.setAttribute("aria-live", "polite");
     function rate(value, button, other) {
       return async function () {
         button.classList.add("on");
+        button.setAttribute("aria-pressed", "true");
         other.classList.remove("on");
+        other.setAttribute("aria-pressed", "false");
         said.textContent = value === "up" ? "Thanks." : "Noted. Mark reads these.";
         try {
           await fetch("/api/feedback", {
@@ -696,6 +708,8 @@
     up.type = down.type = "button";
     up.title = "This helped";
     down.title = "This missed";
+    up.setAttribute("aria-pressed", "false");
+    down.setAttribute("aria-pressed", "false");
     up.addEventListener("click", rate("up", up, down));
     down.addEventListener("click", rate("down", down, up));
     row.appendChild(up);
@@ -1190,23 +1204,30 @@
     fileInput.click();
   });
 
+  var fileNotice = document.getElementById("file-notice");
+  function noteFile(text) {
+    fileNotice.textContent = text;
+    fileNotice.hidden = false;
+  }
+
   fileInput.addEventListener("change", async function () {
     var chosen = Array.prototype.slice.call(fileInput.files || []);
     fileInput.value = "";
+    fileNotice.hidden = true;
     for (var i = 0; i < chosen.length; i++) {
       var file = chosen[i];
       if (pending.length >= MAX_FILES) {
-        note("Up to " + MAX_FILES + " files at a time.");
+        noteFile("Up to " + MAX_FILES + " files at a time.");
         break;
       }
       if (file.size > MAX_PER_FILE) {
-        note(file.name + " is too big. The limit is 8 MB per file.");
+        noteFile(file.name + " is too big. The limit is 8 MB per file.");
         continue;
       }
       try {
         pending.push(await readFile(file));
       } catch (error) {
-        note(String(error.message || error));
+        noteFile(String(error.message || error));
       }
     }
     drawFiles();
@@ -1430,6 +1451,7 @@
       drop.title = "Remove";
       drop.setAttribute("aria-label", "Remove " + item.label);
       drop.addEventListener("click", async function () {
+        if (!window.confirm("Remove \"" + item.label + "\"?")) return;
         try {
           await fetch("/api/properties/" + encodeURIComponent(item.id), {
             method: "DELETE", headers: headers()
@@ -1695,6 +1717,7 @@
     drop.title = "Delete";
     drop.setAttribute("aria-label", "Delete log entry: " + item.what);
     drop.addEventListener("click", async function () {
+      if (!window.confirm("Delete \"" + item.what + "\"?")) return;
       try {
         await fetch("/api/log/" + encodeURIComponent(item.id), {
           method: "DELETE", headers: headers()
@@ -1761,12 +1784,12 @@
     try {
       var response = await fetch("/api/status", { headers: headers() });
       if (response.status === 401) {
-        gate.style.display = "flex";
+        gate.hidden = false;
         document.getElementById("sub").textContent = "Enter the access code to start.";
         return;
       }
       var data = await response.json();
-      gate.style.display = data.access_code_required && !accessCode() ? "flex" : "none";
+      gate.hidden = !(data.access_code_required && !accessCode());
       // Corpus counts are operator diagnostics, not something a landlord needs to read.
       // `mark status` and `mark audit` are where they belong.
       // The identity notice is no longer permanent - it rides with a legal answer. A
