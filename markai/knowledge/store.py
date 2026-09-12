@@ -111,6 +111,12 @@ class KnowledgeStore:
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
+        # WAL still lets only one writer at a time, and that writer may be a different OS
+        # process (two concurrent `mark ingest` runs against the same data/markai.db, say).
+        # Python's sqlite3 default connect-timeout is 5s; a generous, explicit busy_timeout
+        # lets SQLite's own retry loop ride out ordinary contention windows instead of a
+        # losing writer raising "database is locked" and its document silently going missing.
+        self._conn.execute("PRAGMA busy_timeout=30000")
         with self._conn:
             self._conn.executescript(SCHEMA)
         logger.debug("knowledge store opened at %s", self.db_path)
@@ -170,14 +176,14 @@ class KnowledgeStore:
 
     # --- documents -------------------------------------------------------------------------
 
-    def upsert_document(
+    def _write_document_rows(
         self,
         doc: Document,
         chunks: list[Chunk],
-        embeddings: list[list[float]] | None = None,
-        embedding_model: str | None = None,
-    ) -> None:
-        """Replace ``doc`` and all of its chunks in a single transaction."""
+        embeddings: list[list[float]] | None,
+        embedding_model: str | None,
+    ) -> int:
+        """Delete ``doc``'s old chunks and insert its new rows. Caller owns the transaction."""
         rows = []
         for i, chunk in enumerate(chunks):
             blob = None
@@ -200,21 +206,97 @@ class KnowledgeStore:
                     model,
                 )
             )
+        self._conn.execute("DELETE FROM chunks WHERE doc_id = ?", (doc.id,))
+        self._conn.execute(
+            "INSERT OR REPLACE INTO documents (id, kind, title, locator, text, segments_json,"
+            " link, published_at, episode, channel, metadata_json, content_hash, updated_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            self._doc_row(doc),
+        )
+        self._conn.executemany(
+            "INSERT INTO chunks (id, doc_id, idx, text, start_char, end_char, start_time,"
+            " end_time, heading, embedding, embedding_model)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            rows,
+        )
+        return len(rows)
+
+    def upsert_document(
+        self,
+        doc: Document,
+        chunks: list[Chunk],
+        embeddings: list[list[float]] | None = None,
+        embedding_model: str | None = None,
+    ) -> None:
+        """Replace ``doc`` and all of its chunks in a single transaction."""
         with self._lock, self._conn:
-            self._conn.execute("DELETE FROM chunks WHERE doc_id = ?", (doc.id,))
-            self._conn.execute(
-                "INSERT OR REPLACE INTO documents (id, kind, title, locator, text, segments_json,"
-                " link, published_at, episode, channel, metadata_json, content_hash, updated_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                self._doc_row(doc),
-            )
-            self._conn.executemany(
-                "INSERT INTO chunks (id, doc_id, idx, text, start_char, end_char, start_time,"
-                " end_time, heading, embedding, embedding_model)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                rows,
-            )
-        logger.debug("upserted document %s with %d chunks", doc.id, len(rows))
+            n = self._write_document_rows(doc, chunks, embeddings, embedding_model)
+        logger.debug("upserted document %s with %d chunks", doc.id, n)
+
+    def store_if_new_or_changed(
+        self,
+        doc: Document,
+        chunks: list[Chunk],
+        embeddings: list[list[float]] | None = None,
+        embedding_model: str | None = None,
+        force: bool = False,
+    ) -> tuple[str, str | None]:
+        """Atomically dedup-check ``doc`` against what is already stored, then write it.
+
+        Two writer *processes* (not just threads) can each run the ingest pipeline's own
+        "does a twin already exist" check, both see no twin, and both decide to insert -
+        the classic check-then-act race, now reachable across processes because there is
+        no in-process lock to serialize them. This wraps the check and the write in one
+        ``BEGIN IMMEDIATE`` transaction, which grabs SQLite's write lock *before* the
+        SELECTs instead of the default deferred transaction (which would only grab it at
+        the first write, after both processes had already read "no twin"). So the loser of
+        the race blocks until the winner commits, then re-runs the same check and sees the
+        winner's row - it never inserts a second copy.
+
+        A schema-level ``UNIQUE(content_hash)`` constraint was considered instead, but it
+        would only apply to a freshly created database - the live ``data/markai.db`` this
+        is meant to protect is already populated and actively growing under a running
+        ingest, and migrating an existing table's constraints on top of concurrent writers
+        is a bigger, riskier change than a transaction that only wraps the check-and-insert
+        (chunking and embedding still happen outside the lock, so ordinary single-process
+        runs pay no extra serialization cost).
+
+        Returns ``(outcome, twin_locator)`` where ``outcome`` is one of ``"skipped"``
+        (unchanged, not forced), ``"duplicate"`` (identical text stored under another
+        locator - ``twin_locator`` names it), ``"added"``, or ``"updated"``.
+        """
+        content_hash = doc.ensure_hash()
+        with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                row = self._conn.execute(
+                    "SELECT content_hash FROM documents WHERE id = ?", (doc.id,)
+                ).fetchone()
+                existing = row["content_hash"] if row else None
+
+                if existing == content_hash and not force:
+                    self._conn.execute("COMMIT")
+                    return "skipped", None
+
+                twin = self._conn.execute(
+                    "SELECT locator FROM documents WHERE content_hash = ? AND id != ? LIMIT 1",
+                    (content_hash, doc.id),
+                ).fetchone()
+                if twin is not None:
+                    if existing is not None:
+                        # Stored on an earlier run, before we knew it was redundant. Leaving
+                        # it would keep a stale copy searchable forever.
+                        self._conn.execute("DELETE FROM chunks WHERE doc_id = ?", (doc.id,))
+                        self._conn.execute("DELETE FROM documents WHERE id = ?", (doc.id,))
+                    self._conn.execute("COMMIT")
+                    return "duplicate", twin["locator"]
+
+                self._write_document_rows(doc, chunks, embeddings, embedding_model)
+                self._conn.execute("COMMIT")
+                return ("updated" if existing is not None else "added"), None
+            except BaseException:
+                self._conn.execute("ROLLBACK")
+                raise
 
     def get_document(self, doc_id: str) -> Document | None:
         with self._lock:

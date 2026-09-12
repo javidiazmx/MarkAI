@@ -394,37 +394,46 @@ def _store_document(
 ) -> None:
     label = f"{document.title} ({document.locator})"
     content_hash = document.ensure_hash()
-    existing = store.document_hash(document.id)
 
+    # Cheap, non-atomic hints: skip the chunking and embedding work (the latter spends real
+    # API budget) for the common cases of an unchanged document or an obvious duplicate.
+    # These reads are not locked against another writer process, so they are only ever an
+    # optimization - the store re-runs the same checks atomically, right before it writes
+    # anything, and that recheck is what actually decides the outcome below.
+    existing = store.document_hash(document.id)
     if existing == content_hash and not force:
         report.skipped.append(label)
         return
-
-    twin = store.locator_with_hash(content_hash, document.id)
-    if twin is not None:
-        # Same bytes already stored under another address. Keeping both would put two
-        # identical passages in every search result.
-        report.duplicates.append(f"{label} - same text as {twin}")
-        if existing is not None:
-            # This address was stored on an earlier run, before we knew it was redundant.
-            # Declining to update it would leave that stale copy searchable forever.
-            store.delete_document(document.id)
-        return
-
-    chunks = chunk_document(
-        document,
-        target_words=settings.chunk_target_words,
-        overlap_words=settings.chunk_overlap_words,
-        av_window_seconds=settings.av_window_seconds,
-    )
+    if store.locator_with_hash(content_hash, document.id) is not None:
+        # Same bytes already stored under another address, as far as this hint can tell.
+        # Skip chunking/embedding; the atomic check below confirms it before writing.
+        chunks: list[Any] = []
+    else:
+        chunks = chunk_document(
+            document,
+            target_words=settings.chunk_target_words,
+            overlap_words=settings.chunk_overlap_words,
+            av_window_seconds=settings.av_window_seconds,
+        )
     embeddings = None
     model_name = None
     if embedder is not None and chunks:
         embeddings = embedder.embed_documents([c.text for c in chunks])
         model_name = embedder.name
 
-    store.upsert_document(document, chunks, embeddings, embedding_model=model_name)
-    (report.updated if existing is not None else report.added).append(label)
+    outcome, twin_locator = store.store_if_new_or_changed(
+        document, chunks, embeddings, embedding_model=model_name, force=force
+    )
+    if outcome == "skipped":
+        report.skipped.append(label)
+    elif outcome == "duplicate":
+        # Same bytes already stored under another address. Keeping both would put two
+        # identical passages in every search result.
+        report.duplicates.append(f"{label} - same text as {twin_locator}")
+    elif outcome == "added":
+        report.added.append(label)
+    else:
+        report.updated.append(label)
 
 
 # A Voyage account with no payment method is capped at 3 requests and 10,000 tokens a

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+
 import numpy as np
 
 from markai.knowledge.chunking import approx_tokens, chunk_document
@@ -137,6 +139,73 @@ def test_delete_and_locator_listing(settings, toy_documents):
     assert store.get_document(toy_documents[0].id) is None
     assert store.chunks_for_document(toy_documents[0].id) == []
     store.close()
+
+
+def test_busy_timeout_is_set_so_a_second_writer_process_waits_instead_of_erroring(
+    settings, toy_documents
+):
+    """Two `mark ingest` processes can share one data/markai.db. WAL still serializes writers,
+    so a generous busy_timeout - not Python's 5s connect-timeout default - is what lets the
+    loser wait out an ordinary contention window instead of raising "database is locked"."""
+    settings.ensure_dirs()
+    store = KnowledgeStore(settings.db_path)
+    (timeout_ms,) = store._conn.execute("PRAGMA busy_timeout").fetchone()
+    assert timeout_ms == 30000
+    store.close()
+
+
+def test_concurrent_writers_never_double_store_identical_content(settings):
+    """The race from the audit: two writer *processes* (simulated here as two separate
+    SQLite connections to the same file, driven from two threads) each ingest a document
+    with identical text under a different id/locator, at the same instant. The old
+    check-then-act (SELECT for a twin, then a separate INSERT) let both pass the check
+    before either committed. `store_if_new_or_changed`'s `BEGIN IMMEDIATE` must serialize
+    them so exactly one round trips "added" and the other "duplicate" - never both
+    "added", which would leave two identical passages searchable.
+    """
+    settings.ensure_dirs()
+    store_a = KnowledgeStore(settings.db_path)
+    store_b = KnowledgeStore(settings.db_path)
+    barrier = threading.Barrier(2)
+    errors: list[BaseException] = []
+    outcomes: dict[str, str] = {}
+
+    def race(store, key, doc_id, text):
+        try:
+            doc = Document(
+                id=doc_id,
+                kind=SourceKind.WEBSITE,
+                title=doc_id,
+                locator=doc_id,
+                text=text,
+            )
+            doc.ensure_hash()
+            chunks = chunk_document(doc)
+            barrier.wait(timeout=5)
+            outcome, _twin = store.store_if_new_or_changed(doc, chunks)
+            outcomes[key] = outcome
+        except BaseException as exc:  # noqa: BLE001 - surfaced via `errors` below
+            errors.append(exc)
+
+    for round_i in range(15):
+        text = f"Identical bytes shared by both writers, round {round_i}."
+        outcomes.clear()
+        ta = threading.Thread(target=race, args=(store_a, "a", f"a-{round_i}", text))
+        tb = threading.Thread(target=race, args=(store_b, "b", f"b-{round_i}", text))
+        ta.start()
+        tb.start()
+        ta.join(timeout=10)
+        tb.join(timeout=10)
+
+        assert not errors, f"round {round_i}: {errors}"
+        assert set(outcomes.values()) == {"added", "duplicate"}, (round_i, outcomes)
+
+    # Never two rows sharing a content hash, however the two connections interleaved.
+    hashes = [d.content_hash for d in store_a.list_documents()]
+    assert len(hashes) == len(set(hashes))
+
+    store_a.close()
+    store_b.close()
 
 
 def test_question_log_feeds_the_gaps_report(settings):
