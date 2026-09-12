@@ -38,6 +38,10 @@ FLAG_GEO_IL_NON_CHICAGO = "geo_illinois_non_chicagoland"
 FLAG_HIGH_RISK = "high_risk_request"
 FLAG_FOLLOW_UP = "follow_up"
 FLAG_PM_INTEREST = "pm_interest"
+FLAG_TENANT_TROUBLE = "tenant_trouble"
+FLAG_SELF_MANAGE_BURNOUT = "self_manage_burnout"
+FLAG_VACANCY_HELP = "vacancy_help"
+FLAG_BUYING_INTEREST = "buying_interest"
 
 _LEGAL_TERMS = (
     "evict",
@@ -740,6 +744,86 @@ def is_pm_interest_question(question: str) -> bool:
     return bool(_PM_INTEREST.search(_norm(question)))
 
 
+# First-person framing on purpose: "my tenant hasn't paid" is a landlord in a situation
+# worth a call, "what's the eviction process in Cook County" is research and fires
+# FLAG_LEGAL instead - the two should not collapse into the same alert.
+_TENANT_TROUBLE = re.compile(
+    r"\bmy tenants?\b[^.?!]{0,40}\b(hasn'?t|has not|isn'?t|is not|won'?t|refuses? to|"
+    r"stopped)\b[^.?!]{0,20}\b(pay\w*|leave|leaving|left|moved? out)\b"
+    r"|\b(i need to|how do i|can i|want to|trying to)\b[^.?!]{0,30}\bevict\b[^.?!]{0,10}"
+    r"\bmy\b"
+    r"|\b(non-?paying|problem|nightmare) tenants?\b"
+    r"|\bmy tenant\b[^.?!]{0,40}\b(damag(?:e|ing)|trashed|won'?t leave|squatt)\w*\b",
+    re.IGNORECASE,
+)
+
+
+def is_tenant_trouble_question(question: str) -> bool:
+    """True for a landlord describing their own tenant situation, not asking in the abstract.
+
+    A real pain point, not a topic: "my tenant hasn't paid in two months" is someone who
+    might want GC Realty to take this off their plate. "What's the eviction process" is
+    someone doing homework, and stays a plain answer with no alert attached.
+    """
+    return bool(_TENANT_TROUBLE.search(_norm(question)))
+
+
+_SELF_MANAGE_BURNOUT = re.compile(
+    r"\b(tired of|sick of|done with|burned? out( on)?|overwhelmed by|can'?t keep up with|"
+    r"don'?t have time (for|to)|no time (for|to) manage|too much (work|hassle|to handle))\b"
+    r"[^.?!]{0,40}\b(manag(?:e|ing)|landlord(?:ing)?|propert(?:y|ies)|rental)\b",
+    re.IGNORECASE,
+)
+
+
+def is_self_manage_burnout_question(question: str) -> bool:
+    """True when someone describes being worn out by managing their own rental(s).
+
+    The clearest "ready to hand it off" signal there is, and one that never uses the
+    word "manager" at all - which is exactly why FLAG_PM_INTEREST's own wording match
+    would miss it.
+    """
+    return bool(_SELF_MANAGE_BURNOUT.search(_norm(question)))
+
+
+_VACANCY_HELP = re.compile(
+    r"\b(can'?t find|trouble (renting|leasing|finding|filling)|struggling to (rent|lease|fill)|"
+    r"no one('?s| is| has been) (applying|responding|interested)|nobody('?s| is) applying)\b"
+    r"[^.?!]{0,40}\b(tenant|renter|applicant|unit|apartment|vacan\w*)\b"
+    r"|\b(unit|apartment|rental)\b[^.?!]{0,30}\bvacant\b[^.?!]{0,20}"
+    r"\b(month|months|weeks|while)\b",
+    re.IGNORECASE,
+)
+
+
+def is_vacancy_help_question(question: str) -> bool:
+    """True for a landlord with a unit sitting empty longer than they expected.
+
+    Marketing and leasing is a service line on its own, separate from the day-to-day
+    management FLAG_PM_INTEREST and FLAG_SELF_MANAGE_BURNOUT point at.
+    """
+    return bool(_VACANCY_HELP.search(_norm(question)))
+
+
+_BUYING_INTEREST = re.compile(
+    r"\b(looking to buy|want to buy|planning to (buy|purchase)|in the market for|"
+    r"shopping for)\b[^.?!]{0,40}\b(rental|investment|propert(?:y|ies)|building|unit|duplex|"
+    r"multi-?family|multifamily)\b"
+    r"|\blooking for\b[^.?!]{0,20}\b(my first|another|my next)\b[^.?!]{0,20}"
+    r"\b(rental|investment propert)\w*\b",
+    re.IGNORECASE,
+)
+
+
+def is_buying_interest_question(question: str) -> bool:
+    """True for someone actively shopping for a rental to buy, not just curious about deals.
+
+    Distinct from ``portfolio_growth`` in app.py, which fires reactively once a second
+    building is actually added - this catches the intent before any purchase happens.
+    """
+    return bool(_BUYING_INTEREST.search(_norm(question)))
+
+
 def detect_flags(question: str) -> list[str]:
     """All flags that apply to a question, sorted for deterministic prompts."""
     flags: set[str] = set()
@@ -753,6 +837,14 @@ def detect_flags(question: str) -> list[str]:
         flags.add(FLAG_LEGAL)
     if is_pm_interest_question(question):
         flags.add(FLAG_PM_INTEREST)
+    if is_tenant_trouble_question(question):
+        flags.add(FLAG_TENANT_TROUBLE)
+    if is_self_manage_burnout_question(question):
+        flags.add(FLAG_SELF_MANAGE_BURNOUT)
+    if is_vacancy_help_question(question):
+        flags.add(FLAG_VACANCY_HELP)
+    if is_buying_interest_question(question):
+        flags.add(FLAG_BUYING_INTEREST)
     return sorted(flags)
 
 
