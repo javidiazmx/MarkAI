@@ -3101,6 +3101,104 @@ ordinances:
     url: "https://traffic.libsyn.com/secure/straightupchicagoinvestor/SUCI168.mp3"
     notes: "From: 02:22 House Provider Tip: Be aware of the new Illinois law requiring 10-year smoke detectors!"
 costs:
+  - id: mined-544
+    item: "Hotel accommodations tax"
+    low: 6.5
+    high: 6.5
+    unit: "percent of rent"
+    source: "Housing Taxes in Chicago: What Landlords Need to Know"
+    notes: "From: The Chicago Hotel Accommodations Tax is 6.5% on rent for furnished apartments, vacation rentals, and other short-term residential rentals of less than 30 days."
+  - id: mined-543
+    item: "Vacancy cost"
+    low: 8
+    high: 10
+    unit: "percent of annual rent per month"
+    source: "Renting Your Property in Schaumburg: Rental Market Guide"
+    notes: "From: Vacancy is expensive; each month without a tenant costs roughly 8\u201310 % of your annual rent."
+  - id: mined-542
+    item: "Tenant income requirement"
+    low: 2.5
+    high: 2.5
+    unit: "x monthly rent"
+    source: "Chicago Property Management, Chicago Property Managers, Chicago Property Management Companies. GC Realty & Development, LLC"
+    notes: "From: Net income must be at least 2.5x the monthly rent."
+  - id: mined-541
+    item: "Property management fees"
+    low: 7
+    high: 10
+    unit: "percent of collected rent"
+    source: "Is It Cheaper to Manage Your Own Rental Property?"
+    notes: "From: Chicagoland property managers charge 7\u201310% of collected rent for full-service residential management, often with a separate tenant placement fee equal to a portion of one month's rent."
+  - id: mined-540
+    item: "Application fee market rate"
+    low: 30
+    high: 75
+    unit: "USD per applicant"
+    source: "Must Know Chicago Tenant Applicant Screening FAQs"
+    notes: "From: We see $30.00 to $75.00 in the Chicago market per applicant over the age of 18."
+  - id: mined-539
+    item: "Typical move-in fee"
+    low: 25
+    high: 35
+    unit: "percent of monthly rent"
+    source: "Security Deposits vs. Move-In Fees in Chicago Rentals: A Guide for New Property Investors"
+    notes: "From: Most landlords set fees in the 25\u201335% range of monthly rent."
+  - id: mined-538
+    item: "Property management fee"
+    low: 6
+    high: 8
+    unit: "percent of rent"
+    source: "Breaking Down Chicagoland Syndications W/Duke Dennis & Bryan Sonn"
+    notes: "From: And, you know, whether it's 6, 7, 8%, whatever it is, it's a big part of your profit."
+  - id: mined-537
+    item: "Property management fee"
+    low: 7
+    high: 10
+    unit: "percent of collected rent"
+    source: "Chicago Property Management Blog"
+    notes: "From: A Chicagoland property manager typically costs 7\u201310% of collected rent, so on a $2.200/month rental you're looking at roughly $1,848\u2013$2,640 a year."
+  - id: mined-536
+    item: "Property management fee"
+    low: 7
+    high: 8
+    unit: "percent of monthly rent"
+    source: "Renting Your Property in Schaumburg: Rental Market Guide"
+    notes: "From: Experienced property managers handle leasing, inspections, rent collection and compliance (including the RTLO and crime\u2011free seminar) for a fee that\u2019s usually 7\u20138 % of monthly rent."
+  - id: mined-535
+    item: "Property management fee"
+    low: 10
+    high: 10
+    unit: "percent of rent"
+    source: "The Pros and Cons of Being a House Self-Manager in Chicago"
+    notes: "From: By self-managing, you avoid paying the typical 10% of rent charged by most Chicago property managers."
+  - id: mined-534
+    item: "Leasing fee"
+    low: 50
+    high: 100
+    unit: "percent of first month's rent"
+    source: "Do I Need a Rental Property Management Company? A Guide For Chicago Real Estate Investors"
+    notes: "From: This is usually about 50% of the first month\u2019s rent, but 75% to 100% in not uncommon. (stated in 2 of your sources)"
+  - id: mined-533
+    item: "Pet fee and pet rent"
+    low: 350
+    high: 350
+    unit: "USD one-time per pet"
+    source: "Chicago Property Management, Chicago Property Managers, Chicago Property Management Companies. GC Realty & Development, LLC"
+    notes: "From: If pets are allowed and you add a pet during your lease term you will be responsible for paying a non- refundable one time $350 pet fee (per pet) and a $25 per month pet rent (per p"
+  - id: mined-532
+    item: "Resident referral credit"
+    low: 100
+    high: 100
+    unit: "USD rent credit"
+    source: "Chicago Property Management, Chicago Property Managers, Chicago Property Management Companies. GC Realty & Development, LLC"
+    notes: "From: If you know someone who is looking for a property to rent, please refer them to us and when your referral signs a 12+ month lease, pays their first month\u2019s rent, and moves in, you will receive $100 rent credit."
+  - id: mined-531
+    item: "Recommended rent range width"
+    low: 200
+    high: 200
+    unit: "USD range width"
+    source: "What Happened in 2025 When We Overpriced Our Chicagoland Rentals"
+    notes: "From: For every property we manage, we provide a recommended rent range of approximately $200."
   - id: mined-530
     item: "Marketing lead time"
     low: 30
