@@ -265,16 +265,28 @@ def find_moments(
     query: str,
     limit: int = 5,
     kinds: tuple[SourceKind, ...] = AV_KINDS,
+    channel: str | None = None,
 ) -> list[EpisodeMoment]:
-    """The episodes that talk about ``query``, best first, one moment per episode."""
+    """The episodes that talk about ``query``, best first, one moment per episode.
+
+    ``channel`` restricts to one show/channel by name (a case-insensitive substring
+    match against the stored channel, so "Straight Up Chicago Investor podcast" still
+    matches the stored "Straight Up Chicago Investor"). Without it, a two-host show and
+    a single host's own separate channel compete in the same ranking - naming the show
+    is the only way a question about one of them doesn't get answered from the other.
+    """
     if not (query or "").strip() or retriever.is_empty():
         return []
+    needle = (channel or "").strip().lower()
     # Retrieve wide and then keep only what is spoken: on most questions the blog posts
     # outrank the transcripts, so a plain top-k would come back with no episodes at all.
-    result = retriever.retrieve(query, k=max(limit * 10, 50))
+    # Filtering to one channel narrows the field further, so widen the pull accordingly.
+    result = retriever.retrieve(query, k=max(limit * 20, 100) if needle else max(limit * 10, 50))
     best: dict[str, RetrievedChunk] = {}
     for rc in sorted(result.chunks, key=lambda c: -c.score):
         if rc.document.kind not in kinds or rc.document.id in best:
+            continue
+        if needle and needle not in (rc.document.channel or "").lower():
             continue
         best[rc.document.id] = rc
     return [_moment(retriever, rc) for rc in list(best.values())[:limit]]
@@ -327,7 +339,14 @@ EPISODE_TOOL: dict[str, Any] = {
         "an episode, asks who talked about a topic, or when pointing them at an episode "
         "would answer better than a summary. Returns the episode number, title, guest, a "
         "link that jumps to the moment, and a short quote. Do not guess an episode number "
-        "or a guest name yourself: if this returns nothing, say there isn't one."
+        "or a guest name yourself: if this returns nothing, say there isn't one.\n\n"
+        "The sources span more than one show - the Straight Up Chicago Investor podcast "
+        "(two hosts plus guests) and Mark Ainley's own separate GC Realty channel are "
+        "different, and a question naming one should not be answered from the other. "
+        "Pass `channel` whenever the user names a specific show, host, or channel "
+        '("the Straight Up Chicago Investor podcast", "Mark Ainley\'s channel", '
+        '"Chicago Landlord Secrets"), and never claim a quote or a fact came from a '
+        "named show unless the result you got back actually came from it."
     ),
     "strict": True,
     "input_schema": {
@@ -341,8 +360,16 @@ EPISODE_TOOL: dict[str, Any] = {
                 "type": "integer",
                 "description": "How many episodes to return, 1 to 5. Use 3 unless asked for more.",
             },
+            "channel": {
+                "type": ["string", "null"],
+                "description": (
+                    "Restrict to one show/channel by name, when the user named one - e.g. "
+                    "'Straight Up Chicago Investor' or 'Mark Ainley'. A substring match, so "
+                    "the exact stored name doesn't need to be known. Omit (null) otherwise."
+                ),
+            },
         },
-        "required": ["topic", "limit"],
+        "required": ["topic", "limit", "channel"],
         "additionalProperties": False,
     },
 }
@@ -358,13 +385,22 @@ def run_episode_tool(retriever: Any, tool_input: dict[str, Any]) -> dict[str, An
     except (TypeError, ValueError):
         limit = 3
     limit = max(1, min(limit, 5))
+    channel = (tool_input or {}).get("channel") or None
     try:
-        moments = find_moments(retriever, topic, limit=limit)
+        moments = find_moments(retriever, topic, limit=limit, channel=channel)
     except Exception as exc:  # a search failing must not fail the answer
         logger.warning("find_episode failed: %s", exc)
         return {"error": "The episode index could not be searched."}
-    return {
+    result: dict[str, Any] = {
         "topic": topic,
         "episodes": [m.to_dict() for m in moments],
         "found": len(moments),
     }
+    if channel:
+        result["channel_filter"] = channel
+        if not moments:
+            result["note"] = (
+                f"Nothing found on this topic from a channel matching {channel!r}. "
+                "Say so plainly rather than answering from a different show."
+            )
+    return result
