@@ -3101,6 +3101,482 @@ ordinances:
     url: "https://traffic.libsyn.com/secure/straightupchicagoinvestor/SUCI168.mp3"
     notes: "From: 02:22 House Provider Tip: Be aware of the new Illinois law requiring 10-year smoke detectors!"
 costs:
+  - id: mined-530
+    item: "Marketing lead time"
+    low: 30
+    high: 60
+    unit: "days before vacancy"
+    source: "Renting Your Property in Schaumburg: Rental Market Guide"
+    notes: "From: Also, start marketing the unit 30\u201360 days before it becomes vacant, which is the timeframe recommended by apartment search experts."
+  - id: mined-529
+    item: "Extraordinary maintenance threshold"
+    low: 1000
+    high: 1000
+    unit: "USD"
+    source: "Chicago Property Management, Chicago Property Managers, Chicago Property Management Companies. GC Realty & Development, LLC"
+    notes: "From: GCR&D defines extraordinary maintenance as rehabilitation work that exceeds $1000, insurance claims, and major systems replacements."
+  - id: mined-528
+    item: "Lockout charge"
+    low: 150
+    high: 150
+    unit: "USD per lockout"
+    source: "Chicago Property Management, Chicago Property Managers, Chicago Property Management Companies. GC Realty & Development, LLC"
+    notes: "From: A charge of $150.00 will be due at the time of service in the event of a lockout."
+  - id: mined-527
+    item: "1099 filing threshold"
+    low: 600
+    high: 600
+    unit: "USD"
+    source: "Chicago Property Management, Chicago Property Managers, Chicago Property Management Companies. GC Realty & Development, LLC"
+    notes: "From: At the end of each year, GCR&D is required to file 1099\u2019s for income received over $600."
+  - id: mined-526
+    item: "Section 8 change of ownership"
+    low: 30
+    high: 60
+    unit: "days"
+    source: "What you Need To Know When Buying a Section 8 Occupied Property"
+    notes: "From: This submission process typically takes 30 to 60 days, which means you should submit it the same day you close, if possible."
+  - id: mined-525
+    item: "Self-management time"
+    low: 15
+    high: 25
+    unit: "hours per year"
+    source: "Should I Self Manage My Rental Property? Chicagoland Property Management Tips"
+    notes: "From: Annually, you\u2019ll need to dedicate 15 to 25 hours to this property, and that\u2019s only if you have no maintenance."
+  - id: mined-524
+    item: "Crime Free Program certification training"
+    low: 4
+    high: 8
+    unit: "hours of training"
+    source: "What Makes a Chicagoland Rental Property Hard to Manage"
+    notes: "From: The certification typically requires attending an in person training that runs 4 to 8 hours, often delivered as a single morning session or split across two evenings, that covers tenant screening, lease enforcement, prop"
+  - id: mined-523
+    item: "Water/sewer utility tax per unit"
+    low: 9.5
+    high: 9.5
+    unit: "USD per unit per month"
+    source: "Chicago Landlords: The \u201cComing Taxes\u201d You Can\u2019t Ignore (And How to Get Ahead of Them)"
+    notes: "From: It\u2019s been $9.50 per unit per month since 2016 and frequently discussed as a revenue lever. Not increased as of today, but it\u2019s on the radar in budget talks."
+  - id: mined-522
+    item: "Conventional loan down payment"
+    low: 20
+    high: 20
+    unit: "percent down payment"
+    source: "Real Estate Finance Options for Chicago Homebuyers"
+    notes: "From: Conventional loans: Conventional mortgages, like those offered by Fannie Mae and Freddie Mac, typically require a 20% down payment but don't charge mortgage insurance for loans at or below that amount."
+  - id: mined-521
+    item: "Proposed just cause relocation payment"
+    low: 10000
+    high: 10000
+    unit: "USD per no-fault move out"
+    source: "The Protecting Renters Ordinance Just Hit City Hall. Here Is What Actually Happened"
+    notes: "From: - Just cause for eviction is still in, and it still carries a relocation payment of $10,000 or 10 months of rent, whichever is greater, for a no fault move out. (stated in 2 of your sources)"
+  - id: mined-520
+    item: "Vacancy duration"
+    low: 10
+    high: 21
+    unit: "days additional vacancy"
+    source: "When Is Property Management Not Worth the Cost?"
+    notes: "From: Self managed leasing tends to run 10 to 21 days longer than professionally managed leasing because of slower listing syndication, less competitive pricing analysis, and less efficient showing coordination."
+  - id: mined-519
+    item: "Fair Housing Act violation penalties"
+    low: 10000
+    high: 50000
+    unit: "USD per offense"
+    source: "The Hidden Costs of Tenant Issues in Chicago"
+    notes: "From: - Fair Housing Act violations: $10,000\u2013$50,000+ per offense"
+  - id: mined-518
+    item: "Residential zone parking permit"
+    low: 35
+    high: 35
+    unit: "USD per year"
+    source: "Residential Zone Parking FAQs"
+    notes: "From: Buy at an additional cost of $35 per year (prorated for varying durations)."
+  - id: mined-517
+    item: "Residential zone parking add-on"
+    low: 35
+    high: 35
+    unit: "USD per year"
+    source: "Chicago City Sticker FAQs"
+    notes: "From: Annual Residential Zone Parking may be added for $35.00 if purchaser resides in a Residential Parking Zone."
+  - id: mined-516
+    item: "Residential parking daily permits"
+    low: 30
+    high: 45
+    unit: "USD per sheet order"
+    source: "Residential Zone Parking FAQs"
+    notes: "From: permits, $30 for 2 sheets of 15 permits (30 total) with a limit of three permit sheets at $45.00 \u2013 or 45 permits \u2013 per household per 30-day period."
+  - id: mined-515
+    item: "Title insurance endorsement for 606/Northwest Side Preservation Ordinance"
+    low: 1000
+    high: 3000
+    unit: "USD"
+    source: "Chicago Is Killing Affordable Housing in These Neighborhoods\u2026Here\u2019s Proof"
+    notes: "From: They now require custom endorsements costing anywhere from $1,000 to $3,000 just to insure over the risk that someone\u2014often a tenant with no real intent to buy\u2014might file a lawsuit claiming their rights were violated."
+  - id: mined-514
+    item: "Tenant credit score minimum"
+    low: 600
+    high: 600
+    unit: "credit score"
+    source: "Chicago Property Management, Chicago Property Managers, Chicago Property Management Companies. GC Realty & Development, LLC"
+    notes: "From: A minimum credit score of 600 is required to be considered."
+  - id: mined-513
+    item: "Tenant damage repair costs"
+    low: 2000
+    high: 5000
+    unit: "USD"
+    source: "The Hidden Costs of Tenant Issues in Chicago"
+    notes: "From: Estimated Costs: - Cosmetic repairs (paint, flooring, minor fixes): $2,000\u2013$5,000 - Major damages (appliances, plumbing, HVAC): $5,000\u2013$15,000+ - Full property rehab after severe neglect: $20,000+ (stated in 2 of your sources)"
+  - id: mined-512
+    item: "Demolition fees in ordinance zone"
+    low: 20000
+    high: 60000
+    unit: "USD"
+    source: "How Does Controversial Ordinance Impact Your Chicago Rental?"
+    notes: "From: Demolition fees in the affected zone have skyrocketed to a minimum of $60,000 per building or $20,000 per unit."
+  - id: mined-511
+    item: "Process server for notice delivery"
+    low: 80
+    high: 90
+    unit: "per delivery"
+    source: "5-Day or 30-Day Notice of Non-Payment? Know When You Need to Serve Each!"
+    notes: "From: Landlords can also hire a process server($80-$90) to ensure the notice is delivered timely and paperwork is processed correctly."
+  - id: mined-510
+    item: "Turnover time cost"
+    low: 40
+    high: 60
+    unit: "hours"
+    source: "How to Build a Solid Lease in Chicago"
+    notes: "From: A turn runs 40 to 60 hours between the work and the re rent, plus potentially a full month of commission if you use a realtor."
+  - id: mined-509
+    item: "Turnover and vacancy cost of tenant not renewing"
+    low: 2000
+    high: 4000
+    unit: "USD per turnover"
+    source: "Inventory Is Low. What Does That Mean For Chicago Investors?"
+    notes: "From: A tenant who renews for one additional year instead of moving saves the property owner roughly one month of vacancy plus two to four thousand dollars in turnover and leasing costs."
+  - id: mined-508
+    item: "Steel vs wood porch cost"
+    low: 2
+    high: 2
+    unit: "multiple of wood porch cost"
+    source: "The 101 on Porch Issues and Repairs With Mr. Porch Frank Knight"
+    notes: "From: A: Steel is usually more expensive, often about double the cost, and it does not automatically last forever."
+  - id: mined-507
+    item: "Cost of vacancy"
+    low: 733
+    high: 733
+    unit: "per turnover"
+    source: "2025 Chicago Leasing Numbers: From Listing to Move-In"
+    notes: "From: on a $2,000/month rental, that's roughly $733 in lost revenue per turnover."
+  - id: mined-506
+    item: "Basement flooding damage cost"
+    low: 10000
+    high: 30000
+    unit: "USD per event"
+    source: "Chicago Property Insurance Risks: What We Can Learn from California's Fire Insurance Crisis"
+    notes: "From: Basement flooding alone costs property owners an estimated $10,000 to $30,000 per event."
+  - id: mined-505
+    item: "Vacancy cost"
+    low: 50
+    high: 50
+    unit: "USD per day"
+    source: "How Should I Prepare My Rental Property?"
+    notes: "From: If you get $1,500 a month in rent, that $50.00 per day you lose if the property is vacant. (stated in 2 of your sources)"
+  - id: mined-504
+    item: "Signed lease to move-in gap"
+    low: 14
+    high: 14
+    unit: "days"
+    source: "2025 Chicago Leasing Numbers: From Listing to Move-In"
+    notes: "From: For the gap between signed lease and move-in, anything over 14 days warrants a process review."
+  - id: mined-503
+    item: "Property manager maintenance upcharge"
+    low: 15
+    high: 25
+    unit: "percent of maintenance cost"
+    source: "Best Chicago Property Management Companies 2026"
+    notes: "From: Some companies upcharge 15-25% on maintenance."
+  - id: mined-502
+    item: "Property management maintenance upcharge"
+    low: 15
+    high: 25
+    unit: "percent of maintenance cost"
+    source: "Best Chicago Property Management Companies 2025"
+    notes: "From: Some companies upcharge 15%\u201325% on maintenance."
+  - id: mined-501
+    item: "Property management fees"
+    low: 125
+    high: 125
+    unit: "USD per unit per month"
+    source: "Chicago Property Management, Chicago Property Managers, Chicago Property Management Companies. GC Realty & Development, LLC"
+    notes: "From: As advertised on this website, our monthly management percentage is between 5-8 with a minimum of $125.00 per unit, per mo"
+  - id: mined-500
+    item: "Rental license inspection timeline"
+    low: 14
+    high: 45
+    unit: "days"
+    source: "Renting with Confidence: 21 Questions about Rental Licenses Answered!"
+    notes: "From: As a result, the timeframe for completing the rental license inspection process can range from approximately 14 to 45 days."
+  - id: mined-499
+    item: "Wrong eviction notice delay"
+    low: 45
+    high: 45
+    unit: "days"
+    source: "3 Laws Most Chicago Investors Are Not Aware Of"
+    notes: "From: That\u2019s a 45-day rent delay minimum, if not worse."
+  - id: mined-498
+    item: "Eviction attorney fees"
+    low: 800
+    high: 2100
+    unit: "USD per eviction"
+    source: "Everything You Don\u2019t Know about Cook County Evictions in 2024"
+    notes: "From: Cook County attorney fees to file for an eviction will be in the range of $800 to $2,100 depending on how many court dates the attorney you hire must attend or any other complexities involved."
+  - id: mined-497
+    item: "Eviction attorney fees"
+    low: 800
+    high: 2100
+    unit: "USD per eviction"
+    source: "What You Must Know About Cook County Eviction Process in 2023"
+    notes: "From: Cook County attorney fees to file for an eviction will be in the range of $800.00 to $2100.00 depending on how many court dates the attorney you hire must attend or any other complexities involved."
+  - id: mined-496
+    item: "Cost of waiting out eviction with non-paying tenant"
+    low: 5000
+    high: 5000
+    unit: "USD"
+    source: "Cash For Keys Is Just A Business Decision"
+    notes: "From: Currently in Chicago, in a worst case scenario, the hard cost for a Landlord with a non-paying tenant to wait out the legal system will exceed $5,000 and the stress endured can take a toll on your personal life."
+  - id: mined-495
+    item: "Cash for keys / eviction cost"
+    low: 3000
+    high: 3000
+    unit: "USD"
+    source: "Solid Advice for Landlords on Cook County Evictions in 2025"
+    notes: "From: If you calculate that a contested eviction might cost you $3,000 in attorney fees and months of unpaid rent, offering that same $3,000 to the tenant might get them out in under a month."
+  - id: mined-494
+    item: "Rental registration fee"
+    low: 211
+    high: 211
+    unit: "USD per year"
+    source: "Chicago Property Management, Chicago Property Managers, Chicago Property Management Companies. GC Realty & Development, LLC"
+    notes: "From: | Bensenville | Y | Rental Registration; $211 (Annual) | 630/766-8200 |"
+  - id: mined-493
+    item: "Rental license fee"
+    low: 150
+    high: 150
+    unit: "per year"
+    source: "What You Must Know About Renting Your Property In Hoffman Estates"
+    notes: "From: The cost for this license is $150 and is the same for condos, townhomes, & single family homes."
+  - id: mined-492
+    item: "Rental license fee"
+    low: 90
+    high: 90
+    unit: "USD per year"
+    source: "Chicago Property Management, Chicago Property Managers, Chicago Property Management Companies. GC Realty & Development, LLC"
+    notes: "From: | Aurora | Y | Rental License Fee; $90 (Annual) | 630/844-3613 |"
+  - id: mined-491
+    item: "Rental license fee"
+    low: 75
+    high: 150
+    unit: "USD per year"
+    source: "Chicago Property Management, Chicago Property Managers, Chicago Property Management Companies. GC Realty & Development, LLC"
+    notes: "From: | Addison | Y | Rental License Fee; $75 - $150 (Annual) | 630/543-4100 |"
+  - id: mined-490
+    item: "Rental license fee"
+    low: 149
+    high: 448
+    unit: "USD per year"
+    source: "What You Must Know About Renting Your Property In Elgin"
+    notes: "From: Depending on the size of your building it may cost just $149.00 per year for a single property and as high as $448.00 if you have a 25 unit building."
+  - id: mined-489
+    item: "Rental license fee"
+    low: 150
+    high: 150
+    unit: "USD per year"
+    source: "What You Must Know About Renting Your Property In Schaumburg"
+    notes: "From: The cost for this license is $150.00 per year for a single family home and may be slightly less for a condo or townhouse."
+  - id: mined-488
+    item: "Rental license fee"
+    low: 50
+    high: 100
+    unit: "USD/year"
+    source: "What You Must Know About Renting Your Property In Elk Grove Village"
+    notes: "From: The cost for this license ranges from $50 - $100 per year depending on if the property is a single family home, condo, or townhouse."
+  - id: mined-487
+    item: "Rental license fee"
+    low: 500
+    high: 500
+    unit: "USD per license"
+    source: "Renting Your Property in Oak Forest: Rental Market Guide"
+    notes: "From: For properties containing forty-one (41) or more units, with no limit applied, the fee shall be $500.00."
+  - id: mined-486
+    item: "Rental dwelling certification fee"
+    low: 75
+    high: 75
+    unit: "USD per year"
+    source: "Chicago Property Management, Chicago Property Managers, Chicago Property Management Companies. GC Realty & Development, LLC"
+    notes: "From: | Beach Park | Y | Rental Dwelling Certification Application; $75 (Annual) | 847/746-1770 |"
+  - id: mined-485
+    item: "Non-refundable move-in fee"
+    low: 400
+    high: 1000
+    unit: "USD per move-in"
+    source: "Why Chicago Landlords Should Never Take Security Deposits (and What to Do Instead)"
+    notes: "From: Here\u2019s how it works: Instead of holding a deposit you might have to return (and track interest on, and document, and itemize deductions from), you simply charge a flat move-in fee, usually $400\u2013$1000 depending on the property size and rent level."
+  - id: mined-484
+    item: "Lease renewal fee"
+    low: 125
+    high: 125
+    unit: "USD per renewal"
+    source: "Chicago Property Management, Chicago Property Managers, Chicago Property Management Companies. GC Realty & Development, LLC"
+    notes: "From: GC Realty and Development charges a $125 flat fee for renewals."
+  - id: mined-483
+    item: "Law firm registration renewal fee (Supreme Court Rule 721)"
+    low: 40
+    high: 40
+    unit: "USD"
+    source: "Administrative Office of the Illinois Courts"
+    notes: "From: The renewal fee is $40."
+  - id: mined-482
+    item: "Eviction filing fee"
+    low: 287
+    high: 500
+    unit: "USD"
+    source: "7 Hurdles To Tenant Evictions In Chicago"
+    notes: "From: Cost To File For Eviction - The US average for court filing of an eviction is around $50.00 and in Cook County the cost is $287-$500 depending on how many tenants are residing in the property."
+  - id: mined-481
+    item: "Demolition fee"
+    low: 60000
+    high: 60000
+    unit: "USD minimum ($20,000 per unit)"
+    source: "How New Anti-Gentrification Ordinance Affects Chicago Rentals"
+    notes: "From: Property owners looking to demolish buildings within the affected area now face a minimum fee of $60,000, or $20,000 per unit, whichever is greater."
+  - id: mined-480
+    item: "Crime free housing license fee"
+    low: 40
+    high: 40
+    unit: "USD per year"
+    source: "Chicago Property Management, Chicago Property Managers, Chicago Property Management Companies. GC Realty & Development, LLC"
+    notes: "From: | Alsip | Y | Crime Free Housing License Application; $40 (Annual) | 708/385-6902 |"
+  - id: mined-479
+    item: "City sticker replacement administrative fee"
+    low: 20
+    high: 20
+    unit: "USD"
+    source: "Chicago City Sticker FAQs"
+    notes: "From: Disclaimer: If you still do not receive your City Sticker or Residential Daily Permits, you must visit an Office of the City Clerk location to receive your replacement with your photo ID and proof of your current address, and you may be subject to a $20 administrative fee."
+  - id: mined-478
+    item: "City sticker late fee"
+    low: 30
+    high: 60
+    unit: "USD"
+    source: "Chicago City Sticker FAQs"
+    notes: "From: New records \u2013 by default \u2013 include a $60 late fee ($30.00 for senior-discounted City Stickers) as well as possible monthly prorated back charges."
+  - id: mined-477
+    item: "Application/background check fee cap"
+    low: 50
+    high: 50
+    unit: "USD per application"
+    source: "HB 3564 Is Headed to the Governor: What Illinois Landlords and Renters Need to Know Right Now"
+    notes: "From: Fees beyond $50 are only permitted if the actual third-party cost exceeds that threshold, the landlord pays upfront, and provides receipts within 14 days."
+  - id: mined-476
+    item: "Rental license fee"
+    low: 50
+    high: 75
+    unit: "per year per single unit"
+    source: "What You Must Know About Renting Your Property In Rolling Meadows"
+    notes: "From: The cost for this license is $50.00-$75.00 per year for a single unit. (stated in 2 of your sources)"
+  - id: mined-475
+    item: "Application fee cap"
+    low: 50
+    high: 50
+    unit: "USD per application"
+    source: "Illinois Landlords & Rental Property Managers: 2026 FAQ"
+    notes: "From: $50, including the background check cost. (stated in 2 of your sources)"
+  - id: mined-474
+    item: "Furnace cleaning/service"
+    low: 100
+    high: 200
+    unit: "USD"
+    source: "Winter Prep & Where To Invest: Chicago Landlord Secrets"
+    notes: "From: Spending $100 or a couple hundred dollars on service can save thousands later."
+  - id: mined-473
+    item: "Process server"
+    low: 75
+    high: 100
+    unit: "USD"
+    source: "7 Hurdles To Tenant Evictions In Chicago"
+    notes: "From: You can wait for the tenant to finally leave the home or you can hire a process server for $75-$100."
+  - id: mined-472
+    item: "Correcting inherited village inspection violations"
+    low: 50000
+    high: 50000
+    unit: "USD"
+    source: "Village Inspections - What You Need To Know"
+    notes: "From: I have personally witnessed some extreme cases where buyers have spent more than $50,000 to correct these violations."
+  - id: mined-471
+    item: "Reinspection fees"
+    low: 75
+    high: 150
+    unit: "USD per reinspection"
+    source: "Chicago Landlord Secrets Live: Rental License Issues No One Understands"
+    notes: "From: Landlord Tip: Watch out for hidden costs: - Reinspection fees (often $75\u2013$150) - License application delays - Surprise citations (e.g., tenant RV visit, grass too high, mailbox tilt) These risks turn a 10% ROI into a 3% return fast."
+  - id: mined-470
+    item: "Cash for keys"
+    low: 2500
+    high: 2500
+    unit: "per deal"
+    source: "My Cash For Keys Mistake That Cost Me $2,500"
+    notes: "From: In about two weeks\u2019 time, I was able to negotiate and strike a $2,500 deal."
+  - id: mined-469
+    item: "Apartment unit depth"
+    low: 30
+    high: 35
+    unit: "feet"
+    source: "Adaptive Reuse & Ground Up Development with Adam Friedberg"
+    notes: "From: So, if you think about apartment buildings usually there's a corridor and then there's a unit and usually the depth of that unit is between 30 and 35 feet."
+  - id: mined-468
+    item: "Managed-by property signage"
+    low: 75
+    high: 150
+    unit: "USD one-time per property"
+    source: "What Are the Most Common Hidden Fees in Property Management?"
+    notes: "From: Typically $75 to $150 per property as a one time charge, sometimes built into the property manager's onboarding fee."
+  - id: mined-467
+    item: "Inherited property violations"
+    low: 20000
+    high: 50000
+    unit: "USD to correct violations"
+    source: "7 Out Of State Real Estate Investor Pitfalls"
+    notes: "From: When purchasing an investment property you, as the new owner, will inherit any property violations which can cost a buyer in excess of $20,000. I have seen some extreme cases where buyers have spent more than $50,000 to correct these violations."
+  - id: mined-466
+    item: "Terracotta facade maintenance"
+    low: 1000000
+    high: 1000000
+    unit: "USD per year"
+    source: "Adaptive Reuse & Ground Up Development with Adam Friedberg"
+    notes: "From: Could be a million dollars a year to maintain the terracotta."
+  - id: mined-465
+    item: "NSF fee"
+    low: 50
+    high: 50
+    unit: "USD per occurrence"
+    source: "Chicago Property Management, Chicago Property Managers, Chicago Property Management Companies. GC Realty & Development, LLC"
+    notes: "From: If a payment is denied by your banking institution because the funds are not available, a $50 NSF fee will be added to your account."
+  - id: mined-464
+    item: "Furnace replacement"
+    low: 3000
+    high: 3000
+    unit: "USD per replacement"
+    source: "Why a Good Chicagoland Property Manager Might Say No to You as a Client"
+    notes: "From: The technician confirms the furnace is dead and needs replacement, around $3,000 for a standard install."
+  - id: mined-463
+    item: "Boiler replacement"
+    low: 20000
+    high: 30000
+    unit: "USD"
+    source: "Winter Prep & Where To Invest: Chicago Landlord Secrets"
+    notes: "From: A boiler replacement can easily become a $20,000 to $30,000 problem, so preventative maintenance matters."
   - id: mined-99
     item: "Leasing timeline"
     low: 22
