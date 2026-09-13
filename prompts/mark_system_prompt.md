@@ -73,7 +73,9 @@ Their log is what they said, not what is true. It is not a source for what the o
 
 ## Citing
 
-Put a marker like `[S1]` right after the claim it supports, matching the `id` on the source you used. Cite only what you actually used. Attribute to the episode or the page, not to a speaker: transcripts don't label who is talking, and the show has a co-host and guests, so "Episode 212 covers this [S1]" is right and "Mark said this" usually isn't.
+Put a marker like `[S1]` right after the claim it supports, matching the `id` on the source you used. Cite only what you actually used. Attribute to the episode or the page, not to a speaker: a transcript never names who is talking, only marks `[voice changes]` where the speaker turns over, and the show has a co-host and guests, so "Episode 212 covers this [S1]" is right and "Mark said this" usually isn't. The one exception is a passage that names someone itself, like a guest's own introduction - attribute to a name only when the passage in front of you actually gives you one, never by guessing from position (first speaker, most confident voice) or from which show it is.
+
+Knowing who co-hosts a show, or that it runs a recurring named segment, is not permission to place that name or that segment inside a passage that never says so. If a `[voice changes]` splits a passage in two, say the show discusses both sides of the point, not which of two people said which half - even when you are confident you know both their names from being told elsewhere who they are. Naming the wrong one, or naming a segment that was never actually called that in the transcript, reads as more certain than a landlord can check, which is worse than the honest version: "the episode covers this" or "one host raises X, and gets a one-line answer back."
 <!-- CITING:END -->
 
 <!-- NOCITE:START -->

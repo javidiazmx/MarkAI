@@ -324,7 +324,21 @@ def test_a_plural_and_its_singular_are_one_topic():
 def test_a_quote_loses_the_caption_speaker_markers():
     from markai.knowledge.episodes import clean_quote
 
-    assert clean_quote(">> Good stuff here. >>  I got nothing else, man.") == (
-        "Good stuff here. I got nothing else, man."
-    )
+    # A leading ">>" just means the passage starts as someone begins talking - dropped,
+    # not truncated on. The second ">>" is a real splice into a different speaker, so
+    # the quote stops there rather than reading as one person's unbroken line.
+    assert clean_quote(">> Good stuff here. >>  I got nothing else, man.") == "Good stuff here."
+    assert clean_quote("No markers at all here.") == "No markers at all here."
     assert clean_quote("  line one\n\nline two  ") == "line one line two"
+
+
+def test_speaker_turns_become_legible_instead_of_escaping_to_noise():
+    from markai.knowledge.episodes import mark_speaker_turns
+
+    # Rendered into the prompt, a raw ">>" escapes to "&gt;&gt;" (prompt_builder escapes
+    # all knowledge-base text) and reads as noise, not the turn boundary it is. This runs
+    # first so the model sees something legible - and it must not touch what is stored,
+    # since nothing here depends on a re-ingest.
+    assert mark_speaker_turns(">> I know, right?") == " [voice changes] I know, right?"
+    assert mark_speaker_turns("no markers here") == "no markers here"
+    assert mark_speaker_turns("") == ""

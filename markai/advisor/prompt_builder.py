@@ -12,7 +12,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-from markai.knowledge.episodes import deep_link, format_timestamp
+from markai.knowledge.episodes import clean_quote, deep_link, format_timestamp, mark_speaker_turns
 from markai.models import Citation, RetrievedChunk
 from markai.sources.manifest import BusinessProfile, ToolLink
 
@@ -337,7 +337,7 @@ def build_user_message(
     parts.append(f'<knowledge_base retrieval_status="{retrieval.coverage}" chunks="{len(chunks)}">')
     for index, rc in enumerate(chunks, start=1):
         parts.append(_source_tag(f"S{index}", rc))
-        parts.append(escape_text(rc.chunk.text.strip()))
+        parts.append(escape_text(mark_speaker_turns(rc.chunk.text.strip())))
         parts.append("</source>")
     parts.append("</knowledge_base>")
 
@@ -408,7 +408,7 @@ def build_citations(
                     else None
                 ),
                 published_at=doc.published_at,
-                snippet=rc.chunk.text.strip()[:160],
+                snippet=clean_quote(rc.chunk.text)[:160],
             )
         )
     return citations

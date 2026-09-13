@@ -35,7 +35,9 @@ HOSTS: frozenset[str] = frozenset({"mark ainley"})
 MAX_TOPICS = 6
 MAX_QUOTE_CHARS = 220
 
-# Caption tracks mark a change of speaker with ">>", which reads as noise inside a quote.
+# Caption tracks mark a change of speaker with ">>". Never who the new speaker is - only
+# that it changed - but a quote that runs past one without noticing reads as one person
+# saying words that were actually two people's, spliced together.
 _SPEAKER = re.compile(r"\s*>>+\s*")
 
 # "Ep. 214:", "Episode 214 -", "#214", "214." at the front of a title.
@@ -234,8 +236,35 @@ def _already_shown(document: Any, guest: str | None) -> set[str]:
 
 
 def clean_quote(text: str) -> str:
-    """One line of transcript, without the caption track's speaker markers."""
-    return _SPEAKER.sub(" ", " ".join((text or "").split())).strip()[:MAX_QUOTE_CHARS]
+    """One line of transcript, cut off before it can cross into a second speaker.
+
+    A raw passage often spans a turn or two - a host's question and a guest's answer
+    both matched the search. Truncating at the first ">>" keeps a returned quote to the
+    one voice it actually started in, rather than reading as a single unbroken quote
+    from someone who only said the first half of it. A *leading* ">>" is different: it
+    just means the passage happens to start the instant a new speaker begins, which is
+    not a splice to cut on, so that one is dropped rather than truncated at.
+    """
+    joined = " ".join((text or "").split())
+    lead = _SPEAKER.match(joined)
+    if lead:
+        joined = joined[lead.end() :]
+    match = _SPEAKER.search(joined)
+    if match:
+        joined = joined[: match.start()]
+    return joined.strip()[:MAX_QUOTE_CHARS]
+
+
+def mark_speaker_turns(text: str) -> str:
+    """Replace a caption track's ">>" with something a model reads as a turn change.
+
+    Rendered into the prompt, ">>" gets escaped to "&gt;&gt;" (prompt_builder escapes
+    all knowledge-base text, on purpose - it is untrusted) and shows up as noise, not
+    the turn boundary it actually is. This runs first so what the model sees is legible
+    without changing what is stored: the raw text in the database is untouched, so nothing
+    here requires - or invalidates - a re-ingest.
+    """
+    return _SPEAKER.sub(" [voice changes] ", text or "")
 
 
 def _moment(retriever: Any, rc: RetrievedChunk) -> EpisodeMoment:
