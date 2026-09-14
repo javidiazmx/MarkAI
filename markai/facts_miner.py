@@ -580,6 +580,35 @@ def is_market_rent(raw: dict) -> bool:
     return bool(_RENTISH.search(str(raw.get("topic", "")) + " " + str(raw.get("unit", ""))))
 
 
+# A bill "headed to the governor" or a village "considering" an ordinance reads exactly
+# like settled law to a keyword search - same words, same specific numbers - until the
+# quote's own verb gives away that nothing has taken effect yet. Filing a proposal as a
+# rule a landlord already lives under is worse than leaving it out: it is confidently
+# wrong on the one thing this file exists to get right. A quote that instead says the
+# thing already happened - "was signed", "took effect", "is required" - does not match.
+_PENDING_RE = re.compile(
+    r"\b(would|if (?:enacted|passed|signed|approved)|is headed to|has(?:n'?t| not) yet "
+    r"(?:taken effect|been signed)|pending (?:approval|passage)|yet to be signed|"
+    r"considering (?:an? )?ordinance|proposed ordinance|draft ordinance|bill introduced|"
+    r"introduced (?:a |the )?bill|awaiting (?:the governor'?s )?signature|"
+    r"still (?:a|in) (?:proposal|draft)|has not passed)\b",
+    re.IGNORECASE,
+)
+
+
+def is_pending_legislation(raw: dict) -> bool:
+    """Whether the proposal's own quote describes something not yet in force.
+
+    Checked on the quote first, not the topic or rule - "(proposed)" in a topic name is
+    a hint someone already noticed, but plenty of proposals carry the same conditional
+    language in their source sentence with no such label at all.
+    """
+    text = " ".join(
+        [str(raw.get("quote", "")), str(raw.get("rule", "")), str(raw.get("topic", ""))]
+    )
+    return bool(_PENDING_RE.search(text))
+
+
 # A word that turns up in nearly every topic is not a subject, it is the vocabulary of the
 # whole corpus. "Tenant" or "chicago" would collect everything into one pile, so a term is
 # only allowed to name a subject if it stays under this share of the topics.
@@ -618,6 +647,7 @@ class ProposalGroup:
     topic: str = ""
     known: bool = False
     rent: bool = False  # a market rent number rather than what a job costs
+    pending: bool = False  # the quote itself says this hasn't taken effect yet
     cited: bool = False  # names a section number, so it is the rule and not a summary
     wanted: bool = False  # a landlord actually asked something this would have answered
     on_topic: bool = True  # about renting property, not a deadline off a city page
@@ -821,6 +851,7 @@ def group_proposals(
             else False
         )
         group.rent = is_market_rent(group.lead)
+        group.pending = is_pending_legislation(group.lead)
         group.cited = cites_a_section(group.lead)
         group.on_topic = is_landlord_business(group.lead)
 

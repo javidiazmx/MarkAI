@@ -1822,6 +1822,7 @@ def _pick_groups(
     min_sources: int,
     new_only: bool,
     no_rents: bool = False,
+    no_pending: bool = False,
     cited_only: bool = False,
     wanted_only: bool = False,
     max_sources: int = 0,
@@ -1852,6 +1853,8 @@ def _pick_groups(
             continue
         if no_rents and group.rent:
             continue
+        if no_pending and group.pending:
+            continue
         if on_topic and not group.on_topic:
             continue
         if off_topic and group.on_topic:
@@ -1876,6 +1879,11 @@ def facts_proposals(
     no_rents: bool = typer.Option(
         False, "--no-rents", help="Leave out market rent numbers, which go stale in a season."
     ),
+    no_pending: bool = typer.Option(
+        False,
+        "--no-pending",
+        help="Leave out proposals whose own quote says the law hasn't taken effect yet.",
+    ),
     cited: bool = typer.Option(
         False, "--cited", help="Only rules that name a section number, not a summary of one."
     ),
@@ -1896,7 +1904,7 @@ def facts_proposals(
     """
     settings = _settings()
     groups, waiting, path, _, _, priceless = _pick_groups(
-        settings, kind, topic, 1, False, no_rents, cited, wanted, 0, on_topic, off_topic
+        settings, kind, topic, 1, False, no_rents, no_pending, cited, wanted, 0, on_topic, off_topic
     )
     if not waiting:
         console.print("[yellow]Nothing waiting. Run `mark facts mine` first.[/yellow]")
@@ -1941,6 +1949,8 @@ def facts_proposals(
             notes.append("you cover this")
         if group.rent:
             notes.append("market rent")
+        if group.pending:
+            notes.append("[yellow]not yet law[/yellow]")
         table.add_row(
             escape(str(group.lead.get("topic", ""))[:52]),
             group.kind,
@@ -1957,6 +1967,14 @@ def facts_proposals(
             f"from 2023 is roughly still true; last season's asking rent is not, and in the "
             f"facts block Jay would state it as current. Add [bold]--no-rents[/bold] to "
             f"leave them out.[/dim]"
+        )
+    pending = [g for g in groups if g.pending]
+    if pending:
+        console.print(
+            f"\n[dim]{len(pending)} of these say, in their own quote, that the law hasn't "
+            f"taken effect yet - a bill headed to the governor, an ordinance still being "
+            f"considered. Accepting one files it as a rule a landlord already lives under, "
+            f"which it is not, yet. Add [bold]--no-pending[/bold] to leave them out.[/dim]"
         )
     asked_about = [g for g in groups if g.wanted]
     cited_ones = [g for g in groups if g.cited]
@@ -2006,6 +2024,11 @@ def facts_review(
     no_rents: bool = typer.Option(
         False, "--no-rents", help="Leave out market rent numbers, which go stale in a season."
     ),
+    no_pending: bool = typer.Option(
+        False,
+        "--no-pending",
+        help="Leave out proposals whose own quote says the law hasn't taken effect yet.",
+    ),
     cited: bool = typer.Option(
         False, "--cited", help="Only rules that name a section number, not a summary of one."
     ),
@@ -2041,7 +2064,17 @@ def facts_review(
 
     settings = _settings()
     groups, waiting, path, existing_ids, body, _ = _pick_groups(
-        settings, kind, topic, min_sources, new_only, no_rents, cited, wanted, 0, on_topic
+        settings,
+        kind,
+        topic,
+        min_sources,
+        new_only,
+        no_rents,
+        no_pending,
+        cited,
+        wanted,
+        0,
+        on_topic,
     )
     if not waiting:
         console.print("[yellow]Nothing to review. Run `mark facts mine` first.[/yellow]")
@@ -2133,6 +2166,7 @@ def facts_review(
             + (f", {group.support} sources say it" if group.support > 1 else "")
             + (", you already cover this subject" if group.known else "")
             + (", a market rent that will go stale" if group.rent else "")
+            + (", the quote says this hasn't taken effect yet" if group.pending else "")
             + (", somebody asked about this" if group.wanted else "")
             + (", nothing to do with renting" if not group.on_topic else "")
             + (

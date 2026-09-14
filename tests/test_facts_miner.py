@@ -651,6 +651,21 @@ def test_a_market_rent_is_labelled_so_it_can_be_left_out():
     assert group.rent is True
 
 
+def test_a_bill_not_yet_law_is_labelled_so_it_is_not_filed_as_settled():
+    from markai.facts_miner import group_proposals, is_pending_legislation
+
+    pending_quote = "The bill would exempt small buildings once it is enacted."
+    settled_quote = "The ordinance took effect on June 1, 2021 and is required citywide."
+    assert is_pending_legislation(_raw("Exemption", "r", pending_quote, "A")) is True
+    assert is_pending_legislation(_raw("Exemption", "r", settled_quote, "A")) is False
+    # A quote can say it plainly even where the topic never got the "(proposed)" hint.
+    headed_quote = "The measure is headed to the governor for signature."
+    assert is_pending_legislation(_raw("New rule", "r", headed_quote, "A")) is True
+
+    (group,) = group_proposals([_raw("New fee cap", "r", pending_quote, "A")])
+    assert group.pending is True
+
+
 def test_an_accepted_price_says_when_it_was_true():
     from markai.facts_miner import as_yaml_entry, insert_into_facts
 
