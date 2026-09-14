@@ -25,7 +25,12 @@ jobs:
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          # youtube-api alongside dev: tests/test_youtube_api.py exercises the official
+          # OAuth route with fakes (no real network, no real credentials), but the
+          # google-api-python-client/-auth packages it needs are an optional extra for
+          # end users, not part of dev - without it these tests fail at runtime with
+          # ModuleNotFoundError rather than being skipped.
+          pip install -e ".[dev,youtube-api]"
 
       - name: Lint
         run: |
