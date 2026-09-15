@@ -78,6 +78,36 @@
   .fit .note { color: var(--muted); font-size: 11px; }
   .fit .reset { border: none; background: none; color: var(--accent); font-size: 11px; padding: 0; cursor: pointer; }
   .empty { color: var(--muted); padding: 30px; text-align: center; }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover { background: var(--user, var(--bg)); }
+
+  .scrim {
+    position: fixed; inset: 0; background: rgba(0, 0, 0, .45);
+    display: flex; align-items: flex-start; justify-content: center;
+    padding: 40px 16px; overflow-y: auto; z-index: 10;
+  }
+  .card {
+    background: var(--panel); border-radius: 12px; max-width: 680px; width: 100%;
+    padding: 22px 24px 26px; box-shadow: 0 10px 40px rgba(0, 0, 0, .25);
+  }
+  .card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .card-head h2 { margin: 0 0 4px; font-size: 19px; }
+  .card-close { border: none; background: none; color: var(--muted); font-size: 22px; line-height: 1; padding: 2px 4px; cursor: pointer; }
+  .detail-contact { color: var(--muted); font-size: 13px; margin: 2px 0; }
+  .detail-section { margin-top: 18px; }
+  .detail-section h3 {
+    margin: 0 0 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
+    color: var(--muted);
+  }
+  .detail-row { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; }
+  .detail-row div { color: var(--muted); }
+  .detail-row strong { color: var(--ink); font-weight: 600; }
+  .loc-pending { font-style: italic; }
+  .thread { border: 1px solid var(--line); border-radius: 8px; margin-bottom: 12px; overflow: hidden; }
+  .thread-title { padding: 8px 12px; background: var(--bg); font-weight: 600; font-size: 13px; }
+  .thread-msg { padding: 10px 12px; border-top: 1px solid var(--line); font-size: 13.5px; white-space: pre-wrap; }
+  .thread-msg .who { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-bottom: 3px; }
+  .thread-msg.assistant { background: var(--bg); }
 </style>
 </head>
 <body>
@@ -101,6 +131,9 @@
     <div id="table-wrap"></div>
   </div>
 </main>
+<div class="scrim" id="detail-scrim" hidden>
+  <div class="card" id="detail-card"></div>
+</div>
 <script>
 (function () {
   "use strict";
@@ -165,6 +198,10 @@
 
   function renderRow(user) {
     var tr = el("tr");
+    tr.addEventListener("click", function (e) {
+      if (e.target.closest("input, button")) return;
+      openDetail(user.id);
+    });
 
     var who = el("td");
     if (user.anonymous) {
@@ -269,6 +306,127 @@
       })
       .catch(function () {
         showError("Could not reach the server. Try refresh.");
+      });
+  }
+
+  // --- the detail view: full contact info, full conversations, and a best-effort location --
+
+  var scrim = document.getElementById("detail-scrim");
+  var card = document.getElementById("detail-card");
+
+  function closeDetail() {
+    scrim.hidden = true;
+    card.textContent = "";
+  }
+
+  scrim.addEventListener("click", function (e) {
+    if (e.target === scrim) closeDetail();
+  });
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && !scrim.hidden) closeDetail();
+  });
+
+  function renderThread(thread) {
+    var box = el("div", "thread");
+    box.appendChild(el("div", "thread-title", thread.title || "New conversation"));
+    (thread.messages || []).forEach(function (m) {
+      var role = m.role === "assistant" ? "assistant" : "user";
+      var msg = el("div", "thread-msg " + role);
+      msg.appendChild(el("div", "who", role === "assistant" ? "Jay" : "Them"));
+      var body = el("div");
+      body.textContent = m.content || "";
+      msg.appendChild(body);
+      box.appendChild(msg);
+    });
+    return box;
+  }
+
+  function locationLine(ip) {
+    var line = el("div", "detail-contact loc-pending", "Location: looking up " + ip + "…");
+    // A best-effort client-side lookup, not a stored fact - a free geo-IP lookup by IP,
+    // nothing sent about the visitor beyond the address already on file for them.
+    fetch("https://ipapi.co/" + encodeURIComponent(ip) + "/json/")
+      .then(function (resp) { return resp.ok ? resp.json() : null; })
+      .then(function (data) {
+        line.classList.remove("loc-pending");
+        if (!data || data.error) {
+          line.textContent = "Location: could not resolve " + ip;
+          return;
+        }
+        var parts = [data.city, data.region, data.country_name].filter(Boolean);
+        line.textContent = "Location: " + (parts.length ? parts.join(", ") : "unknown") +
+          " (" + ip + ")";
+      })
+      .catch(function () {
+        line.classList.remove("loc-pending");
+        line.textContent = "Location: could not resolve " + ip;
+      });
+    return line;
+  }
+
+  function openDetail(ownerId) {
+    card.textContent = "";
+    card.appendChild(el("p", "contact", "Loading…"));
+    scrim.hidden = false;
+
+    fetch("/api/admin/users/" + encodeURIComponent(ownerId), { headers: headers() })
+      .then(function (resp) {
+        if (!resp.ok) throw new Error("load failed");
+        return resp.json();
+      })
+      .then(function (user) {
+        card.textContent = "";
+
+        var head = el("div", "card-head");
+        var titleWrap = el("div");
+        titleWrap.appendChild(
+          el("h2", "", user.anonymous ? "Anonymous visitor" : (user.name || "(no name)"))
+        );
+        if (!user.anonymous) {
+          if (user.email) titleWrap.appendChild(el("div", "detail-contact", user.email));
+          if (user.phone) titleWrap.appendChild(el("div", "detail-contact", user.phone));
+          if (user.neighborhood) titleWrap.appendChild(el("div", "detail-contact", user.neighborhood));
+        } else {
+          titleWrap.appendChild(el("div", "detail-contact", "Has not signed up"));
+        }
+        if (user.last_ip) {
+          titleWrap.appendChild(locationLine(user.last_ip));
+        }
+        head.appendChild(titleWrap);
+        var close = el("button", "card-close", "×");
+        close.type = "button";
+        close.setAttribute("aria-label", "Close");
+        close.addEventListener("click", closeDetail);
+        head.appendChild(close);
+        card.appendChild(head);
+
+        var flags = el("div", "detail-section");
+        flags.appendChild(el("h3", "", "Signals"));
+        var signalsWrap = el("div", "signals");
+        if (user.signals && user.signals.length) {
+          user.signals.forEach(function (flag) {
+            signalsWrap.appendChild(el("span", "signal", signalLabel(flag)));
+          });
+        } else {
+          signalsWrap.appendChild(el("span", "detail-contact", "None yet"));
+        }
+        flags.appendChild(signalsWrap);
+        card.appendChild(flags);
+
+        var convos = el("div", "detail-section");
+        convos.appendChild(el("h3", "", "Full conversation"));
+        if (user.threads && user.threads.length) {
+          user.threads.forEach(function (thread) {
+            convos.appendChild(renderThread(thread));
+          });
+        } else {
+          convos.appendChild(el("p", "contact", "No conversations yet."));
+        }
+        card.appendChild(convos);
+      })
+      .catch(function () {
+        card.textContent = "";
+        card.appendChild(el("p", "error", "Could not load this visitor. Close and try again."));
       });
   }
 

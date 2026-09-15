@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS pm_fit (
     owner_id        TEXT PRIMARY KEY,
     signals         TEXT NOT NULL DEFAULT '[]',
     manual_override INTEGER,
+    last_ip         TEXT NOT NULL DEFAULT '',
     updated_at      REAL NOT NULL
 );
 """
@@ -42,6 +43,7 @@ class PmFit:
     owner_id: str
     signals: list[str]
     manual_override: bool | None
+    last_ip: str
     updated_at: float
 
     @property
@@ -56,6 +58,7 @@ class PmFit:
             "signals": list(self.signals),
             "manual_override": self.manual_override,
             "good_fit": self.good_fit,
+            "last_ip": self.last_ip,
             "updated_at": self.updated_at,
         }
 
@@ -92,6 +95,11 @@ class AdminStore:
                 " WHERE owner_id NOT LIKE 'account:%' AND owner_id NOT LIKE 'browser:%'"
             )
             self._conn.commit()
+            columns.discard("account_id")
+            columns.add("owner_id")
+        if "last_ip" not in columns:
+            self._conn.execute("ALTER TABLE pm_fit ADD COLUMN last_ip TEXT NOT NULL DEFAULT ''")
+            self._conn.commit()
 
     @staticmethod
     def _row_to_fit(row: sqlite3.Row) -> PmFit:
@@ -104,6 +112,7 @@ class AdminStore:
             owner_id=row["owner_id"],
             signals=[str(s) for s in signals],
             manual_override=None if override is None else bool(override),
+            last_ip=row["last_ip"] or "",
             updated_at=float(row["updated_at"]),
         )
 
@@ -167,6 +176,31 @@ class AdminStore:
                     (stored, time.time(), owner_id),
                 )
 
+    def note_visit(self, owner_id: str, ip: str) -> None:
+        """Remember the most recent IP a request from this owner arrived from.
+
+        Runs on every question, signal or not, so a visitor who never trips a pain-point
+        flag is still reachable for the "location by IP" lookup in their detail view. Does
+        not touch `signals` or `manual_override` - a plain visit is not a fit signal.
+        """
+        if not owner_id or not ip:
+            return
+        with self._lock, self._conn:
+            row = self._conn.execute(
+                "SELECT owner_id FROM pm_fit WHERE owner_id = ?", (owner_id,)
+            ).fetchone()
+            if row is None:
+                self._conn.execute(
+                    "INSERT INTO pm_fit (owner_id, signals, last_ip, updated_at)"
+                    " VALUES (?, '[]', ?, ?)",
+                    (owner_id, ip, time.time()),
+                )
+            else:
+                self._conn.execute(
+                    "UPDATE pm_fit SET last_ip = ?, updated_at = ? WHERE owner_id = ?",
+                    (ip, time.time(), owner_id),
+                )
+
     def reassign(self, old_owner_id: str, new_owner_id: str) -> int:
         """Carry a visitor's signals into their new account the moment they sign up.
 
@@ -189,7 +223,7 @@ class AdminStore:
                 "SELECT * FROM pm_fit WHERE owner_id = ?", (new_owner_id,)
             ).fetchone()
             if new_row is None:
-                signals, override = old_fit.signals, old_fit.manual_override
+                signals, override, ip = old_fit.signals, old_fit.manual_override, old_fit.last_ip
             else:
                 new_fit = self._row_to_fit(new_row)
                 # De-duplicated, oldest first: order does not matter, only membership does.
@@ -199,15 +233,17 @@ class AdminStore:
                     if new_fit.manual_override is not None
                     else old_fit.manual_override
                 )
+                ip = new_fit.last_ip or old_fit.last_ip
             self._conn.execute(
-                "INSERT INTO pm_fit (owner_id, signals, manual_override, updated_at)"
-                " VALUES (?, ?, ?, ?) ON CONFLICT(owner_id) DO UPDATE SET"
+                "INSERT INTO pm_fit (owner_id, signals, manual_override, last_ip, updated_at)"
+                " VALUES (?, ?, ?, ?, ?) ON CONFLICT(owner_id) DO UPDATE SET"
                 " signals = excluded.signals, manual_override = excluded.manual_override,"
-                " updated_at = excluded.updated_at",
+                " last_ip = excluded.last_ip, updated_at = excluded.updated_at",
                 (
                     new_owner_id,
                     json.dumps(signals),
                     None if override is None else int(override),
+                    ip,
                     time.time(),
                 ),
             )

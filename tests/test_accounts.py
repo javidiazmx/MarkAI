@@ -74,6 +74,16 @@ def test_filling_the_form_remembers_this_device(accounts):
     assert accounts.needs_signup(account.owner_id) is False, "no wall on this device"
 
 
+def test_get_finds_an_account_by_its_bare_id(accounts):
+    account, _ = accounts.create(FORM)
+    assert accounts.get(account.id).email == "javier@example.com"
+
+
+def test_get_with_an_unknown_or_empty_id_is_none(accounts):
+    assert accounts.get("nope") is None
+    assert accounts.get("") is None
+
+
 def test_the_stored_session_is_not_the_token(accounts, tmp_path):
     import sqlite3
 

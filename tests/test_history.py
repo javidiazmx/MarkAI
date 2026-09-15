@@ -136,3 +136,24 @@ def test_anonymous_owners_is_newest_first(history):
 
 def test_anonymous_owners_is_empty_with_no_activity(history):
     assert history.anonymous_owners() == []
+
+
+def test_list_with_messages_includes_the_full_transcript(history):
+    history.record("b1", "t1", "How long for a deposit?", "45 days in Chicago.")
+    history.record("b1", "t1", "What about interest?", "Yes, annually.")
+
+    threads = history.list_with_messages("b1")
+    assert len(threads) == 1
+    assert threads[0].turns == 2
+    assert [m["content"] for m in threads[0].messages] == [
+        "How long for a deposit?",
+        "45 days in Chicago.",
+        "What about interest?",
+        "Yes, annually.",
+    ]
+
+
+def test_list_with_messages_is_scoped_to_one_owner(history):
+    history.record("b1", "t1", "Mine", "Answer")
+    history.record("b2", "t2", "Theirs", "Answer")
+    assert [t.id for t in history.list_with_messages("b1")] == ["t1"]

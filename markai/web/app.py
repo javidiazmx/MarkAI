@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Response
+from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
@@ -217,6 +217,22 @@ def create_app(
     def browser_of(x_browser_id: str | None = Header(default=None)) -> str:
         """Which browser is asking. Sent as a header so ids stay out of the request log."""
         return (x_browser_id or "").strip()[:128]
+
+    def client_ip_of(request: Request) -> str:
+        """The visitor's own address, for the admin panel's "location by IP" lookup.
+
+        `request.client.host` is the last hop, which behind a proxy or a Cloudflare tunnel
+        is the tunnel's own address, not theirs. `Cf-Connecting-Ip` (Cloudflare) and the
+        first hop of `X-Forwarded-For` (everything else) both carry the original address
+        when one is present, so they are tried first.
+        """
+        forwarded_for = request.headers.get("x-forwarded-for", "")
+        candidate = (
+            request.headers.get("cf-connecting-ip", "").strip()
+            or forwarded_for.split(",")[0].strip()
+            or (request.client.host if request.client else "")
+        )
+        return candidate[:64]
 
     def signed_in_of(mark_auth: str | None = Cookie(default=None)) -> Any:
         """The account behind the sign-in cookie, or None. HttpOnly: no script reads it."""
@@ -614,6 +630,33 @@ def create_app(
             )
         return {"users": users}
 
+    @app.get("/api/admin/users/{owner_id}")
+    def admin_user_detail(owner_id: str, _: None = Depends(require_admin_access)) -> dict[str, Any]:
+        """One visitor's full picture: contact details, the AI's call, and every full
+        conversation - the one place the transcript is shown, not just its title, and only
+        to staff behind the admin code.
+        """
+        account = None
+        if owner_id.startswith("account:"):
+            account = get_accounts().get(owner_id[len("account:") :])
+        fit = get_admin_store().get(owner_id)
+        threads = get_history().list_with_messages(owner_id)
+        if account is None and fit is None and not threads:
+            raise HTTPException(status_code=404, detail="No such visitor.")
+        return {
+            "id": owner_id,
+            "anonymous": account is None,
+            "name": account.name if account else "",
+            "email": account.email if account else "",
+            "phone": account.phone if account else "",
+            "neighborhood": account.neighborhood if account else "",
+            "last_ip": fit.last_ip if fit else "",
+            "signals": fit.signals if fit else [],
+            "good_fit": fit.good_fit if fit else False,
+            "manual_override": fit.manual_override if fit else None,
+            "threads": [t.to_dict(with_messages=True) for t in threads],
+        }
+
     @app.post("/api/admin/users/{owner_id}/override")
     def admin_override(
         owner_id: str,
@@ -760,9 +803,15 @@ def create_app(
         payload: ChatRequest,
         owner: str = Depends(owner_of),
         signed_in: Any = Depends(signed_in_of),
+        client_ip: str = Depends(client_ip_of),
         _: None = Depends(require_access),
     ) -> EventSourceResponse:
         from markai.advisor.attachments import AttachmentError, decode_all
+
+        if owner:
+            # Every question, signal or not, so a visitor who never trips a pain-point flag
+            # is still reachable for the admin panel's "location by IP" lookup.
+            get_admin_store().note_visit(owner, client_ip)
 
         message = (payload.message or "").strip()
         try:

@@ -319,6 +319,32 @@ class History:
             ).fetchall()
         return [(row["title"], float(row["updated_at"])) for row in rows]
 
+    def list_with_messages(self, owner_id: str, limit: int = 50) -> list[Thread]:
+        """Every thread for this owner, full transcript included.
+
+        For the admin panel only - `list()` deliberately withholds the transcript so the
+        sidebar never downloads one, but staff looking at a single visitor's detail page
+        want the whole conversation, not just its title.
+        """
+        if not owner_id:
+            return []
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, title, updated_at, turns, messages FROM threads WHERE owner_id = ?"
+                " ORDER BY updated_at DESC LIMIT ?",
+                (owner_id, max(1, min(limit, MAX_THREADS_PER_BROWSER))),
+            ).fetchall()
+        return [
+            Thread(
+                id=r["id"],
+                title=r["title"],
+                updated_at=r["updated_at"],
+                turns=r["turns"],
+                messages=json.loads(r["messages"]),
+            )
+            for r in rows
+        ]
+
     def get(self, owner_id: str, thread_id: str) -> Thread | None:
         with self._lock:
             row = self._conn.execute(

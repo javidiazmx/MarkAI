@@ -2556,3 +2556,92 @@ def test_staff_can_override_the_ai_and_clear_it_again(settings, store):
     cleared = next(u for u in users if u["id"] == account_id)
     assert cleared["good_fit"] is False
     assert cleared["manual_override"] is None
+
+
+# --- the per-visitor detail view: full info, the full transcript, and their IP ------------
+
+
+def test_the_detail_view_has_full_contact_info_and_the_full_transcript(settings, store):
+    settings = settings.model_copy(update={"admin_access_code": "staffonly"})
+    client = _client(settings, store, FakeAdvisor("45 days in Chicago."))
+    admin_headers = {"X-Admin-Code": "staffonly"}
+    client.post("/api/account", json=SIGNUP, headers={"X-Browser-Id": "b1"})
+    _ask(client, "t1", "How long for a deposit?")
+
+    owner_id = client.get("/api/admin/users", headers=admin_headers).json()["users"][0]["id"]
+    detail = client.get(f"/api/admin/users/{owner_id}", headers=admin_headers).json()
+
+    assert detail["anonymous"] is False
+    assert detail["email"] == "javier@example.com"
+    assert detail["phone"] == "312-555-0134"
+    assert len(detail["threads"]) == 1
+    assert [m["content"] for m in detail["threads"][0]["messages"]] == [
+        "How long for a deposit?",
+        "45 days in Chicago.",
+    ]
+
+
+def test_the_detail_view_works_for_an_anonymous_visitor_too(settings, store):
+    settings = settings.model_copy(update={"admin_access_code": "staffonly"})
+    client = _client(settings, store, FakeAdvisor())
+    admin_headers = {"X-Admin-Code": "staffonly"}
+    _ask(client, "t1", "How long for a deposit?")
+
+    owner_id = client.get("/api/admin/users", headers=admin_headers).json()["users"][0]["id"]
+    detail = client.get(f"/api/admin/users/{owner_id}", headers=admin_headers).json()
+
+    assert detail["anonymous"] is True
+    assert detail["email"] == "" and detail["name"] == ""
+    assert len(detail["threads"]) == 1
+
+
+def test_the_detail_view_is_gated_and_404s_for_an_unknown_visitor(settings, store):
+    settings = settings.model_copy(update={"admin_access_code": "staffonly"})
+    client = _client(settings, store)
+    assert client.get("/api/admin/users/browser:nobody").status_code == 401
+    assert (
+        client.get(
+            "/api/admin/users/browser:nobody", headers={"X-Admin-Code": "staffonly"}
+        ).status_code
+        == 404
+    )
+
+
+def test_a_chat_question_records_the_visitors_ip_for_the_detail_view(settings, store):
+    settings = settings.model_copy(update={"admin_access_code": "staffonly"})
+    client = _client(settings, store, FakeAdvisor())
+    admin_headers = {"X-Admin-Code": "staffonly"}
+    with client.stream(
+        "POST",
+        "/api/chat",
+        json={"session_id": "t1", "message": "How long for a deposit?"},
+        headers={"X-Browser-Id": "b1", "X-Forwarded-For": "203.0.113.7, 10.0.0.1"},
+    ) as response:
+        response.read()
+
+    owner_id = client.get("/api/admin/users", headers=admin_headers).json()["users"][0]["id"]
+    detail = client.get(f"/api/admin/users/{owner_id}", headers=admin_headers).json()
+    assert detail["last_ip"] == "203.0.113.7", "the first hop, not the proxy's own address"
+
+
+def test_cf_connecting_ip_wins_over_x_forwarded_for(settings, store):
+    """Cloudflare's own header names the real visitor; a generic forwarded-for can be spoofed
+    further upstream of it, so Cloudflare's is trusted first."""
+    settings = settings.model_copy(update={"admin_access_code": "staffonly"})
+    client = _client(settings, store, FakeAdvisor())
+    admin_headers = {"X-Admin-Code": "staffonly"}
+    with client.stream(
+        "POST",
+        "/api/chat",
+        json={"session_id": "t1", "message": "Hi"},
+        headers={
+            "X-Browser-Id": "b1",
+            "Cf-Connecting-Ip": "198.51.100.9",
+            "X-Forwarded-For": "203.0.113.7",
+        },
+    ) as response:
+        response.read()
+
+    owner_id = client.get("/api/admin/users", headers=admin_headers).json()["users"][0]["id"]
+    detail = client.get(f"/api/admin/users/{owner_id}", headers=admin_headers).json()
+    assert detail["last_ip"] == "198.51.100.9"

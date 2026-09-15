@@ -232,6 +232,16 @@ class Accounts:
             ).fetchone()
         return row is not None
 
+    def get(self, account_id: str) -> Account | None:
+        """One account by its bare id. For the admin panel's per-visitor detail view."""
+        if not account_id:
+            return None
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM accounts WHERE id = ?", (account_id,)
+            ).fetchone()
+        return None if row is None else self._row_to_account(row)
+
     def all(self, limit: int | None = None) -> list[tuple[Account, float]]:
         """Every signup, newest first, with when it happened. For `mark accounts`."""
         with self._lock:

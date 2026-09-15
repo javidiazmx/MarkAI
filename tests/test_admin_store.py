@@ -97,6 +97,37 @@ def test_a_row_survives_a_restart(tmp_path):
     second.close()
 
 
+# --- the last-seen IP, for the admin panel's location lookup ------------------------------
+
+
+def test_note_visit_records_the_ip_with_no_signal(tmp_path):
+    store = AdminStore(tmp_path / "admin.db")
+    store.note_visit("browser:b1", "203.0.113.7")
+    fit = store.get("browser:b1")
+    assert fit.last_ip == "203.0.113.7"
+    assert fit.signals == [], "a plain visit is not a fit signal"
+    store.close()
+
+
+def test_note_visit_updates_the_ip_without_touching_signals(tmp_path):
+    store = AdminStore(tmp_path / "admin.db")
+    store.record_signal("a1", "pm_interest")
+    store.note_visit("a1", "203.0.113.7")
+    store.note_visit("a1", "198.51.100.9")
+    fit = store.get("a1")
+    assert fit.last_ip == "198.51.100.9"
+    assert fit.signals == ["pm_interest"]
+    store.close()
+
+
+def test_note_visit_ignores_empty_owner_or_ip(tmp_path):
+    store = AdminStore(tmp_path / "admin.db")
+    store.note_visit("", "203.0.113.7")
+    store.note_visit("a1", "")
+    assert store.get("a1") is None
+    store.close()
+
+
 # --- reassigning a visitor's signals to their new account ---------------------------------
 
 
@@ -129,6 +160,14 @@ def test_reassign_keeps_a_manual_override_from_either_side(tmp_path):
     store.set_override("browser:b1", True)
     store.reassign("browser:b1", "account:a1")
     assert store.get("account:a1").manual_override is True
+    store.close()
+
+
+def test_reassign_carries_the_ip_forward(tmp_path):
+    store = AdminStore(tmp_path / "admin.db")
+    store.note_visit("browser:b1", "203.0.113.7")
+    store.reassign("browser:b1", "account:a1")
+    assert store.get("account:a1").last_ip == "203.0.113.7"
     store.close()
 
 
@@ -171,6 +210,33 @@ def test_an_old_database_keyed_on_a_bare_account_id_is_migrated(tmp_path):
     store = AdminStore(path)
     assert store.get("a1") is None, "the bare id no longer resolves"
     assert store.get("account:a1").signals == ["pm_interest"], "carried forward, now prefixed"
+    assert store.get("account:a1").last_ip == "", "a column this old database never had"
+    store.close()
+
+
+def test_a_database_with_owner_id_but_no_last_ip_column_is_migrated(tmp_path):
+    """The shape this table shipped in one release before `last_ip` was added."""
+    import sqlite3
+
+    path = tmp_path / "admin.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        "CREATE TABLE pm_fit (owner_id TEXT PRIMARY KEY, signals TEXT NOT NULL DEFAULT '[]',"
+        " manual_override INTEGER, updated_at REAL NOT NULL);"
+    )
+    conn.execute(
+        "INSERT INTO pm_fit (owner_id, signals, updated_at) VALUES (?, ?, ?)",
+        ("account:a1", '["pm_interest"]', 0.0),
+    )
+    conn.commit()
+    conn.close()
+
+    store = AdminStore(path)
+    fit = store.get("account:a1")
+    assert fit.signals == ["pm_interest"]
+    assert fit.last_ip == ""
+    store.note_visit("account:a1", "203.0.113.7")
+    assert store.get("account:a1").last_ip == "203.0.113.7"
     store.close()
 
 
