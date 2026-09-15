@@ -97,6 +97,83 @@ def test_a_row_survives_a_restart(tmp_path):
     second.close()
 
 
+# --- reassigning a visitor's signals to their new account ---------------------------------
+
+
+def test_a_visitors_signals_carry_over_to_their_new_account(tmp_path):
+    store = AdminStore(tmp_path / "admin.db")
+    store.record_signal("browser:b1", "tenant_trouble")
+
+    assert store.reassign("browser:b1", "account:a1") == 1
+    assert store.get("browser:b1") is None, "the anonymous row is gone"
+    assert store.get("account:a1").signals == ["tenant_trouble"]
+    store.close()
+
+
+def test_reassign_merges_rather_than_overwrites_an_existing_row(tmp_path):
+    """A landlord could ask something anonymous, sign up, then trip a second signal later -
+    a second reassign (e.g. re-running the flow in a test) must not lose the first one."""
+    store = AdminStore(tmp_path / "admin.db")
+    store.record_signal("account:a1", "pm_interest")
+    store.record_signal("browser:b1", "tenant_trouble")
+
+    store.reassign("browser:b1", "account:a1")
+
+    merged = store.get("account:a1")
+    assert merged.signals == ["pm_interest", "tenant_trouble"]
+    store.close()
+
+
+def test_reassign_keeps_a_manual_override_from_either_side(tmp_path):
+    store = AdminStore(tmp_path / "admin.db")
+    store.set_override("browser:b1", True)
+    store.reassign("browser:b1", "account:a1")
+    assert store.get("account:a1").manual_override is True
+    store.close()
+
+
+def test_reassign_with_no_anonymous_row_is_a_no_op(tmp_path):
+    store = AdminStore(tmp_path / "admin.db")
+    assert store.reassign("browser:b1", "account:a1") == 0
+    assert store.get("account:a1") is None
+    store.close()
+
+
+def test_reassign_ignores_empty_or_identical_owners(tmp_path):
+    store = AdminStore(tmp_path / "admin.db")
+    store.record_signal("browser:b1", "tenant_trouble")
+    assert store.reassign("", "account:a1") == 0
+    assert store.reassign("browser:b1", "") == 0
+    assert store.reassign("browser:b1", "browser:b1") == 0
+    assert store.get("browser:b1").signals == ["tenant_trouble"], "nothing was touched"
+    store.close()
+
+
+# --- carrying an older, bare-account-id database forward -----------------------------------
+
+
+def test_an_old_database_keyed_on_a_bare_account_id_is_migrated(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "admin.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        "CREATE TABLE pm_fit (account_id TEXT PRIMARY KEY, signals TEXT NOT NULL DEFAULT '[]',"
+        " manual_override INTEGER, updated_at REAL NOT NULL);"
+    )
+    conn.execute(
+        "INSERT INTO pm_fit (account_id, signals, updated_at) VALUES (?, ?, ?)",
+        ("a1", '["pm_interest"]', 0.0),
+    )
+    conn.commit()
+    conn.close()
+
+    store = AdminStore(path)
+    assert store.get("a1") is None, "the bare id no longer resolves"
+    assert store.get("account:a1").signals == ["pm_interest"], "carried forward, now prefixed"
+    store.close()
+
+
 # --- the alert email -----------------------------------------------------------------------
 
 

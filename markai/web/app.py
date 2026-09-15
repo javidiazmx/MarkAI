@@ -514,6 +514,7 @@ def create_app(
         get_history().reassign(anonymous, saved.owner_id)
         get_portfolio().reassign(anonymous, saved.owner_id)
         get_ledger().reassign(anonymous, saved.owner_id)
+        get_admin_store().reassign(anonymous, saved.owner_id)
         if not already_a_lead:
             # After the reassign, so the lead can carry what they already asked about.
             _queue_lead(saved)
@@ -564,17 +565,23 @@ def create_app(
 
     @app.get("/api/admin/users")
     def admin_users(_: None = Depends(require_admin_access)) -> dict[str, Any]:
-        """Every landlord, with a summary of what they asked and the AI's PM-fit call."""
+        """Every visitor with a summary of what they asked and the AI's PM-fit call.
+
+        Signed-up landlords first, with their contact details; then anonymous visitors who
+        asked a question but never signed up, identified only by owner id - there is no name
+        or email to show for them, but staff can still see they exist and what they asked.
+        """
         accounts = get_accounts()
         history = get_history()
         fits = get_admin_store().all()
         users = []
         for account, created_at in accounts.all():
             threads = history.list(account.owner_id, limit=5)
-            fit = fits.get(account.id)
+            fit = fits.get(account.owner_id)
             users.append(
                 {
-                    "id": account.id,
+                    "id": account.owner_id,
+                    "anonymous": False,
                     "name": account.name,
                     "email": account.email,
                     "phone": account.phone,
@@ -587,15 +594,33 @@ def create_app(
                     "manual_override": fit.manual_override if fit else None,
                 }
             )
+        for owner_id, last_seen in history.anonymous_owners():
+            threads = history.list(owner_id, limit=5)
+            fit = fits.get(owner_id)
+            users.append(
+                {
+                    "id": owner_id,
+                    "anonymous": True,
+                    "name": "",
+                    "email": "",
+                    "phone": "",
+                    "neighborhood": "",
+                    "created_at": last_seen,
+                    "summary": [t.title for t in threads],
+                    "signals": fit.signals if fit else [],
+                    "good_fit": fit.good_fit if fit else False,
+                    "manual_override": fit.manual_override if fit else None,
+                }
+            )
         return {"users": users}
 
-    @app.post("/api/admin/users/{account_id}/override")
+    @app.post("/api/admin/users/{owner_id}/override")
     def admin_override(
-        account_id: str,
+        owner_id: str,
         payload: PmFitOverrideRequest,
         _: None = Depends(require_admin_access),
     ) -> dict[str, Any]:
-        get_admin_store().set_override(account_id, payload.good_fit)
+        get_admin_store().set_override(owner_id, payload.good_fit)
         return {"saved": True}
 
     @app.get("/api/log")
@@ -797,16 +822,21 @@ def create_app(
                 accounts.count_question(owner)
 
         on_flags: Callable[[list[str]], None] | None = None
-        if signed_in is not None:
-
+        if owner:
+            # Signals are recorded for anyone with an owner id, signed in or not, so staff
+            # can see an anonymous visitor's activity too. The alert email and the CRM lead
+            # need a real contact, so those two still only fire once someone has signed in.
             def on_flags(flags: list[str]) -> None:
                 from markai.web.admin_store import send_pm_fit_alert_soon
 
                 admin_store = get_admin_store()
                 for flag, reason in PM_FIT_FLAGS.items():
-                    if flag in flags and admin_store.record_signal(signed_in.id, flag):
+                    if flag not in flags:
+                        continue
+                    newly_seen = admin_store.record_signal(owner, flag)
+                    if newly_seen and signed_in is not None:
                         send_pm_fit_alert_soon(get_pm_fit_sender(), signed_in, flag, reason)
-                if FLAG_PM_INTEREST in flags:
+                if FLAG_PM_INTEREST in flags and signed_in is not None:
                     _queue_candidate_lead(
                         signed_in, "pm_interest", "Asked Jay about hiring a property manager"
                     )

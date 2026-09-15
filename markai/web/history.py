@@ -282,6 +282,23 @@ class History:
             for r in rows
         ]
 
+    def anonymous_owners(self, limit: int = 200) -> list[tuple[str, float]]:
+        """Every `browser:<id>` that has asked at least one question, newest first.
+
+        For the admin panel: a visitor who has not signed up has no name or email, but they
+        did leave a `browser:<id>` owner id on their own threads the moment `record()` saved
+        one - the same rows `list()` reads for a signed-in account, just not attached to one.
+        Reassigned away the moment they do sign up, so nobody appears here twice.
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT owner_id, MAX(updated_at) AS last_at FROM threads"
+                " WHERE owner_id LIKE 'browser:%' GROUP BY owner_id"
+                " ORDER BY last_at DESC LIMIT ?",
+                (max(1, min(limit, 1000)),),
+            ).fetchall()
+        return [(r["owner_id"], float(r["last_at"])) for r in rows]
+
     def recent_topics(
         self, owner_id: str, limit: int = 5, exclude: str = ""
     ) -> list[tuple[str, float]]:

@@ -69,6 +69,7 @@
   th { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: .04em; }
   tr:last-child td { border-bottom: none; }
   .name { font-weight: 600; }
+  .anon-name { font-weight: 500; font-style: italic; color: var(--muted); }
   .contact { color: var(--muted); font-size: 12.5px; }
   .summary-line { margin: 0 0 3px; }
   .signals { display: flex; flex-wrap: wrap; gap: 4px; }
@@ -82,7 +83,7 @@
 <body>
 <header>
   <h1>Jay · Admin</h1>
-  <span class="tag">Landlords who have signed up, and who the AI thinks is worth a call.</span>
+  <span class="tag">Everyone who has used Jay, signed up or not, and who the AI thinks is worth a call.</span>
   <span class="sub" id="count-sub"></span>
 </header>
 <main>
@@ -166,9 +167,14 @@
     var tr = el("tr");
 
     var who = el("td");
-    who.appendChild(el("div", "name", user.name || "(no name)"));
-    who.appendChild(el("div", "contact", user.email || ""));
-    if (user.phone) who.appendChild(el("div", "contact", user.phone));
+    if (user.anonymous) {
+      who.appendChild(el("div", "name anon-name", "Anonymous visitor"));
+      who.appendChild(el("div", "contact", "Has not signed up"));
+    } else {
+      who.appendChild(el("div", "name", user.name || "(no name)"));
+      who.appendChild(el("div", "contact", user.email || ""));
+      if (user.phone) who.appendChild(el("div", "contact", user.phone));
+    }
     tr.appendChild(who);
 
     tr.appendChild(el("td", "", fmtWhen(user.created_at)));
@@ -216,13 +222,13 @@
   function renderTable(users) {
     wrap.textContent = "";
     if (!users.length) {
-      wrap.appendChild(el("div", "empty", "No landlords have signed up yet."));
+      wrap.appendChild(el("div", "empty", "Nobody has visited Jay yet."));
       return;
     }
     var table = el("table");
     var thead = el("thead");
     var headRow = el("tr");
-    ["Landlord", "Signed up", "Summary", "Signals", "Good fit for PM"].forEach(function (label) {
+    ["Landlord", "When", "Summary", "Signals", "Good fit for PM"].forEach(function (label) {
       headRow.appendChild(el("th", "", label));
     });
     thead.appendChild(headRow);
@@ -252,9 +258,13 @@
         bodyEl.hidden = false;
         var users = data.users || [];
         var fits = users.filter(function (u) { return u.good_fit; }).length;
-        countEl.textContent = users.length + " landlord" + (users.length === 1 ? "" : "s") +
+        var signedUp = users.filter(function (u) { return !u.anonymous; }).length;
+        var anon = users.length - signedUp;
+        countEl.textContent = users.length + " visitor" + (users.length === 1 ? "" : "s") +
           ", " + fits + " flagged as a good fit";
-        countSub.textContent = users.length ? (users.length + " signed up") : "";
+        countSub.textContent = users.length
+          ? (signedUp + " signed up, " + anon + " anonymous")
+          : "";
         renderTable(users);
       })
       .catch(function () {

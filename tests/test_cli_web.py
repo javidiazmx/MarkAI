@@ -2454,7 +2454,8 @@ def test_the_same_signal_twice_alerts_staff_only_once(settings, store):
     assert users[0]["signals"] == ["tenant_trouble"], "one fact, told twice, is still one signal"
 
 
-def test_an_anonymous_visitor_trips_no_pm_fit_signal(settings, store):
+def test_an_anonymous_visitor_shows_up_without_being_identified(settings, store):
+    """No name or email exists yet, but staff should still see the activity and the signal."""
     from markai.advisor.guardrails import FLAG_TENANT_TROUBLE
 
     settings = settings.model_copy(update={"admin_access_code": "staffonly"})
@@ -2462,7 +2463,52 @@ def test_an_anonymous_visitor_trips_no_pm_fit_signal(settings, store):
     _ask(client, "t1", "My tenant hasn't paid.")
 
     users = client.get("/api/admin/users", headers={"X-Admin-Code": "staffonly"}).json()["users"]
-    assert users == [], "there is nobody signed in to attach a signal to"
+    assert len(users) == 1
+    visitor = users[0]
+    assert visitor["anonymous"] is True
+    assert visitor["name"] == "" and visitor["email"] == "" and visitor["phone"] == ""
+    assert visitor["summary"] == ["My tenant hasn't paid"]
+    assert visitor["signals"] == ["tenant_trouble"]
+    assert visitor["good_fit"] is True
+
+
+def test_an_anonymous_visitors_signal_never_alerts_or_queues_a_lead(settings, store, monkeypatch):
+    """There is no contact to reach yet, so no email and no CRM lead - only for staff to see."""
+    from markai.advisor.guardrails import FLAG_PM_INTEREST
+
+    alerted = []
+    monkeypatch.setattr(
+        "markai.web.admin_store.send_pm_fit_alert_soon",
+        lambda sender, account, flag, reason: alerted.append(flag),
+    )
+    settings = settings.model_copy(update={"admin_access_code": "staffonly"})
+    client = _client(settings, store, FakeAdvisor(flags=[FLAG_PM_INTEREST]))
+    _ask(client, "t1", "How much does a property manager cost?")
+
+    assert alerted == []
+    assert _signals(settings) == []
+    users = client.get("/api/admin/users", headers={"X-Admin-Code": "staffonly"}).json()["users"]
+    assert users[0]["signals"] == ["pm_interest"]
+
+
+def test_an_anonymous_visitors_signals_carry_over_when_they_sign_up(settings, store):
+    """What they showed before the form is theirs, the same as their conversations already are."""
+    from markai.advisor.guardrails import FLAG_TENANT_TROUBLE
+
+    settings = settings.model_copy(update={"admin_access_code": "staffonly"})
+    client = _client(settings, store, FakeAdvisor(flags=[FLAG_TENANT_TROUBLE]))
+    admin_headers = {"X-Admin-Code": "staffonly"}
+    headers = {"X-Browser-Id": "b1"}
+    _ask(client, "t1", "My tenant hasn't paid.", browser="b1")
+
+    client.post("/api/account", json=SIGNUP, headers=headers)
+
+    users = client.get("/api/admin/users", headers=admin_headers).json()["users"]
+    assert len(users) == 1, "the anonymous row is gone, merged into the new account"
+    merged = users[0]
+    assert merged["anonymous"] is False
+    assert merged["email"] == "javier@example.com"
+    assert merged["signals"] == ["tenant_trouble"]
 
 
 def test_the_pm_interest_flag_still_reaches_the_crm_unchanged(settings, store):

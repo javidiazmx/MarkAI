@@ -113,3 +113,26 @@ def test_a_broken_database_loses_the_thread_not_the_answer(history, caplog):
     with caplog.at_level("WARNING"):
         history.record("b1", "t1", "Question", "Answer")
     assert "could not save conversation" in caplog.text
+
+
+# --- anonymous visitors, for the admin panel ---------------------------------------------
+
+
+def test_anonymous_owners_lists_only_browser_ids(history):
+    history.record("browser:b1", "t1", "My tenant stopped paying", "Answer")
+    history.record("account:a1", "t2", "A signed-up landlord's question", "Answer")
+
+    owners = [owner for owner, _ in history.anonymous_owners()]
+    assert owners == ["browser:b1"]
+
+
+def test_anonymous_owners_is_newest_first(history):
+    history.record("browser:b1", "t1", "First", "Answer")
+    history.record("browser:b2", "t2", "Second", "Answer")
+
+    owners = [owner for owner, _ in history.anonymous_owners()]
+    assert owners == ["browser:b2", "browser:b1"]
+
+
+def test_anonymous_owners_is_empty_with_no_activity(history):
+    assert history.anonymous_owners() == []
