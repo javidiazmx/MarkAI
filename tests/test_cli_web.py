@@ -865,6 +865,36 @@ def test_facts_stale_flags_an_old_dollar_figure_but_not_a_notice_period(tmp_path
     assert "1 rule(s) flagged" in result.stdout
 
 
+@respx.mock(assert_all_called=False)
+def test_facts_stale_check_live_confirms_a_figure_against_its_government_source(
+    tmp_path, monkeypatch, respx_mock
+):
+    from markai.sources.live_check import AUTHORITATIVE_SOURCES
+
+    _facts_dir(
+        tmp_path,
+        monkeypatch,
+        "ordinances:\n"
+        "  - id: fee-2021\n"
+        "    jurisdiction: Cook County, IL\n"
+        "    topic: Late fees\n"
+        "    rule: Late fees cannot exceed $10 for the first $1,000 of rent plus 5%.\n"
+        "    citation: What Is the Cook County RTLO That Passed January 2021\n",
+    )
+    respx_mock.get(AUTHORITATIVE_SOURCES["Suburban Cook County"]).mock(
+        return_value=httpx.Response(
+            200,
+            headers={"content-type": "text/html"},
+            text="<html><body><p>The late fee is $10 if the rent is $1000 or less, "
+            "plus 5% of any amount over $1000.</p></body></html>",
+        )
+    )
+    result = runner.invoke(app, ["facts", "stale", "--check-live"])
+    assert result.exit_code == 0
+    assert "confirmed" in result.stdout
+    assert "1 confirmed against an official source" in result.stdout
+
+
 def test_facts_probe_shows_what_a_question_would_pull_in(tmp_path, monkeypatch):
     _facts_dir(tmp_path, monkeypatch, GOOD_FACTS)
     result = runner.invoke(app, ["facts", "probe", "how long to return a deposit"])

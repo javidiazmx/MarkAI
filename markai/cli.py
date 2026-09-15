@@ -1678,6 +1678,15 @@ def facts_stale(
         "--max-age-years",
         help="Flag a rate/fee figure whose newest cited year is older than this.",
     ),
+    check_live: bool = typer.Option(
+        False,
+        "--check-live",
+        help=(
+            "Also fetch each flagged rule's official government source (when one is "
+            "registered) and look for the exact figures the rule states. Needs a network "
+            "connection; makes one request per flagged rule."
+        ),
+    ),
 ) -> None:
     """Rules worth a second look before they answer a landlord directly - a rate, fee, or
     dollar figure with an old or missing citation year. Not proof anything is wrong: a
@@ -1698,26 +1707,64 @@ def facts_stale(
             "flagged by this check."
         )
         return
+
+    live_results: dict[str, Any] = {}
+    if check_live:
+        from markai.ingest.websites import make_client
+        from markai.sources.live_check import check_live as run_live_check
+
+        by_id = {o.id: o for o in book.ordinances}
+        with make_client() as client:
+            for row in rows:
+                ordinance = by_id.get(row["id"])
+                if ordinance is not None:
+                    live_results[row["id"]] = run_live_check(ordinance, client)
+
     table = Table(show_header=True, header_style="bold", title="Worth a second look")
     table.add_column("Where")
     table.add_column("Topic")
     table.add_column("Citation")
     table.add_column("Newest year found")
     table.add_column("Why")
+    if check_live:
+        table.add_column("Live check")
     for row in rows:
-        table.add_row(
+        cells = [
             escape(row["jurisdiction"]),
             escape(row["topic"][:40]),
             escape(row["citation"][:50]),
             str(row["detected_year"] or "none found"),
             escape(row["reason"]),
-        )
+        ]
+        if check_live:
+            result = live_results.get(row["id"])
+            cells.append(_live_check_cell(result))
+        table.add_row(*cells)
     console.print(table)
     console.print(
         f"[yellow]{len(rows)} rule(s) flagged.[/yellow] Confirm each one is still current "
         "and update its citation/effective dates via a normal edit to facts.yaml, or run "
         "`mark facts mine` again over anything newer already in the source library."
     )
+    if check_live:
+        confirmed = sum(1 for r in live_results.values() if r.status == "confirmed")
+        console.print(
+            f"[dim]Live check: {confirmed} confirmed against an official source, "
+            f"{len(live_results) - confirmed} not confirmed (a government page not "
+            "mentioning a figure is not proof it changed - it just wasn't found there).[/dim]"
+        )
+
+
+def _live_check_cell(result: Any) -> str:
+    if result is None:
+        return "[dim]-[/dim]"
+    if result.status == "confirmed":
+        return "[green]confirmed[/green]"
+    if result.status == "not_found":
+        return "[yellow]not found on page[/yellow]"
+    if result.status == "fetch_failed":
+        return f"[red]could not fetch[/red] ({escape(result.detail[:40])})"
+    return "[dim]no source registered[/dim]"
 
 
 PROPOSALS_FILE = "facts-proposals.json"
