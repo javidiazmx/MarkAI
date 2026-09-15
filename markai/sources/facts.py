@@ -29,7 +29,10 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-MAX_SELECTED = 5
+# Raised from 5: a handful of city/county ordinances sharing "notice", "evict", "years" with
+# a question could fill every slot before a state-wide Illinois rule ever got a chance,
+# crowding out the one fact that actually applied to a landlord outside those jurisdictions.
+MAX_SELECTED = 8
 
 # Words that carry no matching signal, in either language the questions come in.
 _NOISE = frozenset(

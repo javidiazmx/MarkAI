@@ -1,4 +1,11 @@
 ordinances:
+  - id: mined-545
+    jurisdiction: "Illinois"
+    topic: "notice writing arrive least"
+    rule: "This notice must be in writing and must arrive to the tenant at least 30 days before their move-out date."
+    citation: "O'Flaherty Law: Illinois notice to move out"
+    url: "https://www.oflaherty-law.com/learn-about-law/how-much-notice-do-you-have-to-give-a-tenant-to-move-out-in-illinois"
+    notes: "From: This notice must be in writing and must arrive to the tenant at least 30 days before their move-out date."
   - id: mined-462
     jurisdiction: "Chicago"
     topic: "Minimum ceiling height by room type"

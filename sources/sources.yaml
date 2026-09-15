@@ -176,6 +176,18 @@ websites:
     max_pages: 30
     exclude_patterns: ["/news", "/event", "/search"]
 
+  # ilga.gov itself (the actual 735 ILCS 5/9-205 and 5/9-207 text) has a broken TLS cert
+  # chain - `mark sources probe` fails on it with CERTIFICATE_VERIFY_FAILED, not a robots
+  # or paywall problem. These two single pages are what fill that gap for landlords outside
+  # Chicago/Cook, where no local ordinance layers extra notice on top of the state minimum.
+  - url: https://www.oflaherty-law.com/learn-about-law/how-much-notice-do-you-have-to-give-a-tenant-to-move-out-in-illinois
+    title: "O'Flaherty Law: Illinois notice to move out"
+    crawl: false
+
+  - url: https://www.illinoislegalaid.org/legal-information/ending-lease
+    title: Illinois Legal Aid Online - Ending a lease (FAQ)
+    crawl: false
+
   # --- Ciudad de Chicago ---------------------------------------------------------------
   - url: https://www.chicago.gov/
     title: City of Chicago
