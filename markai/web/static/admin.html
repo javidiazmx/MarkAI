@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Jay · Admin</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f6f6f4;
+    --panel: #ffffff;
+    --ink: #1c1c1a;
+    --muted: #6b6b66;
+    --line: #e2e2dd;
+    --accent: #1f6f4a;
+    --accent-ink: #ffffff;
+    --warn-bg: #fdf6e3;
+    --warn-ink: #6b5518;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16171a;
+      --panel: #1e2024;
+      --ink: #ececea;
+      --muted: #9b9b96;
+      --line: #2f3238;
+      --accent: #3f9a6d;
+      --warn-bg: #2b2718;
+      --warn-ink: #e3cf95;
+    }
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  .vh {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+  }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  header {
+    padding: 14px 20px 12px; border-bottom: 1px solid var(--line); background: var(--panel);
+    display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+  }
+  h1 { margin: 0; font-size: 20px; letter-spacing: -0.015em; }
+  .tag { color: var(--muted); font-size: 13px; }
+  .sub { color: var(--muted); font-size: 12px; margin-left: auto; }
+  main { max-width: 1100px; margin: 0 auto; padding: 20px 16px 80px; }
+  .gate {
+    display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 16px; max-width: 420px; margin: 0 auto;
+  }
+  .gate input {
+    flex: 1 1 auto; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--ink); font: inherit;
+  }
+  button {
+    padding: 8px 14px; border-radius: 8px; border: 1px solid var(--line);
+    background: var(--accent); color: var(--accent-ink); font: inherit; cursor: pointer;
+  }
+  button.ghost { background: none; color: var(--ink); }
+  .error { color: var(--warn-ink); background: var(--warn-bg); border-radius: 8px; padding: 8px 12px; margin-top: 10px; font-size: 13px; }
+  .toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+  .toolbar .count { color: var(--muted); font-size: 13px; }
+  table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; font-size: 13.5px; }
+  th { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: .04em; }
+  tr:last-child td { border-bottom: none; }
+  .name { font-weight: 600; }
+  .contact { color: var(--muted); font-size: 12.5px; }
+  .summary-line { margin: 0 0 3px; }
+  .signals { display: flex; flex-wrap: wrap; gap: 4px; }
+  .signal { display: inline-block; font-size: 11px; padding: 2px 7px; border-radius: 20px; background: var(--warn-bg); color: var(--warn-ink); }
+  .fit { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .fit .note { color: var(--muted); font-size: 11px; }
+  .fit .reset { border: none; background: none; color: var(--accent); font-size: 11px; padding: 0; cursor: pointer; }
+  .empty { color: var(--muted); padding: 30px; text-align: center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Jay · Admin</h1>
+  <span class="tag">Landlords who have signed up, and who the AI thinks is worth a call.</span>
+  <span class="sub" id="count-sub"></span>
+</header>
+<main>
+  <div class="gate" id="gate">
+    <label class="vh" for="code">Admin code</label>
+    <input id="code" type="password" placeholder="Admin code" autocomplete="off" />
+    <button id="unlock" type="button">Unlock</button>
+  </div>
+  <div class="error" id="error" hidden></div>
+  <div id="body" hidden>
+    <div class="toolbar">
+      <button class="ghost" id="refresh" type="button">Refresh</button>
+      <span class="count" id="count"></span>
+    </div>
+    <div id="table-wrap"></div>
+  </div>
+</main>
+<script>
+(function () {
+  "use strict";
+  var gate = document.getElementById("gate");
+  var codeInput = document.getElementById("code");
+  var errorBox = document.getElementById("error");
+  var bodyEl = document.getElementById("body");
+  var wrap = document.getElementById("table-wrap");
+  var countEl = document.getElementById("count");
+  var countSub = document.getElementById("count-sub");
+
+  function adminCode() { return sessionStorage.getItem("mark_admin_code") || ""; }
+
+  function headers() {
+    var h = { "Content-Type": "application/json" };
+    var code = adminCode();
+    if (code) h["X-Admin-Code"] = code;
+    return h;
+  }
+
+  function el(tag, cls, text) {
+    var node = document.createElement(tag);
+    if (cls) node.className = cls;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+
+  function showError(message) {
+    errorBox.textContent = message;
+    errorBox.hidden = !message;
+  }
+
+  function fmtWhen(seconds) {
+    if (!seconds) return "";
+    var d = new Date(seconds * 1000);
+    return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  }
+
+  function signalLabel(flag) {
+    var labels = {
+      pm_interest: "Asked about a PM",
+      tenant_trouble: "Tenant trouble",
+      self_manage_burnout: "Burned out",
+      vacancy_help: "Vacancy help",
+      buying_interest: "Buying a rental"
+    };
+    return labels[flag] || flag;
+  }
+
+  function setOverride(accountId, value) {
+    fetch("/api/admin/users/" + encodeURIComponent(accountId) + "/override", {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({ good_fit: value })
+    }).then(function (resp) {
+      if (!resp.ok) throw new Error("save failed");
+      load();
+    }).catch(function () {
+      showError("Could not save that change. Try again.");
+    });
+  }
+
+  function renderRow(user) {
+    var tr = el("tr");
+
+    var who = el("td");
+    who.appendChild(el("div", "name", user.name || "(no name)"));
+    who.appendChild(el("div", "contact", user.email || ""));
+    if (user.phone) who.appendChild(el("div", "contact", user.phone));
+    tr.appendChild(who);
+
+    tr.appendChild(el("td", "", fmtWhen(user.created_at)));
+
+    var summary = el("td");
+    if (user.summary && user.summary.length) {
+      user.summary.forEach(function (title) {
+        summary.appendChild(el("p", "summary-line", title));
+      });
+    } else {
+      summary.appendChild(el("span", "contact", "No conversations yet"));
+    }
+    tr.appendChild(summary);
+
+    var signals = el("td");
+    var signalsWrap = el("div", "signals");
+    (user.signals || []).forEach(function (flag) {
+      signalsWrap.appendChild(el("span", "signal", signalLabel(flag)));
+    });
+    signals.appendChild(signalsWrap);
+    tr.appendChild(signals);
+
+    var fit = el("td");
+    var fitWrap = el("div", "fit");
+    var box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = !!user.good_fit;
+    box.addEventListener("change", function () {
+      setOverride(user.id, box.checked);
+    });
+    fitWrap.appendChild(box);
+    if (user.manual_override !== null && user.manual_override !== undefined) {
+      fitWrap.appendChild(el("span", "note", "staff set"));
+      var reset = el("button", "reset", "reset to AI");
+      reset.type = "button";
+      reset.addEventListener("click", function () { setOverride(user.id, null); });
+      fitWrap.appendChild(reset);
+    }
+    fit.appendChild(fitWrap);
+    tr.appendChild(fit);
+
+    return tr;
+  }
+
+  function renderTable(users) {
+    wrap.textContent = "";
+    if (!users.length) {
+      wrap.appendChild(el("div", "empty", "No landlords have signed up yet."));
+      return;
+    }
+    var table = el("table");
+    var thead = el("thead");
+    var headRow = el("tr");
+    ["Landlord", "Signed up", "Summary", "Signals", "Good fit for PM"].forEach(function (label) {
+      headRow.appendChild(el("th", "", label));
+    });
+    thead.appendChild(headRow);
+    table.appendChild(thead);
+    var tbody = el("tbody");
+    users.forEach(function (user) { tbody.appendChild(renderRow(user)); });
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+  }
+
+  function load() {
+    showError("");
+    fetch("/api/admin/users", { headers: headers() })
+      .then(function (resp) {
+        if (resp.status === 401) {
+          gate.hidden = false;
+          bodyEl.hidden = true;
+          showError("Wrong or missing admin code.");
+          return null;
+        }
+        if (!resp.ok) throw new Error("load failed");
+        return resp.json();
+      })
+      .then(function (data) {
+        if (!data) return;
+        gate.hidden = true;
+        bodyEl.hidden = false;
+        var users = data.users || [];
+        var fits = users.filter(function (u) { return u.good_fit; }).length;
+        countEl.textContent = users.length + " landlord" + (users.length === 1 ? "" : "s") +
+          ", " + fits + " flagged as a good fit";
+        countSub.textContent = users.length ? (users.length + " signed up") : "";
+        renderTable(users);
+      })
+      .catch(function () {
+        showError("Could not reach the server. Try refresh.");
+      });
+  }
+
+  document.getElementById("unlock").addEventListener("click", function () {
+    sessionStorage.setItem("mark_admin_code", codeInput.value.trim());
+    codeInput.value = "";
+    load();
+  });
+  document.getElementById("refresh").addEventListener("click", load);
+
+  if (adminCode()) load();
+})();
+</script>
+</body>
+</html>

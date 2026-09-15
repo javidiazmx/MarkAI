@@ -2359,3 +2359,154 @@ def test_the_page_links_a_bare_domain_a_phone_and_an_address():
     assert 'anchor("tel:+"' in page, "a phone number is one tap on the device reading it"
     assert 'anchor("mailto:" + href)' in page
     assert "link.href = target;" in page, "the href is built, never taken from the answer"
+
+
+# --- the admin panel ---------------------------------------------------------------------
+
+
+def test_the_admin_page_is_served(settings, store):
+    response = _client(settings, store).get("/admin")
+    assert response.status_code == 200
+    assert "Jay · Admin" in response.text
+
+
+def test_admin_routes_refuse_with_no_code_configured(settings, store):
+    """Unlike the landlord gate, an unset admin code refuses rather than allows."""
+    client = _client(settings, store)
+    assert client.get("/api/admin/users").status_code == 401
+    assert client.post("/api/admin/users/a1/override", json={"good_fit": True}).status_code == 401
+
+
+def test_admin_routes_are_gated_by_their_own_code(settings, store):
+    settings = settings.model_copy(update={"admin_access_code": "staffonly"})
+    client = _client(settings, store)
+    assert client.get("/api/admin/users").status_code == 401
+    assert client.get("/api/admin/users", headers={"X-Admin-Code": "wrong"}).status_code == 401
+
+    ok = client.get("/api/admin/users", headers={"X-Admin-Code": "staffonly"})
+    assert ok.status_code == 200
+    assert ok.json() == {"users": []}
+
+
+def test_the_landlord_access_code_does_not_open_the_admin_gate(settings, store):
+    """The two codes are independent - knowing one must grant nothing on the other."""
+    settings = settings.model_copy(
+        update={"web_access_code": "letmein", "admin_access_code": "staffonly"}
+    )
+    client = _client(settings, store)
+    assert client.get("/api/admin/users", headers={"X-Admin-Code": "letmein"}).status_code == 401
+
+
+def test_admin_users_lists_signups_with_a_summary_and_signals(settings, store):
+    settings = settings.model_copy(update={"admin_access_code": "staffonly"})
+    client = _client(settings, store, FakeAdvisor(flags=[]))
+    admin_headers = {"X-Admin-Code": "staffonly"}
+
+    client.post("/api/account", json=SIGNUP, headers={"X-Browser-Id": "b1"})
+    _ask(client, "t1", "How long for a deposit?")
+
+    users = client.get("/api/admin/users", headers=admin_headers).json()["users"]
+    assert len(users) == 1
+    user = users[0]
+    assert user["email"] == "javier@example.com"
+    assert user["name"] == "Javier Diaz"
+    assert user["summary"] == ["How long for a deposit"]
+    assert user["signals"] == []
+    assert user["good_fit"] is False
+
+
+def test_a_pain_point_flag_marks_the_landlord_a_good_fit_and_alerts_staff(
+    settings, store, monkeypatch
+):
+    """A signal marks the checkbox and fires the alert - synchronously here so the test
+    needs no thread join; `deliver_soon`'s own background-thread discipline is `crm.py`'s,
+    mirrored by `send_pm_fit_alert_soon` and covered directly in test_admin_store.py."""
+    from markai.advisor.guardrails import FLAG_TENANT_TROUBLE
+
+    sent = []
+    monkeypatch.setattr(
+        "markai.web.admin_store.send_pm_fit_alert_soon",
+        lambda sender, account, flag, reason: sent.append((account.email, flag)),
+    )
+
+    settings = settings.model_copy(update={"admin_access_code": "staffonly"})
+    client = _client(settings, store, FakeAdvisor(flags=[FLAG_TENANT_TROUBLE]))
+    client.post("/api/account", json=SIGNUP, headers={"X-Browser-Id": "b1"})
+    assert _ask(client, "t1", "My tenant hasn't paid in two months.").status_code == 200
+
+    users = client.get("/api/admin/users", headers={"X-Admin-Code": "staffonly"}).json()["users"]
+    assert users[0]["signals"] == ["tenant_trouble"]
+    assert users[0]["good_fit"] is True
+    assert sent == [("javier@example.com", "tenant_trouble")]
+
+
+def test_the_same_signal_twice_alerts_staff_only_once(settings, store):
+    from markai.advisor.guardrails import FLAG_TENANT_TROUBLE
+
+    settings = settings.model_copy(update={"admin_access_code": "staffonly"})
+    client = _client(settings, store, FakeAdvisor(flags=[FLAG_TENANT_TROUBLE]))
+    client.post("/api/account", json=SIGNUP, headers={"X-Browser-Id": "b1"})
+
+    _ask(client, "t1", "My tenant hasn't paid.")
+    _ask(client, "t2", "Still no rent from my tenant.")
+
+    users = client.get("/api/admin/users", headers={"X-Admin-Code": "staffonly"}).json()["users"]
+    assert users[0]["signals"] == ["tenant_trouble"], "one fact, told twice, is still one signal"
+
+
+def test_an_anonymous_visitor_trips_no_pm_fit_signal(settings, store):
+    from markai.advisor.guardrails import FLAG_TENANT_TROUBLE
+
+    settings = settings.model_copy(update={"admin_access_code": "staffonly"})
+    client = _client(settings, store, FakeAdvisor(flags=[FLAG_TENANT_TROUBLE]))
+    _ask(client, "t1", "My tenant hasn't paid.")
+
+    users = client.get("/api/admin/users", headers={"X-Admin-Code": "staffonly"}).json()["users"]
+    assert users == [], "there is nobody signed in to attach a signal to"
+
+
+def test_the_pm_interest_flag_still_reaches_the_crm_unchanged(settings, store):
+    """The existing pm_interest to LeadSimple path must not regress with the new alert."""
+    from markai.advisor.guardrails import FLAG_PM_INTEREST
+
+    settings = settings.model_copy(update={"admin_access_code": "staffonly"})
+    client = _client(settings, store, FakeAdvisor(flags=[FLAG_PM_INTEREST]))
+    client.post("/api/account", json=SIGNUP, headers={"X-Browser-Id": "b1"})
+    _ask(client, "t1", "How much does a property manager cost?")
+
+    assert _signals(settings) == ["pm_interest"]
+    users = client.get("/api/admin/users", headers={"X-Admin-Code": "staffonly"}).json()["users"]
+    assert users[0]["signals"] == ["pm_interest"]
+    assert users[0]["good_fit"] is True
+
+
+def test_staff_can_override_the_ai_and_clear_it_again(settings, store):
+    settings = settings.model_copy(update={"admin_access_code": "staffonly"})
+    client = _client(settings, store)
+    admin_headers = {"X-Admin-Code": "staffonly"}
+    made = client.post("/api/account", json=SIGNUP, headers={"X-Browser-Id": "b1"})
+    email = made.json()["email"]
+
+    users = client.get("/api/admin/users", headers=admin_headers).json()["users"]
+    account_id = next(u["id"] for u in users if u["email"] == email)
+
+    override = client.post(
+        f"/api/admin/users/{account_id}/override",
+        json={"good_fit": True},
+        headers=admin_headers,
+    )
+    assert override.json() == {"saved": True}
+    users = client.get("/api/admin/users", headers=admin_headers).json()["users"]
+    flagged = next(u for u in users if u["id"] == account_id)
+    assert flagged["good_fit"] is True
+    assert flagged["manual_override"] is True
+
+    client.post(
+        f"/api/admin/users/{account_id}/override",
+        json={"good_fit": None},
+        headers=admin_headers,
+    )
+    users = client.get("/api/admin/users", headers=admin_headers).json()["users"]
+    cleared = next(u for u in users if u["id"] == account_id)
+    assert cleared["good_fit"] is False
+    assert cleared["manual_override"] is None

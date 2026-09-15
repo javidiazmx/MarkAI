@@ -22,7 +22,22 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
-from markai.advisor.guardrails import FLAG_PM_INTEREST, IDENTITY_NOTICE
+from markai.advisor.guardrails import (
+    FLAG_BUYING_INTEREST,
+    FLAG_PM_INTEREST,
+    FLAG_SELF_MANAGE_BURNOUT,
+    FLAG_TENANT_TROUBLE,
+    FLAG_VACANCY_HELP,
+    IDENTITY_NOTICE,
+)
+
+PM_FIT_FLAGS = {
+    FLAG_PM_INTEREST: "Asked about hiring a property manager",
+    FLAG_TENANT_TROUBLE: "Described a problem with a current tenant",
+    FLAG_SELF_MANAGE_BURNOUT: "Sounded burned out managing it themselves",
+    FLAG_VACANCY_HELP: "Struggling to fill a vacancy",
+    FLAG_BUYING_INTEREST: "Actively shopping for a rental to buy",
+}
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +91,12 @@ class LogRequest(BaseModel):
     date: str = Field(default="", max_length=20)
     status: str = Field(default="", max_length=10)
     property_id: str = Field(default="", max_length=64)
+
+
+class PmFitOverrideRequest(BaseModel):
+    """The staff checkbox. ``None`` clears the override back to "follow the AI"."""
+
+    good_fit: bool | None = None
 
 
 class PropertyRequest(BaseModel):
@@ -169,6 +190,8 @@ def create_app(
         "ledger": None,
         "accounts": None,
         "crm": None,
+        "admin_store": None,
+        "pm_fit_sender": None,
     }
     sessions = _Sessions(settings.max_sessions)
     daily = _DailyCounter()
@@ -179,6 +202,17 @@ def create_app(
             return
         if not x_access_code or not hmac.compare_digest(x_access_code, expected):
             raise HTTPException(status_code=401, detail="Access code required.")
+
+    def require_admin_access(x_admin_code: str | None = Header(default=None)) -> None:
+        """Independent of `require_access`: knowing the landlord code grants nothing here.
+
+        Unlike the landlord gate, an unset code refuses rather than allows - this surface
+        holds every landlord's contact details at once, so it must never be reachable with
+        no code configured at all.
+        """
+        expected = settings.admin_code()
+        if not expected or not x_admin_code or not hmac.compare_digest(x_admin_code, expected):
+            raise HTTPException(status_code=401, detail="Admin code required.")
 
     def browser_of(x_browser_id: str | None = Header(default=None)) -> str:
         """Which browser is asking. Sent as a header so ids stay out of the request log."""
@@ -217,6 +251,21 @@ def create_app(
             sender, describe = sender_from_settings(settings)
             state["crm"] = Crm(settings.data_dir / "leads.db", sender=sender, describe=describe)
         return state["crm"]
+
+    def get_admin_store() -> Any:
+        if state["admin_store"] is None:
+            from markai.web.admin_store import AdminStore
+
+            settings.ensure_dirs()
+            state["admin_store"] = AdminStore(settings.data_dir / "admin.db")
+        return state["admin_store"]
+
+    def get_pm_fit_sender() -> Any:
+        if state["pm_fit_sender"] is None:
+            from markai.web.admin_store import pm_fit_alert_sender
+
+            state["pm_fit_sender"] = pm_fit_alert_sender(settings) or False
+        return state["pm_fit_sender"] or None
 
     def get_accounts() -> Any:
         if state["accounts"] is None:
@@ -509,6 +558,46 @@ def create_app(
         except Exception:
             logger.exception("could not queue a candidate lead")
 
+    @app.get("/admin")
+    def admin_page() -> FileResponse:
+        return FileResponse(STATIC_DIR / "admin.html")
+
+    @app.get("/api/admin/users")
+    def admin_users(_: None = Depends(require_admin_access)) -> dict[str, Any]:
+        """Every landlord, with a summary of what they asked and the AI's PM-fit call."""
+        accounts = get_accounts()
+        history = get_history()
+        fits = get_admin_store().all()
+        users = []
+        for account, created_at in accounts.all():
+            threads = history.list(account.owner_id, limit=5)
+            fit = fits.get(account.id)
+            users.append(
+                {
+                    "id": account.id,
+                    "name": account.name,
+                    "email": account.email,
+                    "phone": account.phone,
+                    "neighborhood": account.neighborhood,
+                    "created_at": created_at,
+                    # Their own words, newest first - the cheapest honest summary there is.
+                    "summary": [t.title for t in threads],
+                    "signals": fit.signals if fit else [],
+                    "good_fit": fit.good_fit if fit else False,
+                    "manual_override": fit.manual_override if fit else None,
+                }
+            )
+        return {"users": users}
+
+    @app.post("/api/admin/users/{account_id}/override")
+    def admin_override(
+        account_id: str,
+        payload: PmFitOverrideRequest,
+        _: None = Depends(require_admin_access),
+    ) -> dict[str, Any]:
+        get_admin_store().set_override(account_id, payload.good_fit)
+        return {"saved": True}
+
     @app.get("/api/log")
     def read_log(
         property_id: str = "",
@@ -711,6 +800,12 @@ def create_app(
         if signed_in is not None:
 
             def on_flags(flags: list[str]) -> None:
+                from markai.web.admin_store import send_pm_fit_alert_soon
+
+                admin_store = get_admin_store()
+                for flag, reason in PM_FIT_FLAGS.items():
+                    if flag in flags and admin_store.record_signal(signed_in.id, flag):
+                        send_pm_fit_alert_soon(get_pm_fit_sender(), signed_in, flag, reason)
                 if FLAG_PM_INTEREST in flags:
                     _queue_candidate_lead(
                         signed_in, "pm_interest", "Asked Jay about hiring a property manager"

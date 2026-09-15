@@ -296,6 +296,23 @@ class Settings(BaseSettings):
         default=None,
         description="If set, every /api/* request must send header X-Access-Code with this value.",
     )
+    admin_access_code: SecretStr | None = Field(
+        default=None,
+        description=(
+            "Required for every /api/admin/* request and the /admin page, sent as header "
+            "X-Admin-Code. Independent of web_access_code - unset refuses every admin "
+            "request rather than allowing them, since this surface holds every landlord's "
+            "contact details at once."
+        ),
+    )
+    pm_fit_alert_email_to: str = Field(
+        default="",
+        description=(
+            "Where to email staff when the AI flags a landlord as a good fit for property "
+            "management. Separate from lead_email_to, which is the automated CRM intake. "
+            "Needs the SMTP settings below. Empty: the feature is off."
+        ),
+    )
     max_sessions: int = Field(default=200, ge=1)
     max_question_chars: int = Field(default=4000, ge=100)
     daily_question_limit: int = Field(default=500, ge=1, description="Global per-UTC-day cap.")
@@ -351,6 +368,9 @@ class Settings(BaseSettings):
 
     def access_code(self) -> str | None:
         return self._reveal(self.web_access_code)
+
+    def admin_code(self) -> str | None:
+        return self._reveal(self.admin_access_code)
 
     def youtube_proxy(self) -> str | None:
         return self._reveal(self.youtube_proxy_url)
