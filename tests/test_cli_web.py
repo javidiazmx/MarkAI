@@ -1145,26 +1145,55 @@ def test_a_question_with_no_pm_interest_queues_nothing(settings, store):
     assert _signals(settings) == []
 
 
-def test_a_second_property_queues_a_candidate_lead(settings, store):
+def test_crossing_four_units_queues_a_candidate_lead_once(settings, store):
+    """4 units, not a 2nd property, is the documented self-management burnout point - three
+    single-families add up to the same load a "2nd property" count would miss entirely."""
     client = _client(settings, store)
     headers = {"X-Browser-Id": "b1"}
     client.post("/api/account", json=SIGNUP, headers=headers)
 
-    client.post("/api/properties", json={"label": "2145 W Division"}, headers=headers)
-    assert _signals(settings) == [], "one building is not a portfolio"
+    client.post("/api/properties", json={"label": "2145 W Division", "units": "1"}, headers=headers)
+    assert _signals(settings) == [], "one unit is nowhere near the line"
 
-    client.post("/api/properties", json={"label": "Berwyn six flat"}, headers=headers)
-    assert _signals(settings) == ["portfolio_growth"]
+    client.post("/api/properties", json={"label": "Berwyn two-flat", "units": "2"}, headers=headers)
+    assert _signals(settings) == [], "3 units total - not there yet"
 
-    client.post("/api/properties", json={"label": "A third building"}, headers=headers)
-    assert _signals(settings) == ["portfolio_growth"], "a tenth building is not new information"
+    client.post(
+        "/api/properties", json={"label": "Oak Park bungalow", "units": "1"}, headers=headers
+    )
+    assert _signals(settings) == ["portfolio_growth"], "4 units total crosses the line"
+
+    client.post(
+        "/api/properties", json={"label": "A fifth unit later", "units": "1"}, headers=headers
+    )
+    assert _signals(settings) == ["portfolio_growth"], "a fifth unit is not new information"
 
 
-def test_an_anonymous_visitors_second_property_queues_nothing(settings, store):
+def test_a_single_large_property_crosses_the_threshold_on_its_own(settings, store):
     client = _client(settings, store)
     headers = {"X-Browser-Id": "b1"}
-    client.post("/api/properties", json={"label": "2145 W Division"}, headers=headers)
-    client.post("/api/properties", json={"label": "Berwyn six flat"}, headers=headers)
+    client.post("/api/account", json=SIGNUP, headers=headers)
+
+    client.post("/api/properties", json={"label": "Berwyn six-flat", "units": "6"}, headers=headers)
+    assert _signals(settings) == ["portfolio_growth"], "one 6-unit building is past the line"
+
+
+def test_a_property_with_no_unit_count_counts_as_one(settings, store):
+    client = _client(settings, store)
+    headers = {"X-Browser-Id": "b1"}
+    client.post("/api/account", json=SIGNUP, headers=headers)
+
+    for label in ("A", "B", "C", "D"):
+        client.post("/api/properties", json={"label": label}, headers=headers)
+    assert _signals(settings) == ["portfolio_growth"], (
+        "4 properties, no units given, still counts as 4"
+    )
+
+
+def test_an_anonymous_visitors_properties_queue_nothing(settings, store):
+    client = _client(settings, store)
+    headers = {"X-Browser-Id": "b1"}
+    client.post("/api/properties", json={"label": "2145 W Division", "units": "6"}, headers=headers)
 
     assert _signals(settings) == [], "there is nobody to call yet"
 
@@ -2812,6 +2841,94 @@ def test_calc_deal_is_gated_by_the_access_code(settings, store):
     assert response.status_code == 401
 
 
+# --- the Notice Wizard endpoint -----------------------------------------------------------
+
+
+_NOTICE_FACTS = """
+ordinances:
+  - id: chi-notice
+    jurisdiction: Chicago
+    topic: Five day notice for nonpayment
+    rule: A five day notice may be served for nonpayment of rent.
+    citation: RLTO 5-12-130
+  - id: chi-renewal
+    jurisdiction: Chicago
+    topic: Lease renewal notice
+    rule: 60 days notice for non-renewal, 120 if the tenant has lived there three years or longer.
+    citation: Chicago Fair Notice Ordinance
+  - id: il-general
+    jurisdiction: Illinois
+    topic: Notice to terminate month-to-month tenancy
+    rule: Month-to-month rental agreements require thirty days notice before eviction can begin.
+    citation: 735 ILCS 5/9-207
+"""
+
+
+def _with_notice_facts(settings, tmp_path):
+    (tmp_path / "facts.yaml").write_text(_NOTICE_FACTS, encoding="utf-8")
+    return settings
+
+
+def test_notice_wizard_finds_a_chicago_rule(settings, store, tmp_path):
+    settings = _with_notice_facts(settings, tmp_path)
+    client = _client(settings, store)
+    response = client.post(
+        "/api/notice-wizard",
+        json={"jurisdiction": "Chicago", "reason": "nonpayment", "tenure_years": None},
+    )
+    assert response.status_code == 200
+    results = response.json()["results"]
+    assert len(results) > 0
+    assert all(r["jurisdiction"].lower().find("chicago") != -1 for r in results)
+    assert all(r["citation"] for r in results), "every result must still name its source"
+
+
+def test_notice_wizard_never_answers_a_suburb_with_a_chicago_only_rule(settings, store, tmp_path):
+    settings = _with_notice_facts(settings, tmp_path)
+    client = _client(settings, store)
+    response = client.post(
+        "/api/notice-wizard",
+        json={
+            "jurisdiction": "Illinois (no local ordinance)",
+            "reason": "no_cause_nonrenewal",
+            "tenure_years": 5.0,
+        },
+    )
+    assert response.status_code == 200
+    results = response.json()["results"]
+    assert results, "the DuPage/Illinois-general fact must surface"
+    for r in results:
+        jurisdiction = r["jurisdiction"].lower()
+        assert "chicago" not in jurisdiction and "cook" not in jurisdiction
+
+
+def test_notice_wizard_rejects_an_unknown_jurisdiction(settings, store):
+    client = _client(settings, store)
+    response = client.post(
+        "/api/notice-wizard",
+        json={"jurisdiction": "Narnia", "reason": "nonpayment"},
+    )
+    assert response.status_code == 400
+
+
+def test_notice_wizard_rejects_an_unknown_reason(settings, store):
+    client = _client(settings, store)
+    response = client.post(
+        "/api/notice-wizard",
+        json={"jurisdiction": "Chicago", "reason": "because I feel like it"},
+    )
+    assert response.status_code == 400
+
+
+def test_notice_wizard_is_gated_by_the_access_code(settings, store):
+    settings = settings.model_copy(update={"web_access_code": "letmein"})
+    client = _client(settings, store)
+    response = client.post(
+        "/api/notice-wizard", json={"jurisdiction": "Chicago", "reason": "nonpayment"}
+    )
+    assert response.status_code == 401
+
+
 # --- the Deal Analyzer panel and conversation search (index.html) -------------------------
 
 
@@ -2831,6 +2948,66 @@ def test_the_page_has_a_conversation_search_box():
 
     page = Path("markai/web/static/index.html").read_text(encoding="utf-8")
     assert 'id="thread-search"' in page
+
+
+def test_the_page_has_a_notice_wizard_panel():
+    from pathlib import Path
+
+    page = Path("markai/web/static/index.html").read_text(encoding="utf-8")
+    assert 'id="notice-card"' in page
+    assert "/api/notice-wizard" in page
+    assert "Chicago" in page and "Suburban Cook County" in page and "Evanston" in page
+    assert ".innerHTML" not in page.replace("never innerHTML", "")
+
+
+def test_the_notice_wizard_hides_citations_behind_a_click():
+    """Straight from the owner: showing a source line on every result by default reads as
+    a footnoted report, not a confident answer - it must be a click away, not on by default.
+
+    Scoped to just the result-rendering function, not the whole inline script (which also
+    contains the words "citation" and "source" throughout unrelated code) - otherwise this
+    would pass even if a future change stopped hiding the citation by default.
+    """
+    from pathlib import Path
+
+    page = Path("markai/web/static/index.html").read_text(encoding="utf-8")
+    start = page.index("function noticeResultRow")
+    end = page.index("\n  }", start)
+    result_row_fn = page[start:end]
+    assert "source.hidden = true" in result_row_fn, (
+        "the citation/source element must start hidden, not be shown by default"
+    )
+    assert "source.hidden = !source.hidden" in result_row_fn, (
+        "a toggle must be the only way to reveal it"
+    )
+
+
+def test_the_page_has_a_visible_tools_button_that_opens_the_command_palette():
+    """The command palette existed with no visible entry point before this - a hidden
+    Cmd/Ctrl+K shortcut is undiscoverable by definition."""
+    from pathlib import Path
+
+    page = Path("markai/web/static/index.html").read_text(encoding="utf-8")
+    assert "⌘K" in page or "&#8984;K" in page or "Tools" in page
+    assert 'id="palette-card"' in page
+
+
+def test_the_sidebar_groups_its_tools_under_a_visible_label():
+    from pathlib import Path
+
+    page = Path("markai/web/static/index.html").read_text(encoding="utf-8")
+    assert ">Tools<" in page
+
+
+def test_the_empty_state_lists_capabilities_without_reintroducing_clickable_chips():
+    """The starter-question chips were removed for looking basic - these are informational
+    labels, not buttons, and must not bring back a clickable chip."""
+    from pathlib import Path
+
+    page = Path("markai/web/static/index.html").read_text(encoding="utf-8")
+    start_section = page[page.index('id="start"') : page.index("</section>")]
+    assert 'class="chip"' not in start_section
+    assert len(start_section) > 200, "should list more than just the original two lines"
 
 
 # --- the admin panel toolbar and per-visitor actions (admin.html) -------------------------

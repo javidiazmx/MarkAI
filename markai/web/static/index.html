@@ -32,6 +32,9 @@
   }
   .tag { color: var(--muted); font-size: 13px; }
   .sub { color: var(--muted); font-size: 12px; margin-left: auto; }
+  /* Self-teaching: the label spells out the shortcut it opens, for anyone who would never
+     otherwise think to try Cmd/Ctrl+K. Opens the exact same palette the keyboard does. */
+  .header-tools { padding: 5px 11px; font-size: 12.5px; border-radius: 8px; white-space: nowrap; }
   /* Shown under an answer that touched a legal topic, not permanently at the top. */
   .banner {
     margin-top: 10px; padding: 9px 12px; border-radius: 8px;
@@ -108,6 +111,14 @@
   .start { padding: 8px 4px 4px; }
   .start h2 { margin: 0 0 4px; font-size: 17px; font-weight: 600; }
   .start p { margin: 0 0 18px; color: var(--muted); font-size: 14px; max-width: 52ch; }
+  /* A first-time visitor cannot yet know the sidebar exists. A plain, muted row of what
+     Jay can do - not chips, not buttons, just labels - says the full capability surface
+     up front instead of leaving it to be discovered by accident. */
+  .start-caps {
+    display: flex; flex-wrap: wrap; gap: 4px 10px; color: var(--muted); font-size: 13px;
+    margin: 0 0 18px;
+  }
+  .start-caps span.dot { opacity: .6; }
   footer {
     position: fixed; bottom: 0; left: 0; right: 0; background: var(--panel);
     border-top: 1px solid var(--line); padding: 12px 16px;
@@ -146,10 +157,10 @@
   .side-top button { padding: 5px 11px; font-size: 13px; border-radius: 8px; }
   #threads { flex: 1; overflow-y: auto; padding: 8px; min-height: 60px; }
   .side-section { border-top: 1px solid var(--line); padding: 8px; }
-  .side-section .side-head {
+  .side-section .side-head, .side-foot .side-head {
     display: flex; align-items: center; gap: 6px; padding: 2px 4px 6px;
   }
-  .side-section h3 {
+  .side-section h3, .side-foot h3 {
     margin: 0; flex: 1; font-size: 12px; font-weight: 600; text-transform: uppercase;
     letter-spacing: .06em; color: var(--muted);
   }
@@ -327,6 +338,34 @@
   .deal-save-row button { padding: 7px 12px; font-size: 13px; border-radius: 7px; white-space: nowrap; }
   .deal-save-msg { display: block; margin-top: 6px; font-size: 12px; min-height: 16px; }
 
+  /* Notice Wizard - the same stateless-lookup shape as the Deal Analyzer: a short form,
+     results that recalculate live below it, nothing saved. */
+  .notice-card { max-width: 28rem; width: 100%; }
+  .notice-sub { color: var(--muted); font-size: 13px; margin: 0 0 14px; }
+  #notice-form { display: grid; gap: 8px; }
+  #notice-form .field { display: grid; gap: 4px; }
+  #notice-form select, #notice-form input {
+    width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px;
+    background: var(--bg); color: var(--ink); font: inherit; font-size: 13px;
+  }
+  #notice-results { margin-top: 14px; min-height: 28px; }
+  .notice-result { padding: 10px 2px; border-top: 1px solid var(--line); }
+  .notice-result:first-child { border-top: 0; }
+  .notice-topic {
+    color: var(--muted); font-size: 11.5px; text-transform: uppercase; letter-spacing: .04em;
+    margin: 6px 0 2px;
+  }
+  .notice-rule { font-size: 14px; line-height: 1.55; }
+  /* The owner's own call: a citation under every result by default reads like a footnoted
+     research report, not a confident answer. It stays in the response, just not on screen
+     until asked for. */
+  .notice-source-toggle {
+    display: inline-block; margin-top: 6px; background: none; border: 0; padding: 0;
+    font: inherit; font-size: 12px; color: var(--muted); text-decoration: underline;
+    cursor: pointer;
+  }
+  .notice-source { margin-top: 5px; font-size: 12.5px; color: var(--muted); line-height: 1.5; }
+
   /* A nudge is a reminder, not an alert - calm, dismissible, gone for good once dismissed. */
   #nudges { max-width: 780px; margin: 0 auto; }
   .nudge-card {
@@ -444,7 +483,9 @@
   </div>
 
   <div class="side-foot">
+    <div class="side-head"><h3>Tools</h3></div>
     <button class="ghost" id="open-deal" type="button">Deal Analyzer</button>
+    <button class="ghost" id="open-notice-wizard" type="button">Which notice do I need?</button>
     <button class="ghost" id="handoff" type="button">Hand this to a property manager</button>
     <div class="whoami" id="whoami" hidden>
       <span id="whoami-name"></span>
@@ -614,11 +655,51 @@
   </div>
 </div>
 
+<div class="scrim" id="notice-card" hidden>
+  <div class="card notice-card">
+    <div class="deal-head">
+      <h2>Notice Wizard</h2>
+      <button class="ghost" id="notice-close" type="button" title="Close" aria-label="Close">✕</button>
+    </div>
+    <p class="notice-sub">Pick your situation and see which notice applies. Nothing here is
+      saved.</p>
+    <form id="notice-form">
+      <div class="field">
+        <label class="vh" for="notice-jurisdiction">Jurisdiction</label>
+        <select id="notice-jurisdiction">
+          <option value="Chicago">Chicago</option>
+          <option value="Suburban Cook County">Suburban Cook County</option>
+          <option value="Evanston">Evanston</option>
+          <option value="Illinois (no local ordinance)">Illinois (no local ordinance)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label class="vh" for="notice-reason">Reason</label>
+        <select id="notice-reason">
+          <option value="nonpayment">Tenant hasn't paid rent</option>
+          <option value="lease_violation">Tenant broke a lease term (unauthorized pet, guest, noise, damage)</option>
+          <option value="no_cause_nonrenewal">Ending the tenancy or not renewing, no fault of the tenant's</option>
+        </select>
+      </div>
+      <div class="field" id="notice-tenure-field" hidden>
+        <label class="vh" for="notice-tenure">How long has the tenant lived there? (years)</label>
+        <input id="notice-tenure" type="number" min="0" max="80" step="0.5"
+               placeholder="How long has the tenant lived there? (years)" />
+      </div>
+    </form>
+    <div id="notice-results"></div>
+    <p class="deal-note">Based on your own reviewed sources. Always confirm before serving a
+      notice.</p>
+  </div>
+</div>
+
 <header>
   <button class="ghost burger" id="burger" type="button" title="Saved conversations" aria-label="Saved conversations">☰</button>
   <h1>Jay</h1>
   <div class="tag">Your Chicagoland AI Advisor</div>
   <div class="sub" id="sub"></div>
+  <button class="ghost header-tools" id="open-tools" type="button"
+          title="Open the command palette">⌘K Tools</button>
 </header>
 
 <div class="scrim" id="welcome" hidden>
@@ -656,6 +737,15 @@
   <p>Built specifically to help Chicagoland landlords manage their rental property, not a
      general chatbot. If I don't know something, I'll say so.
      Pregunta en español si prefieres.</p>
+  <div class="start-caps">
+    <span>Ask a question</span>
+    <span class="dot" aria-hidden="true">·</span>
+    <span>Run the numbers</span>
+    <span class="dot" aria-hidden="true">·</span>
+    <span>Track a property</span>
+    <span class="dot" aria-hidden="true">·</span>
+    <span>Check your notice</span>
+  </div>
 </section>
 <div id="log"></div>
 </main>
@@ -2386,6 +2476,142 @@
     clearTimeout(dealTimer);
   });
 
+  // Notice Wizard -----------------------------------------------------------------------
+  // Same stateless-lookup shape as the Deal Analyzer above: a short form, results below it
+  // that recalculate as picks change, nothing saved and no AI call. The citation for each
+  // result is always in the response - the owner's call is to keep it off screen by default
+  // so an answer reads as Jay speaking plainly, not as a footnoted research report.
+  var noticeCard = document.getElementById("notice-card");
+  var noticeForm = document.getElementById("notice-form");
+  var noticeResults = document.getElementById("notice-results");
+  var noticeJurisdiction = document.getElementById("notice-jurisdiction");
+  var noticeReason = document.getElementById("notice-reason");
+  var noticeTenureField = document.getElementById("notice-tenure-field");
+  var noticeTenure = document.getElementById("notice-tenure");
+  var noticeTimer = null;
+  var noticeSeq = 0;  // out-of-order responses are dropped, not raced onto the page
+
+  function updateNoticeTenureVisibility() {
+    noticeTenureField.hidden = noticeReason.value !== "no_cause_nonrenewal";
+  }
+
+  // One result: a jurisdiction badge and the rule, plain and prominent. The citation and
+  // url sit in a collapsed sibling, revealed only by the "Source" toggle below it.
+  function noticeResultRow(item) {
+    var row = el("div", "notice-result");
+    row.appendChild(el("span", "badge", item.jurisdiction || ""));
+    if (item.topic) row.appendChild(el("div", "notice-topic", item.topic));
+    row.appendChild(el("div", "notice-rule", item.rule || ""));
+
+    if (item.citation || item.url) {
+      var source = el("div", "notice-source", item.citation || "");
+      source.hidden = true;
+      // Only ever an http(s) link - a stray non-web scheme in a mined URL should never
+      // become a clickable action on the page.
+      if (item.url && /^https?:\/\//i.test(item.url)) {
+        if (item.citation) source.appendChild(document.createTextNode(" "));
+        var link = el("a", "link", "Open source");
+        link.href = item.url;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        source.appendChild(link);
+      }
+      var toggle = el("button", "notice-source-toggle", "Source");
+      toggle.type = "button";
+      toggle.setAttribute("aria-expanded", "false");
+      toggle.addEventListener("click", function () {
+        source.hidden = !source.hidden;
+        toggle.textContent = source.hidden ? "Source" : "Hide source";
+        toggle.setAttribute("aria-expanded", source.hidden ? "false" : "true");
+      });
+      row.appendChild(toggle);
+      row.appendChild(source);
+    }
+    return row;
+  }
+
+  function drawNoticeLoading() {
+    noticeResults.textContent = "";
+    skeletonRows(noticeResults, 2);
+  }
+
+  function drawNoticeError(message) {
+    noticeResults.textContent = "";
+    noticeResults.appendChild(el("div", "danger-text", message));
+  }
+
+  function drawNoticeResults(results) {
+    noticeResults.textContent = "";
+    if (!results.length) {
+      noticeResults.appendChild(el("div", "side-empty",
+        "Nothing on file for this exact combination yet - ask Jay directly in chat."));
+      return;
+    }
+    results.forEach(function (item) { noticeResults.appendChild(noticeResultRow(item)); });
+  }
+
+  async function runNoticeLookup() {
+    var seq = ++noticeSeq;
+    drawNoticeLoading();
+    var payload = {
+      jurisdiction: noticeJurisdiction.value,
+      reason: noticeReason.value,
+      tenure_years: noticeReason.value === "no_cause_nonrenewal"
+        ? (noticeTenure.value === "" ? null : parseFloat(noticeTenure.value))
+        : null
+    };
+    var response;
+    var data = null;
+    try {
+      response = await fetch("/api/notice-wizard", {
+        method: "POST", headers: headers(), body: JSON.stringify(payload)
+      });
+      try { data = await response.json(); } catch (e) { /* no body */ }
+    } catch (error) {
+      if (seq !== noticeSeq) return;  // a newer request already landed
+      drawNoticeError("Could not reach the server: " + error);
+      return;
+    }
+    if (seq !== noticeSeq) return;  // a newer request already landed
+    if (!response.ok) {
+      var detail = "Could not look that up.";
+      if (data && typeof data.detail === "string") detail = data.detail;
+      drawNoticeError(detail);
+      return;
+    }
+    drawNoticeResults((data && data.results) || []);
+  }
+
+  function scheduleNoticeLookup() {
+    clearTimeout(noticeTimer);
+    noticeTimer = setTimeout(runNoticeLookup, 300);
+  }
+
+  noticeJurisdiction.addEventListener("change", scheduleNoticeLookup);
+  noticeReason.addEventListener("change", function () {
+    updateNoticeTenureVisibility();
+    scheduleNoticeLookup();
+  });
+  noticeTenure.addEventListener("input", scheduleNoticeLookup);
+  // No submit button by design, same as the Deal Analyzer - just caught so Enter in a
+  // field cannot fall through to a page reload.
+  noticeForm.addEventListener("submit", function (event) {
+    event.preventDefault();
+    clearTimeout(noticeTimer);
+    runNoticeLookup();
+  });
+
+  document.getElementById("open-notice-wizard").addEventListener("click", function () {
+    updateNoticeTenureVisibility();
+    noticeCard.hidden = false;
+    closeSide();
+    runNoticeLookup();
+  });
+  document.getElementById("notice-close").addEventListener("click", function () {
+    noticeCard.hidden = true;
+    clearTimeout(noticeTimer);
+  });
+
   async function loadStatus() {
     try {
       var response = await fetch("/api/status", { headers: headers() });
@@ -2469,6 +2695,9 @@
       { label: "New conversation", run: function () { startNew(); } },
       { label: "Open Deal Analyzer", run: function () {
           document.getElementById("open-deal").click();
+        } },
+      { label: "Open Notice Wizard", run: function () {
+          document.getElementById("open-notice-wizard").click();
         } },
       { label: "Open your properties", run: function () {
           side.classList.add("open");
@@ -2558,6 +2787,10 @@
       closePalette();
     }
   });
+
+  // The visible header button is the shortcut's own self-teaching entry point - it opens
+  // the identical palette Cmd/Ctrl+K does, never a copy of its logic.
+  document.getElementById("open-tools").addEventListener("click", openPalette);
 
   // Voice input ----------------------------------------------------------------------
   // The browser's own speech recognition, nothing server-side. Firefox has neither

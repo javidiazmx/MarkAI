@@ -152,6 +152,15 @@ class DealRequest(BaseModel):
     rehab: float = Field(default=0.0, ge=0)
 
 
+class NoticeWizardRequest(BaseModel):
+    """The Notice Wizard's guided picks - jurisdiction and reason are closed lists checked
+    server-side, tenure is optional (only the no-cause reason uses it)."""
+
+    jurisdiction: str
+    reason: str
+    tenure_years: float | None = Field(default=None, ge=0, le=100)
+
+
 class PropertyRequest(BaseModel):
     """One building as typed into the page. Lengths are trimmed again in the store."""
 
@@ -245,6 +254,7 @@ def create_app(
         "crm": None,
         "admin_store": None,
         "pm_fit_sender": None,
+        "facts": None,
     }
     sessions = _Sessions(settings.max_sessions)
     daily = _DailyCounter()
@@ -371,6 +381,15 @@ def create_app(
         from markai.web.ledger import OwnerLog
 
         return OwnerLog(get_ledger(), owner, get_portfolio().list(owner))
+
+    def get_facts() -> Any:
+        """Loaded once, same as the advisor's own copy - the Notice Wizard needs only this,
+        never the knowledge base or a model call, so it never waits on either."""
+        if state["facts"] is None:
+            from markai.sources.facts import facts_path, load_facts
+
+            state["facts"] = load_facts(facts_path(settings.sources_file))
+        return state["facts"]
 
     def get_store() -> Any:
         if state["store"] is None:
@@ -908,15 +927,26 @@ def create_app(
     ) -> dict[str, Any]:
         from markai.web.portfolio import PropertyError
 
+        # Units, not properties: a single 6-flat is past the self-management burnout point
+        # on its own, and three single-families add up to the same load a 2-property count
+        # would miss. 4 units is the documented tipping point landlords report burning out
+        # past, not a guess - a two-flat-to-three-flat landlord isn't there yet.
+        total_before = sum(p.units or 1 for p in get_portfolio().list(owner))
         try:
             saved = get_portfolio().add(owner, payload.model_dump())
         except PropertyError as exc:
             # The message names the field and the limit, so it is useful to show.
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        if signed_in is not None and len(get_portfolio().list(owner)) == 2:
-            # Exactly 2, not >= 2: this fires once, the turn a single-building landlord
-            # becomes a portfolio. A tenth building is not new information.
-            _queue_candidate_lead(signed_in, "portfolio_growth", "Now manages 2 properties")
+        total_after = total_before + (saved.units or 1)
+        if signed_in is not None and total_before < 4 <= total_after:
+            # Fires once, the moment the count crosses the line, however it gets there -
+            # one more small building or one big one added at once. A fifth unit later is
+            # not new information.
+            _queue_candidate_lead(
+                signed_in,
+                "portfolio_growth",
+                f"Now manages {total_after} units - past the self-management burnout point",
+            )
         return {"property": saved.to_dict()}
 
     @app.delete("/api/properties/{property_id}")
@@ -938,6 +968,35 @@ def create_app(
         from markai.advisor.calculators import analyze_deal
 
         return analyze_deal(**payload.model_dump())
+
+    @app.post("/api/notice-wizard")
+    def notice_wizard(
+        payload: NoticeWizardRequest, _: None = Depends(require_access)
+    ) -> dict[str, Any]:
+        """Which notice to serve, from the same reviewed, cited facts chat already uses -
+        a jurisdiction-filtered lookup, not a model call, so it is instant and free.
+        """
+        from markai.advisor.notice_wizard import JURISDICTIONS, REASONS, find_notice_rules
+
+        if payload.jurisdiction not in JURISDICTIONS:
+            raise HTTPException(status_code=400, detail="Unknown jurisdiction.")
+        if payload.reason not in REASONS:
+            raise HTTPException(status_code=400, detail="Unknown reason.")
+        results = find_notice_rules(
+            get_facts(), payload.jurisdiction, payload.reason, payload.tenure_years
+        )
+        return {
+            "results": [
+                {
+                    "jurisdiction": o.jurisdiction,
+                    "topic": o.topic,
+                    "rule": o.rule,
+                    "citation": o.citation,
+                    "url": o.url,
+                }
+                for o in results
+            ]
+        }
 
     @app.post("/api/feedback")
     def feedback(
