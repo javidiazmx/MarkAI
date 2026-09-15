@@ -927,6 +927,19 @@ def test_the_handoff_still_works_with_no_manifest(settings, store, tmp_path):
     assert "property manager" in notes["text"]
 
 
+def test_the_handoff_is_rate_limited_against_a_flood_from_one_address(settings, store):
+    """Signup and handoff are both reachable with no access code configured at all in a
+    real launch, so a script hammering either one has nothing else standing in its way -
+    a basic per-address cap must kick in."""
+    client = _client(settings, store)
+    headers = {"X-Browser-Id": "b1"}
+    for _ in range(10):
+        resp = client.post("/api/handoff", json={"session_id": "t1"}, headers=headers)
+        assert resp.status_code == 200
+    flooded = client.post("/api/handoff", json={"session_id": "t1"}, headers=headers)
+    assert flooded.status_code == 429
+
+
 def test_properties_and_the_handoff_are_gated_by_the_access_code(settings, store):
     settings = settings.model_copy(update={"web_access_code": "letmein"})
     client = _client(settings, store)

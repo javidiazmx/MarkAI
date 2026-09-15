@@ -259,6 +259,34 @@ class _AdminAttemptLimiter:
             self._attempts.pop(address, None)
 
 
+class _RateLimiter:
+    """A basic per-address flood guard, for the two forms reachable with no access code
+    configured at all (account signup, the property-manager handoff) - not a security
+    boundary the way the admin lockout above is, just a floor against one script
+    hammering either one. A burst over the cap is refused until the window rolls over,
+    then it simply works again; nothing is locked out.
+    """
+
+    def __init__(self, max_requests: int, window_seconds: float) -> None:
+        self._max_requests = max_requests
+        self._window_seconds = window_seconds
+        self._hits: OrderedDict[str, list[float]] = OrderedDict()
+        self._guard = threading.Lock()
+
+    def allow(self, address: str) -> bool:
+        now = time.monotonic()
+        with self._guard:
+            hits = [t for t in self._hits.get(address, []) if now - t < self._window_seconds]
+            allowed = len(hits) < self._max_requests
+            if allowed:
+                hits.append(now)
+            self._hits[address] = hits
+            self._hits.move_to_end(address)
+            while len(self._hits) > 1000:
+                self._hits.popitem(last=False)
+            return allowed
+
+
 def create_app(
     settings: Any | None = None,
     advisor: Any | None = None,
@@ -299,6 +327,7 @@ def create_app(
     sessions = _Sessions(settings.max_sessions)
     daily = _DailyCounter()
     admin_attempts = _AdminAttemptLimiter()
+    form_rate_limiter = _RateLimiter(max_requests=10, window_seconds=60.0)
 
     def require_access(x_access_code: str | None = Header(default=None)) -> None:
         expected = settings.access_code()
@@ -325,6 +354,10 @@ def create_app(
             admin_attempts.record_failure(address)
             raise HTTPException(status_code=401, detail="Admin code required.")
         admin_attempts.record_success(address)
+
+    def rate_limit_public_forms(request: Request) -> None:
+        if not form_rate_limiter.allow(client_ip_of(request)):
+            raise HTTPException(status_code=429, detail="Too many requests. Try again shortly.")
 
     def browser_of(x_browser_id: str | None = Header(default=None)) -> str:
         """Which browser is asking. Sent as a header so ids stay out of the request log."""
@@ -640,6 +673,7 @@ def create_app(
         response: Response,
         browser: str = Depends(browser_of),
         _: None = Depends(require_access),
+        __: None = Depends(rate_limit_public_forms),
     ) -> dict[str, Any]:
         from markai.web.accounts import SignupError, anonymous_owner
 
@@ -1062,6 +1096,7 @@ def create_app(
         payload: ResetRequest,
         owner: str = Depends(owner_of),
         _: None = Depends(require_access),
+        __: None = Depends(rate_limit_public_forms),
     ) -> dict[str, Any]:
         """Case notes for the property manager, built from what is already stored."""
         from markai.sources.manifest import load_manifest
