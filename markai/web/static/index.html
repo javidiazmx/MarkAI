@@ -373,6 +373,7 @@
     cursor: pointer;
   }
   .notice-source { margin-top: 5px; font-size: 12.5px; color: var(--muted); line-height: 1.5; }
+  .notice-escalation { margin: 4px 0 0; font-size: 13px; }
 
   /* A nudge is a reminder, not an alert - calm, dismissible, gone for good once dismissed. */
   #nudges { max-width: 780px; margin: 0 auto; }
@@ -696,8 +697,15 @@
       </div>
     </form>
     <div id="notice-results"></div>
-    <p class="deal-note">Based on your own reviewed sources. Always confirm before serving a
-      notice.</p>
+    <p class="deal-note">I'm not a lawyer, and this isn't legal advice - it does not
+      substitute for one, and nothing here is built to hold up in court on its own. Confirm
+      with an Illinois real estate attorney before serving a notice.</p>
+    <p class="deal-note">GC Realty &amp; Development has managed Chicagoland rental
+      properties since 2003 - property management, tenant screening, and leasing. If this
+      is turning into more than one notice, we can take it from here.</p>
+    <p class="notice-escalation" id="notice-escalation" hidden>
+      <a class="link" id="notice-escalation-link" target="_blank" rel="noopener noreferrer"></a>
+    </p>
   </div>
 </div>
 
@@ -2498,9 +2506,31 @@
   var noticeTenure = document.getElementById("notice-tenure");
   var noticeTimer = null;
   var noticeSeq = 0;  // out-of-order responses are dropped, not raced onto the page
+  var noticeEscalation = document.getElementById("notice-escalation");
+  var noticeEscalationLink = document.getElementById("notice-escalation-link");
+  var noticeEscalationLoaded = false;  // static config for this deployment - fetched once
 
   function updateNoticeTenureVisibility() {
     noticeTenureField.hidden = noticeReason.value !== "no_cause_nonrenewal";
+  }
+
+  // Who to call when a case has moved past what this tool can tell you. Reads the same
+  // manifest-configured contact the "Hand this to a property manager" handoff already
+  // uses - deleting that url turns the offer off here too, not just there.
+  async function loadNoticeEscalation() {
+    if (noticeEscalationLoaded) return;
+    noticeEscalationLoaded = true;
+    try {
+      var response = await fetch("/api/business", { headers: headers() });
+      var data = await response.json();
+      if (data && data.escalation_url) {
+        noticeEscalationLink.href = data.escalation_url;
+        noticeEscalationLink.textContent = "Talk to " + (data.escalation_name || "a property manager") + " about it";
+        noticeEscalation.hidden = false;
+      }
+    } catch (error) {
+      /* the disclaimer and the tool itself still work with no escalation contact */
+    }
   }
 
   // One result: a jurisdiction badge and the rule, plain and prominent. The citation and
@@ -2611,6 +2641,7 @@
 
   document.getElementById("open-notice-wizard").addEventListener("click", function () {
     updateNoticeTenureVisibility();
+    loadNoticeEscalation();
     noticeCard.hidden = false;
     closeSide();
     runNoticeLookup();

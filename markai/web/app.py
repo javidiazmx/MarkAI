@@ -1091,6 +1091,27 @@ def create_app(
         saved = get_history().rate(owner, payload.session_id, payload.rating, payload.note)
         return {"saved": saved}
 
+    def _escalation_contact() -> tuple[str | None, str | None]:
+        """Who to hand a case to when it has moved past what a tool can tell you, and the
+        one place both `/api/handoff` and `/api/business` read it from - so deleting the
+        url from the manifest turns the offer off everywhere at once, not just one of them.
+        """
+        from markai.sources.manifest import load_manifest
+
+        try:
+            business = load_manifest(settings.sources_file).business
+            return business.escalation_name, business.escalation_url
+        except (FileNotFoundError, ValueError) as exc:
+            logger.warning("no escalation contact available: %s", exc)
+            return None, None
+
+    @app.get("/api/business")
+    def business_info(_: None = Depends(require_access)) -> dict[str, Any]:
+        """Static, deployment-wide config a tool's own footer needs - not session or
+        user-specific, so the page can fetch this once and hold onto it."""
+        name, url = _escalation_contact()
+        return {"escalation_name": name, "escalation_url": url}
+
     @app.post("/api/handoff")
     def handoff(
         payload: ResetRequest,
@@ -1099,15 +1120,9 @@ def create_app(
         __: None = Depends(rate_limit_public_forms),
     ) -> dict[str, Any]:
         """Case notes for the property manager, built from what is already stored."""
-        from markai.sources.manifest import load_manifest
         from markai.web.handoff import build_handoff
 
-        name, url = None, None
-        try:
-            business = load_manifest(settings.sources_file).business
-            name, url = business.escalation_name, business.escalation_url
-        except (FileNotFoundError, ValueError) as exc:
-            logger.warning("no escalation contact available: %s", exc)
+        name, url = _escalation_contact()
 
         return {
             "text": build_handoff(

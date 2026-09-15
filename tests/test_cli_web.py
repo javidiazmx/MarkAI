@@ -989,6 +989,28 @@ def test_the_handoff_still_works_with_no_manifest(settings, store, tmp_path):
     assert "property manager" in notes["text"]
 
 
+def test_business_info_shares_the_same_escalation_contact_as_the_handoff(tmp_path, settings, store):
+    manifest = tmp_path / "sources.yaml"
+    manifest.write_text(
+        "websites: []\nbusiness:\n  name: GC Realty\n  escalation_name: Russell\n"
+        "  escalation_url: https://calendly.com/example/20min\n",
+        encoding="utf-8",
+    )
+    settings = settings.model_copy(update={"sources_file": manifest})
+    client = _client(settings, store)
+    info = client.get("/api/business", headers={"X-Browser-Id": "b1"}).json()
+    assert info == {
+        "escalation_name": "Russell",
+        "escalation_url": "https://calendly.com/example/20min",
+    }
+
+
+def test_business_info_is_gated_by_the_access_code(settings, store):
+    settings = settings.model_copy(update={"web_access_code": "letmein"})
+    client = _client(settings, store)
+    assert client.get("/api/business", headers={"X-Browser-Id": "b1"}).status_code == 401
+
+
 def test_the_handoff_is_rate_limited_against_a_flood_from_one_address(settings, store):
     """Signup and handoff are both reachable with no access code configured at all in a
     real launch, so a script hammering either one has nothing else standing in its way -
@@ -3103,6 +3125,23 @@ def test_the_notice_wizard_hides_citations_behind_a_click():
     assert "source.hidden = !source.hidden" in result_row_fn, (
         "a toggle must be the only way to reveal it"
     )
+
+
+def test_the_notice_wizard_footer_has_the_not_a_lawyer_disclaimer_and_an_escalation_link():
+    """The owner caught the old footer ("Based on your own reviewed sources...") reading
+    like a source citation was itself the legal cover - it needs a real not-a-lawyer
+    disclaimer, and a path to a human (Russell) when a case is past what the tool answers.
+    """
+    from pathlib import Path
+
+    page = Path("markai/web/static/index.html").read_text(encoding="utf-8")
+    start = page.index('id="notice-card"')
+    end = page.index("</script>")
+    wizard_section = page[start:end]
+    assert "not a lawyer" in wizard_section.lower()
+    assert "legal advice" in wizard_section.lower()
+    assert 'id="notice-escalation"' in wizard_section and "hidden" in wizard_section
+    assert "/api/business" in wizard_section
 
 
 def test_the_page_has_a_visible_tools_button_that_opens_the_command_palette():
