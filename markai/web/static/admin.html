@@ -87,8 +87,14 @@
     width: 100%; min-height: 70px; padding: 8px 10px; border-radius: var(--radius-sm);
     border: 1px solid var(--line); background: var(--bg); color: var(--ink); font: inherit; resize: vertical;
   }
-  .thread { border: 1px solid var(--line); border-radius: 8px; margin-bottom: 12px; overflow: hidden; }
-  .thread-title { padding: 8px 12px; background: var(--bg); font-weight: 600; font-size: 13px; }
+  .thread { border: 1px solid var(--line); border-radius: 8px; margin-bottom: 8px; overflow: hidden; }
+  .thread-title {
+    padding: 8px 12px; background: var(--bg); font-weight: 600; font-size: 13px;
+    cursor: pointer; list-style: none;
+  }
+  .thread-title::-webkit-details-marker { display: none; }
+  .thread-title::before { content: "▸ "; color: var(--muted); }
+  .thread[open] .thread-title::before { content: "▾ "; }
   .thread-msg { padding: 10px 12px; border-top: 1px solid var(--line); font-size: 13.5px; white-space: pre-wrap; }
   .thread-msg .who { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-bottom: 3px; }
   .thread-msg.assistant { background: var(--bg); }
@@ -552,9 +558,12 @@
     if (e.key === "Escape" && !scrim.hidden) closeDetail();
   });
 
+  // Collapsed by default and opened by clicking the title - a visitor with several
+  // conversations used to dump every message from every one of them into the card at once,
+  // which is also most of why the card ran off the bottom of the screen with no way back.
   function renderThread(thread) {
-    var box = el("div", "thread");
-    box.appendChild(el("div", "thread-title", thread.title || "New conversation"));
+    var box = el("details", "thread");
+    box.appendChild(el("summary", "thread-title", thread.title || "New conversation"));
     (thread.messages || []).forEach(function (m) {
       var role = m.role === "assistant" ? "assistant" : "user";
       var msg = el("div", "thread-msg " + role);

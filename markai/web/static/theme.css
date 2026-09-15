@@ -102,6 +102,11 @@
   background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-lg);
   padding: var(--space-5); max-width: 46rem; box-shadow: var(--shadow-md);
   animation: card-in .16s cubic-bezier(.2, .9, .3, 1.2);
+  /* A card taller than the viewport used to just run off the bottom of the screen with no
+     way to reach the rest of it, or the close button, on a long conversation. It scrolls
+     internally instead now, the same way any other overflowing panel here already does. */
+  max-height: calc(100vh - 2 * var(--space-5));
+  overflow-y: auto;
 }
 @keyframes scrim-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes card-in {

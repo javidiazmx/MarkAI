@@ -3196,6 +3196,27 @@ def test_the_admin_page_has_bulk_select_and_bulk_hide():
     assert ".innerHTML" not in page.replace("never innerHTML", "")
 
 
+def test_the_admin_detail_card_scrolls_instead_of_running_off_the_screen():
+    """A visitor with a long conversation used to overflow the modal past the bottom of
+    the screen with no way to reach the rest of it, or the close button."""
+    from pathlib import Path
+
+    theme = Path("markai/web/static/theme.css").read_text(encoding="utf-8")
+    card_rule = theme[theme.index(".card {") : theme.index("}", theme.index(".card {"))]
+    assert "overflow-y: auto" in card_rule
+    assert "max-height" in card_rule
+
+
+def test_each_conversation_in_the_detail_card_is_collapsed_until_clicked():
+    """Every message from every thread used to render at once - now each conversation is
+    a collapsed <details> the staff member opens by clicking its title."""
+    from pathlib import Path
+
+    page = Path("markai/web/static/admin.html").read_text(encoding="utf-8")
+    assert 'el("details", "thread")' in page
+    assert 'el("summary", "thread-title"' in page
+
+
 # --- CSV export formula-injection guard ----------------------------------------------------
 
 
