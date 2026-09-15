@@ -1,0 +1,164 @@
+/* Shared design system for the landlord chat app and the staff admin panel.
+   Both pages link this, then define only what is genuinely page-specific (index.html's
+   --side sidebar width, admin.html's table styles). Keeping one file means the two
+   surfaces read as one product instead of two different apps. */
+
+:root {
+  color-scheme: light dark;
+  --bg: #f6f6f4;
+  --panel: #ffffff;
+  --ink: #1c1c1a;
+  --muted: #6b6b66;
+  --line: #e2e2dd;
+  --accent: #1f6f4a;
+  --accent-ink: #ffffff;
+  --user: #eef2f7;
+  --warn-bg: #fdf6e3;
+  --warn-ink: #6b5518;
+  --danger: #b3261e;
+  --danger-bg: #fdecea;
+  --success: #1f6f4a;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+
+  --shadow-sm: 0 1px 3px rgba(20, 20, 18, .08);
+  --shadow-md: 0 10px 40px rgba(0, 0, 0, .25);
+
+  --text-xs: 11px;
+  --text-sm: 12.5px;
+  --text-md: 14px;
+  --text-lg: 16px;
+  --text-xl: 18px;
+  --text-2xl: 22px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16171a;
+    --panel: #1e2024;
+    --ink: #ececea;
+    --muted: #9b9b96;
+    --line: #2f3238;
+    --accent: #3f9a6d;
+    --user: #24272d;
+    --warn-bg: #2b2718;
+    --warn-ink: #e3cf95;
+    --danger: #e07a72;
+    --danger-bg: #33201f;
+    --success: #3f9a6d;
+  }
+}
+
+* { box-sizing: border-box; }
+
+/* Any `display` rule of ours beats the browser's own [hidden]: a card that still covers
+   the page and swallows clicks, invisible but present, is a failure mode this project has
+   already hit once. Settle it here, for every page that links this file. */
+[hidden] { display: none !important; }
+
+.vh {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+
+/* --- buttons -------------------------------------------------------------------------- */
+
+.btn {
+  border: 0; border-radius: var(--radius-sm); padding: 0 var(--space-4);
+  height: 38px; background: var(--accent); color: var(--accent-ink);
+  font-weight: 600; cursor: pointer; font-size: var(--text-md);
+  transition: opacity .12s ease, transform .06s ease;
+}
+.btn:hover { opacity: .92; }
+.btn:active { transform: scale(.98); }
+.btn:disabled { opacity: .5; cursor: default; transform: none; }
+.btn-ghost {
+  background: transparent; color: var(--ink); border: 1px solid var(--line);
+}
+.btn-ghost:hover { border-color: var(--accent); color: var(--accent); opacity: 1; }
+.btn-danger { background: var(--danger); color: #fff; }
+.btn-sm { height: 30px; padding: 0 var(--space-3); font-size: var(--text-sm); }
+
+/* --- modals: scrim + card, with a fade/scale-in instead of an instant toggle ---------- */
+
+.scrim {
+  position: fixed; inset: 0; z-index: 30; display: flex; align-items: center;
+  justify-content: center; padding: var(--space-4); background: rgba(20, 20, 18, .55);
+  animation: scrim-in .15s ease;
+}
+/* This rule is why [hidden] is forced !important above: hiding the card used to leave an
+   invisible sheet over the whole page, swallowing every click. */
+.scrim[hidden] { display: none; }
+.card {
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-lg);
+  padding: var(--space-5); max-width: 46rem; box-shadow: var(--shadow-md);
+  animation: card-in .16s cubic-bezier(.2, .9, .3, 1.2);
+}
+@keyframes scrim-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes card-in {
+  from { opacity: 0; transform: scale(.97) translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .scrim, .card { animation: none; }
+}
+
+/* --- loading skeletons ------------------------------------------------------------------ */
+
+.skeleton {
+  border-radius: var(--radius-sm); background: linear-gradient(
+    90deg, var(--line) 25%, var(--bg) 37%, var(--line) 63%
+  );
+  background-size: 400% 100%;
+  animation: skeleton-shimmer 1.4s ease infinite;
+}
+@keyframes skeleton-shimmer {
+  0% { background-position: 100% 50%; }
+  100% { background-position: 0 50%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none; background: var(--line); }
+}
+.skeleton-row { height: 16px; margin: var(--space-2) 0; }
+
+/* --- toasts ------------------------------------------------------------------------------ */
+
+.toast-stack {
+  position: fixed; bottom: var(--space-4); right: var(--space-4); z-index: 40;
+  display: flex; flex-direction: column; gap: var(--space-2); max-width: 320px;
+}
+.toast {
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md); padding: var(--space-3) var(--space-4);
+  font-size: var(--text-sm); color: var(--ink);
+  animation: toast-in .16s ease;
+}
+.toast.error { border-color: var(--danger); color: var(--danger); }
+.toast.success { border-color: var(--success); }
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
+
+/* --- empty states -------------------------------------------------------------------- */
+
+.empty-state {
+  text-align: center; color: var(--muted); padding: var(--space-6) var(--space-4);
+  font-size: var(--text-md); line-height: 1.5;
+}
+.empty-state .icon { font-size: 28px; margin-bottom: var(--space-2); opacity: .7; }
+.empty-state .cta { margin-top: var(--space-3); }
+
+/* --- misc shared bits ------------------------------------------------------------------ */
+
+.danger-text { color: var(--danger); }

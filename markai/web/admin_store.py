@@ -25,12 +25,16 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+MAX_NOTES_CHARS = 4000
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS pm_fit (
     owner_id        TEXT PRIMARY KEY,
     signals         TEXT NOT NULL DEFAULT '[]',
     manual_override INTEGER,
     last_ip         TEXT NOT NULL DEFAULT '',
+    notes           TEXT NOT NULL DEFAULT '',
+    hidden          INTEGER NOT NULL DEFAULT 0,
     updated_at      REAL NOT NULL
 );
 """
@@ -44,6 +48,8 @@ class PmFit:
     signals: list[str]
     manual_override: bool | None
     last_ip: str
+    notes: str
+    hidden: bool
     updated_at: float
 
     @property
@@ -59,6 +65,8 @@ class PmFit:
             "manual_override": self.manual_override,
             "good_fit": self.good_fit,
             "last_ip": self.last_ip,
+            "notes": self.notes,
+            "hidden": self.hidden,
             "updated_at": self.updated_at,
         }
 
@@ -100,6 +108,12 @@ class AdminStore:
         if "last_ip" not in columns:
             self._conn.execute("ALTER TABLE pm_fit ADD COLUMN last_ip TEXT NOT NULL DEFAULT ''")
             self._conn.commit()
+        if "notes" not in columns:
+            self._conn.execute("ALTER TABLE pm_fit ADD COLUMN notes TEXT NOT NULL DEFAULT ''")
+            self._conn.commit()
+        if "hidden" not in columns:
+            self._conn.execute("ALTER TABLE pm_fit ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0")
+            self._conn.commit()
 
     @staticmethod
     def _row_to_fit(row: sqlite3.Row) -> PmFit:
@@ -113,6 +127,8 @@ class AdminStore:
             signals=[str(s) for s in signals],
             manual_override=None if override is None else bool(override),
             last_ip=row["last_ip"] or "",
+            notes=row["notes"] or "",
+            hidden=bool(row["hidden"]),
             updated_at=float(row["updated_at"]),
         )
 
@@ -176,6 +192,47 @@ class AdminStore:
                     (stored, time.time(), owner_id),
                 )
 
+    def set_notes(self, owner_id: str, notes: str) -> None:
+        """Free-text staff notes. Not shown to the landlord, never in an alert email."""
+        if not owner_id:
+            return
+        text = str(notes or "").strip()[:MAX_NOTES_CHARS]
+        with self._lock, self._conn:
+            row = self._conn.execute(
+                "SELECT owner_id FROM pm_fit WHERE owner_id = ?", (owner_id,)
+            ).fetchone()
+            if row is None:
+                self._conn.execute(
+                    "INSERT INTO pm_fit (owner_id, signals, notes, updated_at)"
+                    " VALUES (?, '[]', ?, ?)",
+                    (owner_id, text, time.time()),
+                )
+            else:
+                self._conn.execute(
+                    "UPDATE pm_fit SET notes = ?, updated_at = ? WHERE owner_id = ?",
+                    (text, time.time(), owner_id),
+                )
+
+    def set_hidden(self, owner_id: str, value: bool) -> None:
+        """Soft-hide a visitor from the default admin view. Never deletes their row."""
+        if not owner_id:
+            return
+        with self._lock, self._conn:
+            row = self._conn.execute(
+                "SELECT owner_id FROM pm_fit WHERE owner_id = ?", (owner_id,)
+            ).fetchone()
+            if row is None:
+                self._conn.execute(
+                    "INSERT INTO pm_fit (owner_id, signals, hidden, updated_at)"
+                    " VALUES (?, '[]', ?, ?)",
+                    (owner_id, int(value), time.time()),
+                )
+            else:
+                self._conn.execute(
+                    "UPDATE pm_fit SET hidden = ?, updated_at = ? WHERE owner_id = ?",
+                    (int(value), time.time(), owner_id),
+                )
+
     def note_visit(self, owner_id: str, ip: str) -> None:
         """Remember the most recent IP a request from this owner arrived from.
 
@@ -224,6 +281,7 @@ class AdminStore:
             ).fetchone()
             if new_row is None:
                 signals, override, ip = old_fit.signals, old_fit.manual_override, old_fit.last_ip
+                notes, hidden = old_fit.notes, old_fit.hidden
             else:
                 new_fit = self._row_to_fit(new_row)
                 # De-duplicated, oldest first: order does not matter, only membership does.
@@ -234,16 +292,22 @@ class AdminStore:
                     else old_fit.manual_override
                 )
                 ip = new_fit.last_ip or old_fit.last_ip
+                notes = new_fit.notes or old_fit.notes
+                hidden = new_fit.hidden or old_fit.hidden
             self._conn.execute(
-                "INSERT INTO pm_fit (owner_id, signals, manual_override, last_ip, updated_at)"
-                " VALUES (?, ?, ?, ?, ?) ON CONFLICT(owner_id) DO UPDATE SET"
+                "INSERT INTO pm_fit (owner_id, signals, manual_override, last_ip, notes,"
+                " hidden, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(owner_id) DO UPDATE SET"
                 " signals = excluded.signals, manual_override = excluded.manual_override,"
-                " last_ip = excluded.last_ip, updated_at = excluded.updated_at",
+                " last_ip = excluded.last_ip, notes = excluded.notes,"
+                " hidden = excluded.hidden, updated_at = excluded.updated_at",
                 (
                     new_owner_id,
                     json.dumps(signals),
                     None if override is None else int(override),
                     ip,
+                    notes,
+                    int(hidden),
                     time.time(),
                 ),
             )

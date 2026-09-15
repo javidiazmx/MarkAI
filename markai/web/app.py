@@ -99,6 +99,40 @@ class PmFitOverrideRequest(BaseModel):
     good_fit: bool | None = None
 
 
+class PmFitNotesRequest(BaseModel):
+    """Free-text staff notes on one visitor. Trimmed and length-capped in the store."""
+
+    notes: str = Field(default="", max_length=4000)
+
+
+class PmFitHiddenRequest(BaseModel):
+    """Soft-hide (or restore) a visitor from the default admin view."""
+
+    hidden: bool = False
+
+
+class DealRequest(BaseModel):
+    """The Deal Analyzer form. Field names and defaults mirror ``calculators.analyze_deal``
+    exactly, so the web panel, ``mark calc deal``, and the AI tool-call all agree."""
+
+    price: float = Field(gt=0)
+    down_payment_pct: float = Field(default=0.25, ge=0, le=1)
+    annual_rate: float = Field(default=0.07, ge=0, le=1)
+    years: int = Field(default=30, gt=0, le=50)
+    monthly_rent: float = Field(ge=0)
+    other_income_monthly: float = Field(default=0.0, ge=0)
+    vacancy_rate: float = Field(default=0.05, ge=0, le=1)
+    taxes_annual: float = Field(default=0.0, ge=0)
+    insurance_annual: float = Field(default=0.0, ge=0)
+    maintenance_pct: float = Field(default=0.05, ge=0, le=1)
+    capex_pct: float = Field(default=0.05, ge=0, le=1)
+    management_pct: float = Field(default=0.0, ge=0, le=1)
+    hoa_monthly: float = Field(default=0.0, ge=0)
+    utilities_monthly: float = Field(default=0.0, ge=0)
+    closing_costs: float = Field(default=0.0, ge=0)
+    rehab: float = Field(default=0.0, ge=0)
+
+
 class PropertyRequest(BaseModel):
     """One building as typed into the page. Lengths are trimmed again in the store."""
 
@@ -579,22 +613,21 @@ def create_app(
     def admin_page() -> FileResponse:
         return FileResponse(STATIC_DIR / "admin.html")
 
-    @app.get("/api/admin/users")
-    def admin_users(_: None = Depends(require_admin_access)) -> dict[str, Any]:
-        """Every visitor with a summary of what they asked and the AI's PM-fit call.
+    @app.get("/theme.css")
+    def theme_css() -> FileResponse:
+        return FileResponse(STATIC_DIR / "theme.css", media_type="text/css")
 
-        Signed-up landlords first, with their contact details; then anonymous visitors who
-        asked a question but never signed up, identified only by owner id - there is no name
-        or email to show for them, but staff can still see they exist and what they asked.
+    def _admin_rows(history: Any, fits: dict[str, Any]) -> list[dict[str, Any]]:
+        """Every visitor as a flat dict, signed-up landlords first, then anonymous ones.
+
+        Shared by the JSON listing and the CSV export so the two can never drift apart.
         """
         accounts = get_accounts()
-        history = get_history()
-        fits = get_admin_store().all()
-        users = []
+        rows: list[dict[str, Any]] = []
         for account, created_at in accounts.all():
             threads = history.list(account.owner_id, limit=5)
             fit = fits.get(account.owner_id)
-            users.append(
+            rows.append(
                 {
                     "id": account.owner_id,
                     "anonymous": False,
@@ -608,12 +641,14 @@ def create_app(
                     "signals": fit.signals if fit else [],
                     "good_fit": fit.good_fit if fit else False,
                     "manual_override": fit.manual_override if fit else None,
+                    "notes": fit.notes if fit else "",
+                    "hidden": fit.hidden if fit else False,
                 }
             )
         for owner_id, last_seen in history.anonymous_owners():
             threads = history.list(owner_id, limit=5)
             fit = fits.get(owner_id)
-            users.append(
+            rows.append(
                 {
                     "id": owner_id,
                     "anonymous": True,
@@ -626,9 +661,69 @@ def create_app(
                     "signals": fit.signals if fit else [],
                     "good_fit": fit.good_fit if fit else False,
                     "manual_override": fit.manual_override if fit else None,
+                    "notes": fit.notes if fit else "",
+                    "hidden": fit.hidden if fit else False,
                 }
             )
-        return {"users": users}
+        return rows
+
+    @app.get("/api/admin/users")
+    def admin_users(
+        include_hidden: bool = False, _: None = Depends(require_admin_access)
+    ) -> dict[str, Any]:
+        """Every visitor with a summary of what they asked and the AI's PM-fit call.
+
+        Hidden visitors are left out unless ``include_hidden=1`` - hiding is soft (a flag,
+        not a delete), so the "Show hidden" toggle in the admin page is how one comes back.
+        """
+        rows = _admin_rows(get_history(), get_admin_store().all())
+        if not include_hidden:
+            rows = [r for r in rows if not r["hidden"]]
+        return {"users": rows}
+
+    @app.get("/api/admin/users/export.csv")
+    def admin_users_export(
+        include_hidden: bool = False, _: None = Depends(require_admin_access)
+    ) -> Response:
+        import csv
+        import io
+
+        rows = _admin_rows(get_history(), get_admin_store().all())
+        if not include_hidden:
+            rows = [r for r in rows if not r["hidden"]]
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(
+            [
+                "name",
+                "email",
+                "phone",
+                "neighborhood",
+                "signed_up_or_last_seen_utc",
+                "signals",
+                "good_fit",
+                "notes",
+            ]
+        )
+        for row in rows:
+            when = datetime.fromtimestamp(row["created_at"], tz=UTC).isoformat()
+            writer.writerow(
+                [
+                    row["name"],
+                    row["email"],
+                    row["phone"],
+                    row["neighborhood"],
+                    when,
+                    ";".join(row["signals"]),
+                    row["good_fit"],
+                    row["notes"],
+                ]
+            )
+        return Response(
+            content=buffer.getvalue(),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=jay-visitors.csv"},
+        )
 
     @app.get("/api/admin/users/{owner_id}")
     def admin_user_detail(owner_id: str, _: None = Depends(require_admin_access)) -> dict[str, Any]:
@@ -654,6 +749,8 @@ def create_app(
             "signals": fit.signals if fit else [],
             "good_fit": fit.good_fit if fit else False,
             "manual_override": fit.manual_override if fit else None,
+            "notes": fit.notes if fit else "",
+            "hidden": fit.hidden if fit else False,
             "threads": [t.to_dict(with_messages=True) for t in threads],
         }
 
@@ -664,6 +761,24 @@ def create_app(
         _: None = Depends(require_admin_access),
     ) -> dict[str, Any]:
         get_admin_store().set_override(owner_id, payload.good_fit)
+        return {"saved": True}
+
+    @app.post("/api/admin/users/{owner_id}/notes")
+    def admin_notes(
+        owner_id: str,
+        payload: PmFitNotesRequest,
+        _: None = Depends(require_admin_access),
+    ) -> dict[str, Any]:
+        get_admin_store().set_notes(owner_id, payload.notes)
+        return {"saved": True}
+
+    @app.post("/api/admin/users/{owner_id}/hidden")
+    def admin_hidden(
+        owner_id: str,
+        payload: PmFitHiddenRequest,
+        _: None = Depends(require_admin_access),
+    ) -> dict[str, Any]:
+        get_admin_store().set_hidden(owner_id, payload.hidden)
         return {"saved": True}
 
     @app.get("/api/log")
@@ -753,6 +868,18 @@ def create_app(
         _: None = Depends(require_access),
     ) -> dict[str, Any]:
         return {"deleted": get_portfolio().delete(owner, property_id)}
+
+    @app.post("/api/calc/deal")
+    def calc_deal(payload: DealRequest, _: None = Depends(require_access)) -> dict[str, Any]:
+        """Mortgage payment, NOI, cap rate, cash-on-cash, DSCR - live, in the browser.
+
+        Pure math already tested in `calculators.py`; no AI call, no storage, so it costs
+        nothing and answers instantly. Same engine `mark calc deal` and Jay's own tool-call
+        use, so all three always agree.
+        """
+        from markai.advisor.calculators import analyze_deal
+
+        return analyze_deal(**payload.model_dump())
 
     @app.post("/api/feedback")
     def feedback(

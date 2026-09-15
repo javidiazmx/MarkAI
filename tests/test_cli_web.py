@@ -2645,3 +2645,213 @@ def test_cf_connecting_ip_wins_over_x_forwarded_for(settings, store):
     owner_id = client.get("/api/admin/users", headers=admin_headers).json()["users"][0]["id"]
     detail = client.get(f"/api/admin/users/{owner_id}", headers=admin_headers).json()
     assert detail["last_ip"] == "198.51.100.9"
+
+
+# --- staff notes and soft-hide on the admin panel -----------------------------------------
+
+
+def test_staff_notes_save_and_appear_in_the_detail_view(settings, store):
+    settings = settings.model_copy(update={"admin_access_code": "staffonly"})
+    client = _client(settings, store)
+    admin_headers = {"X-Admin-Code": "staffonly"}
+    client.post("/api/account", json=SIGNUP, headers={"X-Browser-Id": "b1"})
+
+    owner_id = client.get("/api/admin/users", headers=admin_headers).json()["users"][0]["id"]
+    saved = client.post(
+        f"/api/admin/users/{owner_id}/notes",
+        json={"notes": "Called, interested in a 6-unit"},
+        headers=admin_headers,
+    )
+    assert saved.json() == {"saved": True}
+
+    detail = client.get(f"/api/admin/users/{owner_id}", headers=admin_headers).json()
+    assert detail["notes"] == "Called, interested in a 6-unit"
+    listed = client.get("/api/admin/users", headers=admin_headers).json()["users"][0]
+    assert listed["notes"] == "Called, interested in a 6-unit"
+
+
+def test_notes_route_is_gated_by_the_admin_code(settings, store):
+    settings = settings.model_copy(update={"admin_access_code": "staffonly"})
+    client = _client(settings, store)
+    assert client.post("/api/admin/users/a1/notes", json={"notes": "x"}).status_code == 401
+
+
+def test_hiding_a_visitor_removes_them_from_the_default_list(settings, store):
+    settings = settings.model_copy(update={"admin_access_code": "staffonly"})
+    client = _client(settings, store)
+    admin_headers = {"X-Admin-Code": "staffonly"}
+    client.post("/api/account", json=SIGNUP, headers={"X-Browser-Id": "b1"})
+    owner_id = client.get("/api/admin/users", headers=admin_headers).json()["users"][0]["id"]
+
+    hidden = client.post(
+        f"/api/admin/users/{owner_id}/hidden", json={"hidden": True}, headers=admin_headers
+    )
+    assert hidden.json() == {"saved": True}
+
+    default_view = client.get("/api/admin/users", headers=admin_headers).json()["users"]
+    assert default_view == [], "hidden by default, but still there - not deleted"
+
+    with_hidden = client.get(
+        "/api/admin/users", params={"include_hidden": True}, headers=admin_headers
+    ).json()["users"]
+    assert len(with_hidden) == 1
+    assert with_hidden[0]["hidden"] is True
+
+    unhidden = client.post(
+        f"/api/admin/users/{owner_id}/hidden", json={"hidden": False}, headers=admin_headers
+    )
+    assert unhidden.json() == {"saved": True}
+    assert len(client.get("/api/admin/users", headers=admin_headers).json()["users"]) == 1
+
+
+def test_hidden_route_is_gated_by_the_admin_code(settings, store):
+    settings = settings.model_copy(update={"admin_access_code": "staffonly"})
+    client = _client(settings, store)
+    assert client.post("/api/admin/users/a1/hidden", json={"hidden": True}).status_code == 401
+
+
+# --- CSV export -----------------------------------------------------------------------------
+
+
+def test_the_csv_export_has_a_header_row_and_the_visitors_data(settings, store):
+    settings = settings.model_copy(update={"admin_access_code": "staffonly"})
+    client = _client(settings, store)
+    admin_headers = {"X-Admin-Code": "staffonly"}
+    client.post("/api/account", json=SIGNUP, headers={"X-Browser-Id": "b1"})
+
+    response = client.get("/api/admin/users/export.csv", headers=admin_headers)
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/csv")
+    assert "attachment" in response.headers["content-disposition"]
+    body = response.text
+    assert body.startswith("name,email,phone,neighborhood")
+    assert "Javier Diaz" in body
+    assert "javier@example.com" in body
+
+
+def test_the_csv_export_excludes_hidden_visitors_by_default(settings, store):
+    settings = settings.model_copy(update={"admin_access_code": "staffonly"})
+    client = _client(settings, store)
+    admin_headers = {"X-Admin-Code": "staffonly"}
+    client.post("/api/account", json=SIGNUP, headers={"X-Browser-Id": "b1"})
+    owner_id = client.get("/api/admin/users", headers=admin_headers).json()["users"][0]["id"]
+    client.post(f"/api/admin/users/{owner_id}/hidden", json={"hidden": True}, headers=admin_headers)
+
+    default_export = client.get("/api/admin/users/export.csv", headers=admin_headers).text
+    assert "Javier Diaz" not in default_export
+
+    full_export = client.get(
+        "/api/admin/users/export.csv", params={"include_hidden": True}, headers=admin_headers
+    ).text
+    assert "Javier Diaz" in full_export
+
+
+def test_the_export_route_is_gated_by_the_admin_code(settings, store):
+    settings = settings.model_copy(update={"admin_access_code": "staffonly"})
+    client = _client(settings, store)
+    assert client.get("/api/admin/users/export.csv").status_code == 401
+
+
+# --- the shared stylesheet --------------------------------------------------------------
+
+
+def test_theme_css_is_served(settings, store):
+    response = _client(settings, store).get("/theme.css")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/css")
+    assert "--accent" in response.text
+
+
+def test_both_pages_link_the_shared_stylesheet():
+    from pathlib import Path
+
+    for name in ("index.html", "admin.html"):
+        page = Path(f"markai/web/static/{name}").read_text(encoding="utf-8")
+        assert 'href="/theme.css"' in page, f"{name} does not link the shared stylesheet"
+
+
+# --- the Deal Analyzer calculator endpoint ------------------------------------------------
+
+
+def test_calc_deal_matches_the_cli_calculator(settings, store):
+    from markai.advisor.calculators import analyze_deal
+
+    client = _client(settings, store)
+    payload = {
+        "price": 400000,
+        "down_payment_pct": 0.25,
+        "annual_rate": 0.065,
+        "years": 30,
+        "monthly_rent": 4000,
+    }
+    response = client.post("/api/calc/deal", json=payload)
+    assert response.status_code == 200
+    body = response.json()
+    expected = analyze_deal(**payload)
+    assert body == expected
+    assert body["cap_rate"] > 0
+    assert "dscr" in body
+
+
+def test_calc_deal_rejects_a_missing_required_field(settings, store):
+    client = _client(settings, store)
+    response = client.post("/api/calc/deal", json={"price": 300000})
+    assert response.status_code == 422, "monthly_rent is required"
+
+
+def test_calc_deal_rejects_a_non_positive_price(settings, store):
+    client = _client(settings, store)
+    response = client.post("/api/calc/deal", json={"price": 0, "monthly_rent": 2000})
+    assert response.status_code == 422
+
+
+def test_calc_deal_is_gated_by_the_access_code(settings, store):
+    settings = settings.model_copy(update={"web_access_code": "letmein"})
+    client = _client(settings, store)
+    response = client.post("/api/calc/deal", json={"price": 300000, "monthly_rent": 2500})
+    assert response.status_code == 401
+
+
+# --- the Deal Analyzer panel and conversation search (index.html) -------------------------
+
+
+def test_the_page_has_a_deal_analyzer_panel():
+    from pathlib import Path
+
+    page = Path("markai/web/static/index.html").read_text(encoding="utf-8")
+    assert 'id="open-deal"' in page
+    assert 'id="deal-price"' in page and 'id="deal-rent"' in page
+    assert "/api/calc/deal" in page
+    assert "Estimates only. Confirm taxes, insurance and rents before you buy." in page
+    assert ".innerHTML" not in page.replace("never innerHTML", "")
+
+
+def test_the_page_has_a_conversation_search_box():
+    from pathlib import Path
+
+    page = Path("markai/web/static/index.html").read_text(encoding="utf-8")
+    assert 'id="thread-search"' in page
+
+
+# --- the admin panel toolbar and per-visitor actions (admin.html) -------------------------
+
+
+def test_the_admin_page_has_search_filter_sort_and_hidden_toggle():
+    from pathlib import Path
+
+    page = Path("markai/web/static/admin.html").read_text(encoding="utf-8")
+    assert 'id="search"' in page
+    assert 'id="filter-signal"' in page
+    assert 'id="filter-good-fit"' in page
+    assert 'id="sort-by"' in page
+    assert 'id="show-hidden"' in page
+    assert 'id="export-csv"' in page
+    assert ".innerHTML" not in page.replace("never innerHTML", "")
+
+
+def test_the_admin_page_has_a_notes_textarea_in_the_detail_view():
+    from pathlib import Path
+
+    page = Path("markai/web/static/admin.html").read_text(encoding="utf-8")
+    assert "notes-area" in page
+    assert "/notes" in page

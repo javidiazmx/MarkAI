@@ -240,6 +240,124 @@ def test_a_database_with_owner_id_but_no_last_ip_column_is_migrated(tmp_path):
     store.close()
 
 
+def test_a_database_with_last_ip_but_no_notes_or_hidden_columns_is_migrated(tmp_path):
+    """The shape this table shipped in before `notes`/`hidden` were added."""
+    import sqlite3
+
+    path = tmp_path / "admin.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        "CREATE TABLE pm_fit (owner_id TEXT PRIMARY KEY, signals TEXT NOT NULL DEFAULT '[]',"
+        " manual_override INTEGER, last_ip TEXT NOT NULL DEFAULT '', updated_at REAL NOT NULL);"
+    )
+    conn.execute(
+        "INSERT INTO pm_fit (owner_id, signals, last_ip, updated_at) VALUES (?, ?, ?, ?)",
+        ("account:a1", '["pm_interest"]', "203.0.113.7", 0.0),
+    )
+    conn.commit()
+    conn.close()
+
+    store = AdminStore(path)
+    fit = store.get("account:a1")
+    assert fit.signals == ["pm_interest"]
+    assert fit.last_ip == "203.0.113.7"
+    assert fit.notes == ""
+    assert fit.hidden is False
+    store.set_notes("account:a1", "Called them, interested in PM")
+    store.set_hidden("account:a1", True)
+    updated = store.get("account:a1")
+    assert updated.notes == "Called them, interested in PM"
+    assert updated.hidden is True
+    store.close()
+
+
+# --- staff notes ---------------------------------------------------------------------------
+
+
+def test_set_notes_creates_a_row_with_no_prior_signal(tmp_path):
+    store = AdminStore(tmp_path / "admin.db")
+    store.set_notes("browser:b1", "Seems like a tire-kicker")
+    fit = store.get("browser:b1")
+    assert fit.notes == "Seems like a tire-kicker"
+    assert fit.signals == []
+    store.close()
+
+
+def test_set_notes_updates_without_touching_signals_or_override(tmp_path):
+    store = AdminStore(tmp_path / "admin.db")
+    store.record_signal("a1", "pm_interest")
+    store.set_override("a1", True)
+    store.set_notes("a1", "First notes")
+    store.set_notes("a1", "Updated notes")
+    fit = store.get("a1")
+    assert fit.notes == "Updated notes"
+    assert fit.signals == ["pm_interest"]
+    assert fit.manual_override is True
+    store.close()
+
+
+def test_set_notes_trims_and_caps_length(tmp_path):
+    from markai.web.admin_store import MAX_NOTES_CHARS
+
+    store = AdminStore(tmp_path / "admin.db")
+    store.set_notes("a1", "  padded  ")
+    assert store.get("a1").notes == "padded"
+    store.set_notes("a1", "x" * (MAX_NOTES_CHARS + 500))
+    assert len(store.get("a1").notes) == MAX_NOTES_CHARS
+    store.close()
+
+
+def test_set_notes_ignores_an_empty_owner_id(tmp_path):
+    store = AdminStore(tmp_path / "admin.db")
+    store.set_notes("", "orphaned notes")
+    assert store.all() == {}
+    store.close()
+
+
+# --- soft hide -----------------------------------------------------------------------------
+
+
+def test_set_hidden_creates_a_row_with_no_prior_signal(tmp_path):
+    store = AdminStore(tmp_path / "admin.db")
+    store.set_hidden("browser:b1", True)
+    fit = store.get("browser:b1")
+    assert fit.hidden is True
+    assert fit.signals == []
+    store.close()
+
+
+def test_set_hidden_can_be_reversed(tmp_path):
+    store = AdminStore(tmp_path / "admin.db")
+    store.set_hidden("a1", True)
+    assert store.get("a1").hidden is True
+    store.set_hidden("a1", False)
+    assert store.get("a1").hidden is False
+    store.close()
+
+
+def test_set_hidden_does_not_touch_signals_or_notes(tmp_path):
+    store = AdminStore(tmp_path / "admin.db")
+    store.record_signal("a1", "pm_interest")
+    store.set_notes("a1", "Keep an eye on this one")
+    store.set_hidden("a1", True)
+    fit = store.get("a1")
+    assert fit.signals == ["pm_interest"]
+    assert fit.notes == "Keep an eye on this one"
+    assert fit.hidden is True
+    store.close()
+
+
+def test_reassign_carries_notes_and_hidden_forward(tmp_path):
+    store = AdminStore(tmp_path / "admin.db")
+    store.set_notes("browser:b1", "Anonymous notes")
+    store.set_hidden("browser:b1", True)
+    store.reassign("browser:b1", "account:a1")
+    merged = store.get("account:a1")
+    assert merged.notes == "Anonymous notes"
+    assert merged.hidden is True
+    store.close()
+
+
 # --- the alert email -----------------------------------------------------------------------
 
 

@@ -4,33 +4,13 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Jay · Your Chicagoland AI Advisor</title>
+<link rel="stylesheet" href="/theme.css" />
 <style>
+  /* Everything shared (colors, spacing, radius, shadow, type scale, buttons, modals,
+     skeletons, toasts, empty states) lives in theme.css now. This block keeps only what
+     is genuinely page-specific - the sidebar width has no equivalent on the admin page. */
   :root {
-    color-scheme: light dark;
-    --bg: #f6f6f4;
-    --panel: #ffffff;
-    --ink: #1c1c1a;
-    --muted: #6b6b66;
-    --line: #e2e2dd;
-    --accent: #1f6f4a;
-    --accent-ink: #ffffff;
-    --user: #eef2f7;
-    --warn-bg: #fdf6e3;
-    --warn-ink: #6b5518;
     --side: 268px;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #16171a;
-      --panel: #1e2024;
-      --ink: #ececea;
-      --muted: #9b9b96;
-      --line: #2f3238;
-      --accent: #3f9a6d;
-      --user: #24272d;
-      --warn-bg: #2b2718;
-      --warn-ink: #e3cf95;
-    }
   }
   * { box-sizing: border-box; }
   /* Any `display` rule of ours beats the browser's own [hidden], and the failure is
@@ -118,19 +98,10 @@
   /* A client-side file rule ("too big", "too many") is not Jay saying anything - it never
      reached the model at all. Routing it through the chat log as a "Jay" bubble made a
      local validation check look like the advisor itself had an error. */
-  .file-notice { color: #a33; font-size: 12px; padding: 4px 2px 0; }
+  .file-notice { color: var(--danger); font-size: 12px; padding: 4px 2px 0; }
   sup a { color: var(--accent); text-decoration: none; font-weight: 600; }
-  .scrim {
-    position: fixed; inset: 0; z-index: 20; display: flex; align-items: center;
-    justify-content: center; padding: 20px; background: rgba(20, 20, 18, .55);
-  }
-  /* This one is why the rule above exists: hiding the card used to leave an invisible
-     sheet over the whole page, swallowing every click. */
-  .scrim[hidden] { display: none; }
-  .card {
-    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
-    padding: 22px; max-width: 46rem; box-shadow: 0 10px 40px rgba(0, 0, 0, .25);
-  }
+  /* .scrim and .card themselves - position, fade/scale-in, shadow - come from theme.css.
+     Only the typography and per-modal overrides below are genuinely page-specific. */
   .card h2 { margin: 0 0 10px; font-size: 17px; }
   .card p { margin: 0 0 18px; font-size: 14px; line-height: 1.6; color: var(--ink); }
   .card button { padding: 10px 18px; font: inherit; font-weight: 600; }
@@ -278,7 +249,7 @@
     background: var(--bg); color: var(--ink); font: inherit;
   }
   .fineprint { color: var(--muted); font-size: 12px; line-height: 1.5; margin: 4px 0 0; }
-  .formerr { color: #b3261e; font-size: 13px; min-height: 18px; }
+  .formerr { color: var(--danger); font-size: 13px; min-height: 18px; }
   .linkish {
     background: none; border: 0; padding: 0; font: inherit; color: var(--accent);
     text-decoration: underline; cursor: pointer;
@@ -314,7 +285,47 @@
      could leave the gate invisible-but-present again if the rule order ever shifted. */
   .gate[hidden] { display: none; }
   .gate input { flex: 1; padding: 9px 11px; border: 1px solid var(--line); border-radius: 9px; background: var(--bg); color: var(--ink); font: inherit; }
-  .err { color: #b3261e; }
+  .err { color: var(--danger); }
+
+  /* Conversation search - filters the already-loaded thread list, no round trip. */
+  .side-search { padding: 8px 12px 0; }
+  .side-search input {
+    width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px;
+    background: var(--bg); color: var(--ink); font: inherit; font-size: 13px;
+  }
+  .log-skeleton { padding: 2px 9px 8px; }
+
+  /* Deal Analyzer - a scratch pad, not saved anywhere. Its own modal because the field
+     count does not fit the sidebar's inline-form pattern the way properties/log do. */
+  .deal-card { max-width: 30rem; width: 100%; }
+  .deal-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+  .deal-head h2 { margin: 0; flex: 1; }
+  .deal-sub { color: var(--muted); font-size: 13px; margin: 0 0 14px; }
+  #deal-form { display: grid; gap: 8px; }
+  #deal-form .pair { display: flex; gap: 6px; }
+  #deal-form .field { flex: 1; min-width: 0; }
+  #deal-form input {
+    width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px;
+    background: var(--bg); color: var(--ink); font: inherit; font-size: 13px;
+  }
+  .deal-expenses { margin-top: 6px; }
+  .deal-expenses summary {
+    color: var(--muted); font-size: 12.5px; cursor: pointer; list-style: none; padding: 4px 0;
+  }
+  .deal-expenses summary::-webkit-details-marker { display: none; }
+  .deal-expenses summary::before { content: "▸ "; }
+  .deal-expenses[open] summary::before { content: "▾ "; }
+  .deal-expenses-grid { display: grid; gap: 8px; margin-top: 8px; }
+  #deal-results { margin-top: 14px; min-height: 28px; }
+  .deal-metric {
+    display: flex; justify-content: space-between; gap: 8px; padding: 6px 2px;
+    border-top: 1px solid var(--line); font-size: 13px;
+  }
+  .deal-metric:first-child { border-top: 0; }
+  .deal-metric .label { color: var(--muted); }
+  .deal-metric .value { font-weight: 600; }
+  .deal-metric .value.pass { color: var(--success); }
+  .deal-note { color: var(--muted); font-size: 12px; margin-top: 12px; line-height: 1.5; }
 </style>
 </head>
 <body>
@@ -323,6 +334,10 @@
     <h2>Conversations</h2>
     <button id="new-thread" type="button" title="Start a new conversation">+ New</button>
     <button class="ghost side-close" id="side-close" type="button" title="Close" aria-label="Close">✕</button>
+  </div>
+  <div class="side-search">
+    <label class="vh" for="thread-search">Search conversations</label>
+    <input id="thread-search" type="search" placeholder="Search conversations" />
   </div>
   <div id="threads"></div>
 
@@ -376,12 +391,14 @@
         <button class="ghost" id="log-cancel" type="button">Cancel</button>
       </div>
     </form>
+    <div class="log-skeleton" id="log-skeleton" hidden></div>
     <button class="ghost acct-open" id="open-accounting" type="button">
       <span id="acct-teaser">Income &amp; expenses</span>
     </button>
   </div>
 
   <div class="side-foot">
+    <button class="ghost" id="open-deal" type="button">Deal Analyzer</button>
     <button class="ghost" id="handoff" type="button">Hand this to a property manager</button>
     <div class="whoami" id="whoami" hidden>
       <span id="whoami-name"></span>
@@ -439,6 +456,115 @@
     <div class="acct-breakdown" id="acct-breakdown"></div>
     <h3 class="acct-subhead">All entries</h3>
     <div id="acct-entries"></div>
+  </div>
+</div>
+
+<div class="scrim" id="deal-card" hidden>
+  <div class="card deal-card">
+    <div class="deal-head">
+      <h2>Deal Analyzer</h2>
+      <button class="ghost" id="deal-close" type="button" title="Close" aria-label="Close">✕</button>
+    </div>
+    <p class="deal-sub">A scratch pad - nothing here is saved. Fill in a price and rent to
+      see the numbers.</p>
+    <form id="deal-form">
+      <div class="pair">
+        <div class="field">
+          <label class="vh" for="deal-price">Purchase price</label>
+          <input id="deal-price" type="number" min="0" step="1000" inputmode="decimal"
+                 placeholder="Purchase price" required />
+        </div>
+        <div class="field">
+          <label class="vh" for="deal-rent">Monthly rent</label>
+          <input id="deal-rent" type="number" min="0" step="10" inputmode="decimal"
+                 placeholder="Monthly rent" required />
+        </div>
+      </div>
+      <div class="pair">
+        <div class="field">
+          <label class="vh" for="deal-down-pct">Down payment %</label>
+          <input id="deal-down-pct" type="number" min="0" max="100" step="1" value="25"
+                 placeholder="Down payment %" />
+        </div>
+        <div class="field">
+          <label class="vh" for="deal-rate">Interest rate %</label>
+          <input id="deal-rate" type="number" min="0" max="100" step="0.125" value="7"
+                 placeholder="Interest rate %" />
+        </div>
+        <div class="field">
+          <label class="vh" for="deal-years">Loan term, years</label>
+          <input id="deal-years" type="number" min="1" max="50" step="1" value="30"
+                 placeholder="Years" />
+        </div>
+      </div>
+      <details class="deal-expenses">
+        <summary>Expenses</summary>
+        <div class="deal-expenses-grid">
+          <div class="pair">
+            <div class="field">
+              <label class="vh" for="deal-taxes">Taxes per year</label>
+              <input id="deal-taxes" type="number" min="0" step="100" placeholder="Taxes/year, e.g. 6000" />
+            </div>
+            <div class="field">
+              <label class="vh" for="deal-insurance">Insurance per year</label>
+              <input id="deal-insurance" type="number" min="0" step="50" placeholder="Insurance/year" />
+            </div>
+          </div>
+          <div class="pair">
+            <div class="field">
+              <label class="vh" for="deal-hoa">HOA per month</label>
+              <input id="deal-hoa" type="number" min="0" step="10" placeholder="HOA/month" />
+            </div>
+            <div class="field">
+              <label class="vh" for="deal-utilities">Utilities per month</label>
+              <input id="deal-utilities" type="number" min="0" step="10" placeholder="Utilities/month" />
+            </div>
+          </div>
+          <div class="pair">
+            <div class="field">
+              <label class="vh" for="deal-vacancy">Vacancy %</label>
+              <input id="deal-vacancy" type="number" min="0" max="100" step="1" value="5"
+                     placeholder="Vacancy %" />
+            </div>
+            <div class="field">
+              <label class="vh" for="deal-maintenance">Maintenance %</label>
+              <input id="deal-maintenance" type="number" min="0" max="100" step="1" value="5"
+                     placeholder="Maintenance %" />
+            </div>
+          </div>
+          <div class="pair">
+            <div class="field">
+              <label class="vh" for="deal-capex">Capex %</label>
+              <input id="deal-capex" type="number" min="0" max="100" step="1" value="5"
+                     placeholder="Capex %" />
+            </div>
+            <div class="field">
+              <label class="vh" for="deal-management">Management %</label>
+              <input id="deal-management" type="number" min="0" max="100" step="1" value="0"
+                     placeholder="Management %" />
+            </div>
+          </div>
+          <div class="pair">
+            <div class="field">
+              <label class="vh" for="deal-other-income">Other income per month</label>
+              <input id="deal-other-income" type="number" min="0" step="10" placeholder="Other income/month" />
+            </div>
+            <div class="field">
+              <label class="vh" for="deal-closing">Closing costs</label>
+              <input id="deal-closing" type="number" min="0" step="100" placeholder="Closing costs" />
+            </div>
+          </div>
+          <div class="pair">
+            <div class="field">
+              <label class="vh" for="deal-rehab">Rehab budget</label>
+              <input id="deal-rehab" type="number" min="0" step="100" placeholder="Rehab budget" />
+            </div>
+          </div>
+        </div>
+      </details>
+    </form>
+    <div id="deal-results"></div>
+    <p class="deal-note">Estimates only. Confirm taxes, insurance and rents before you buy.</p>
   </div>
 </div>
 
@@ -1255,6 +1381,8 @@
   // so one appears the moment an answer lands without a second call to Claude.
   var side = document.getElementById("side");
   var threadRow = document.getElementById("threads");
+  var threadSearch = document.getElementById("thread-search");
+  var allThreads = [];  // the server's full list; search filters this in memory only
 
   function closeSide() { side.classList.remove("open"); }
 
@@ -1263,23 +1391,52 @@
   });
   document.getElementById("side-close").addEventListener("click", closeSide);
 
-  async function loadThreads() {
-    var data;
-    try {
-      var response = await fetch("/api/threads", { headers: headers() });
-      if (!response.ok) return;  // no access code yet, or history is off
-      data = await response.json();
-    } catch (error) {
-      return;  // the list is a convenience, never a reason to break the chat
+  // A quick loading placeholder for the brief window before the first real paint. Any
+  // fetch that fills this container redraws over it (or shows the real empty state), so
+  // there is nothing to clear on a timer.
+  function skeletonRows(container, count) {
+    container.textContent = "";
+    for (var i = 0; i < count; i++) {
+      container.appendChild(el("div", "skeleton skeleton-row"));
     }
-    drawThreads(data.threads || []);
   }
 
-  function drawThreads(threads) {
+  async function loadThreads() {
+    skeletonRows(threadRow, 3);
+    try {
+      var response = await fetch("/api/threads", { headers: headers() });
+      if (!response.ok) { allThreads = []; renderThreadList(); return; }  // no access code yet, or history is off
+      var data = await response.json();
+      allThreads = data.threads || [];
+    } catch (error) {
+      allThreads = [];  // the list is a convenience, never a reason to break the chat
+    }
+    renderThreadList();
+  }
+
+  // Pure client-side filter over what loadThreads already fetched - no server round trip.
+  function renderThreadList() {
+    var query = threadSearch.value.trim().toLowerCase();
+    var filtered = !query ? allThreads : allThreads.filter(function (thread) {
+      return (thread.title || "").toLowerCase().indexOf(query) !== -1;
+    });
+    drawThreads(filtered, !!query);
+  }
+
+  threadSearch.addEventListener("input", renderThreadList);
+
+  function drawThreads(threads, searching) {
     threadRow.textContent = "";
     if (!threads.length) {
-      threadRow.appendChild(el("div", "side-empty",
+      if (searching) {
+        threadRow.appendChild(el("div", "side-empty", "No conversations match."));
+        return;
+      }
+      var empty = el("div", "empty-state");
+      empty.appendChild(el("div", "icon", "💬"));
+      empty.appendChild(document.createTextNode(
         "Your past conversations show up here, named after what you asked."));
+      threadRow.appendChild(empty);
       return;
     }
     threads.forEach(function (thread) {
@@ -1418,12 +1575,14 @@
   });
 
   async function loadProperties() {
+    skeletonRows(propRow, 2);
     var data;
     try {
       var response = await fetch("/api/properties", { headers: headers() });
-      if (!response.ok) return;
+      if (!response.ok) { drawProperties([]); return; }
       data = await response.json();
     } catch (error) {
+      drawProperties([]);
       return;
     }
     drawProperties(data.properties || []);
@@ -1592,15 +1751,31 @@
 
   // The sidebar button always speaks for the whole portfolio - the property filter lives
   // inside the panel, where there is room to say which building it means.
+  var logSkeleton = document.getElementById("log-skeleton");
+  var acctOpenBtn = document.getElementById("open-accounting");
+  function toggleLogSkeleton(show) {
+    if (show) {
+      skeletonRows(logSkeleton, 2);
+      logSkeleton.hidden = false;
+      acctOpenBtn.hidden = true;
+    } else {
+      logSkeleton.hidden = true;
+      acctOpenBtn.hidden = false;
+    }
+  }
+
   async function loadLog() {
+    toggleLogSkeleton(true);
     var data;
     try {
       var response = await fetch("/api/log", { headers: headers() });
-      if (!response.ok) return;
+      if (!response.ok) { toggleLogSkeleton(false); return; }
       data = await response.json();
     } catch (error) {
+      toggleLogSkeleton(false);
       return;  // the teaser is a convenience, never a reason to break the chat
     }
+    toggleLogSkeleton(false);
     drawTeaser(data.totals || {});
   }
 
@@ -1778,6 +1953,159 @@
     }
     // An older browser, or a page not served over https: the text is already selected.
     try { done(document.execCommand("copy")); } catch (e) { done(false); }
+  });
+
+  // Deal Analyzer ---------------------------------------------------------------------
+  // A scratch pad: pure math against /api/calc/deal, the same engine `mark calc deal` and
+  // Jay's own tool call use. No AI, no storage - values live only in these inputs, gone
+  // on close.
+  var dealCard = document.getElementById("deal-card");
+  var dealForm = document.getElementById("deal-form");
+  var dealResults = document.getElementById("deal-results");
+  var dealPrice = document.getElementById("deal-price");
+  var dealTimer = null;
+  var dealSeq = 0;  // out-of-order responses are dropped, not raced onto the page
+
+  function dealNum(id) {
+    var raw = document.getElementById(id).value;
+    if (raw === "" || raw === null) return null;
+    var value = parseFloat(raw);
+    return isNaN(value) ? null : value;
+  }
+
+  function dealNumOr(id, fallback) {
+    var value = dealNum(id);
+    return value === null ? fallback : value;
+  }
+
+  function dealPctOr(id, fallbackPercent) {
+    return dealNumOr(id, fallbackPercent) / 100;
+  }
+
+  function money2(value) {
+    var sign = value < 0 ? "-" : "";
+    return sign + "$" + Math.abs(value).toLocaleString(undefined, {
+      minimumFractionDigits: 2, maximumFractionDigits: 2
+    });
+  }
+
+  function pct2(value) {
+    return (value * 100).toFixed(2) + "%";
+  }
+
+  function dealMetric(label, value, cls) {
+    var row = el("div", "deal-metric");
+    row.appendChild(el("span", "label", label));
+    row.appendChild(el("span", "value" + (cls ? " " + cls : ""), value));
+    dealResults.appendChild(row);
+  }
+
+  function drawDealIdle() {
+    dealResults.textContent = "";
+    dealResults.appendChild(el("div", "side-empty",
+      "Enter a purchase price and monthly rent to see the numbers."));
+  }
+
+  function drawDealLoading() {
+    dealResults.textContent = "";
+    skeletonRows(dealResults, 3);
+  }
+
+  function drawDealError(message) {
+    dealResults.textContent = "";
+    dealResults.appendChild(el("div", "danger-text", message));
+  }
+
+  function drawDealResults(data) {
+    dealResults.textContent = "";
+    dealMetric("Loan amount", money2(data.loan_amount));
+    dealMetric("Monthly payment", money2(data.monthly_payment));
+    dealMetric("Cash flow / mo", money2(data.cash_flow_monthly));
+    dealMetric("Cash flow / yr", money2(data.cash_flow_annual));
+    dealMetric("Cap rate", pct2(data.cap_rate));
+    dealMetric("Cash on cash", pct2(data.cash_on_cash));
+    dealMetric("DSCR", data.dscr.toFixed(2));
+    var passes = !!(data.one_percent_rule && data.one_percent_rule.passes);
+    dealMetric("1% rule", passes ? "passes" : "fails", passes ? "pass" : "danger-text");
+  }
+
+  async function runDealCalc() {
+    var price = dealNum("deal-price");
+    var rent = dealNum("deal-rent");
+    if (price === null || price <= 0 || rent === null || rent < 0) {
+      drawDealIdle();
+      return;
+    }
+    var seq = ++dealSeq;
+    drawDealLoading();
+    var payload = {
+      price: price,
+      monthly_rent: rent,
+      down_payment_pct: dealPctOr("deal-down-pct", 25),
+      annual_rate: dealPctOr("deal-rate", 7),
+      years: Math.round(dealNumOr("deal-years", 30)),
+      other_income_monthly: dealNumOr("deal-other-income", 0),
+      vacancy_rate: dealPctOr("deal-vacancy", 5),
+      taxes_annual: dealNumOr("deal-taxes", 0),
+      insurance_annual: dealNumOr("deal-insurance", 0),
+      maintenance_pct: dealPctOr("deal-maintenance", 5),
+      capex_pct: dealPctOr("deal-capex", 5),
+      management_pct: dealPctOr("deal-management", 0),
+      hoa_monthly: dealNumOr("deal-hoa", 0),
+      utilities_monthly: dealNumOr("deal-utilities", 0),
+      closing_costs: dealNumOr("deal-closing", 0),
+      rehab: dealNumOr("deal-rehab", 0)
+    };
+    var response;
+    var data = null;
+    try {
+      response = await fetch("/api/calc/deal", {
+        method: "POST", headers: headers(), body: JSON.stringify(payload)
+      });
+      try { data = await response.json(); } catch (e) { /* no body */ }
+    } catch (error) {
+      if (seq !== dealSeq) return;  // a newer request already landed
+      drawDealError("Could not reach the server: " + error);
+      return;
+    }
+    if (seq !== dealSeq) return;  // a newer request already landed
+    if (!response.ok) {
+      var detail = "Could not calculate that.";
+      if (data && typeof data.detail === "string") detail = data.detail;
+      else if (data && data.error) detail = data.error;
+      drawDealError(detail);
+      return;
+    }
+    if (data && data.error) {
+      drawDealError(data.error);
+      return;
+    }
+    drawDealResults(data || {});
+  }
+
+  function scheduleDealCalc() {
+    clearTimeout(dealTimer);
+    dealTimer = setTimeout(runDealCalc, 300);
+  }
+
+  dealForm.addEventListener("input", scheduleDealCalc);
+  // No submit button by design - it is a live calculator, not a form with a save action.
+  // Still caught here so an Enter key in a field cannot fall through to a page reload.
+  dealForm.addEventListener("submit", function (event) {
+    event.preventDefault();
+    clearTimeout(dealTimer);
+    runDealCalc();
+  });
+  drawDealIdle();
+
+  document.getElementById("open-deal").addEventListener("click", function () {
+    dealCard.hidden = false;
+    closeSide();
+    dealPrice.focus();
+  });
+  document.getElementById("deal-close").addEventListener("click", function () {
+    dealCard.hidden = true;
+    clearTimeout(dealTimer);
   });
 
   async function loadStatus() {
