@@ -833,6 +833,38 @@ def test_facts_list_marks_the_superseded_rule(tmp_path, monkeypatch):
     assert "$9,000 to $16,000" in result.stdout
 
 
+def test_facts_stale_says_so_when_nothing_is_flagged(tmp_path, monkeypatch):
+    _facts_dir(tmp_path, monkeypatch, GOOD_FACTS)
+    result = runner.invoke(app, ["facts", "stale"])
+    assert result.exit_code == 0
+    assert "No rate/fee figure" in result.stdout
+
+
+def test_facts_stale_flags_an_old_dollar_figure_but_not_a_notice_period(tmp_path, monkeypatch):
+    _facts_dir(
+        tmp_path,
+        monkeypatch,
+        "ordinances:\n"
+        "  - id: fee-2021\n"
+        "    jurisdiction: Cook County, IL\n"
+        "    topic: Late fees\n"
+        "    rule: Late fees cannot exceed $10 for the first $1,000 of rent plus 5%.\n"
+        "    citation: What Is the Cook County RTLO That Passed January 2021\n"
+        "  - id: notice-1\n"
+        "    jurisdiction: Chicago\n"
+        "    topic: Non-renewal notice\n"
+        "    rule: 60 days notice, or 120 if the tenant has lived there three years or longer.\n"
+        "    citation: An old blog post\n",
+    )
+    result = runner.invoke(app, ["facts", "stale"])
+    assert result.exit_code == 0
+    assert "fee-2021" not in result.stdout, "the table shows the topic, not the raw id"
+    assert "Late fees" in result.stdout
+    assert "2021" in result.stdout
+    assert "Non-renewal notice" not in result.stdout, "a fixed notice period is never flagged"
+    assert "1 rule(s) flagged" in result.stdout
+
+
 def test_facts_probe_shows_what_a_question_would_pull_in(tmp_path, monkeypatch):
     _facts_dir(tmp_path, monkeypatch, GOOD_FACTS)
     result = runner.invoke(app, ["facts", "probe", "how long to return a deposit"])

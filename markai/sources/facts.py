@@ -186,6 +186,61 @@ class FactBook(BaseModel):
         return [o for o in self.ordinances if not o.in_force(as_of)]
 
 
+# A dollar figure, a percentage, or a named fee is the kind of thing that gets updated on
+# its own schedule (an annual security-deposit interest rate, a filing fee) with no
+# announcement anyone mining a blog post would necessarily catch - unlike a fixed notice
+# period or a procedural mechanic, which is a structural part of an ordinance and changes
+# rarely, and only with the kind of coverage that would show up as a new, separately mined
+# fact rather than silently aging the old one. This flags the first kind, not the second.
+_RATE_SENSITIVE = re.compile(
+    r"\$\s?\d|\d+(\.\d+)?\s*%|\bpercent\b|\binterest rate\b|\blate fee\b|\bfiling fee\b|"
+    r"\bper (?:month|year|annum)\b|\bsecurity deposit interest\b",
+    re.IGNORECASE,
+)
+_YEAR = re.compile(r"\b(20\d{2})\b")
+
+
+def _latest_year_mentioned(*texts: str | None) -> int | None:
+    years = [int(y) for text in texts for y in _YEAR.findall(text or "")]
+    return max(years) if years else None
+
+
+def stale_candidates(book: FactBook, as_of: date, max_age_years: int = 2) -> list[dict[str, Any]]:
+    """In-force ordinances worth a second look before they answer a landlord directly (the
+    Notice Wizard, not just narrated chat with room to hedge) - not proof anything is wrong,
+    a short, prioritized list for the owner's own review rather than the whole file.
+
+    Flags a rule only when both are true: it mentions a rate, fee, or dollar figure (the
+    kind of value that ages on its own schedule), and either no year can be found in its
+    citation/url/notes at all, or the newest year found is more than `max_age_years` old.
+    A structural mechanic (a fixed notice period, a procedural rule) is left alone even
+    when its source is old, since those don't go stale the way a figure does.
+    """
+    out = []
+    for o in book.in_force(as_of):
+        if not _RATE_SENSITIVE.search(o.rule):
+            continue
+        year = _latest_year_mentioned(o.citation, o.url, o.notes)
+        if year is not None and (as_of.year - year) < max_age_years:
+            continue
+        out.append(
+            {
+                "id": o.id,
+                "jurisdiction": o.jurisdiction,
+                "topic": o.topic,
+                "citation": o.citation,
+                "detected_year": year,
+                "reason": (
+                    "mentions a rate/fee/dollar figure with no year found in its source"
+                    if year is None
+                    else f"mentions a rate/fee/dollar figure last dated {year}"
+                ),
+            }
+        )
+    out.sort(key=lambda row: (row["detected_year"] or 0, row["jurisdiction"]))
+    return out
+
+
 def facts_path(sources_file: Path | str) -> Path:
     """``sources/facts.yaml``, next to the manifest. ``facts.local.yaml`` wins if present."""
     folder = Path(sources_file).parent

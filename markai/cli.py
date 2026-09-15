@@ -1671,6 +1671,55 @@ def facts_list() -> None:
         console.print(table)
 
 
+@facts_app.command("stale")
+def facts_stale(
+    max_age_years: int = typer.Option(
+        2,
+        "--max-age-years",
+        help="Flag a rate/fee figure whose newest cited year is older than this.",
+    ),
+) -> None:
+    """Rules worth a second look before they answer a landlord directly - a rate, fee, or
+    dollar figure with an old or missing citation year. Not proof anything is wrong: a
+    fixed notice period ages fine on its own, a dollar figure does not."""
+    from datetime import date
+
+    from markai.sources.facts import stale_candidates
+
+    book, path = _facts()
+    if not path.exists() or book.is_empty():
+        console.print(f"[dim]Nothing in {path} to check.[/dim]")
+        return
+    rows = stale_candidates(book, date.today(), max_age_years=max_age_years)
+    if not rows:
+        console.print(
+            "[green]✓[/green] No rate/fee figure looks old or undated. This is not proof "
+            "every ordinance is current - only that none of the figure-bearing ones are "
+            "flagged by this check."
+        )
+        return
+    table = Table(show_header=True, header_style="bold", title="Worth a second look")
+    table.add_column("Where")
+    table.add_column("Topic")
+    table.add_column("Citation")
+    table.add_column("Newest year found")
+    table.add_column("Why")
+    for row in rows:
+        table.add_row(
+            escape(row["jurisdiction"]),
+            escape(row["topic"][:40]),
+            escape(row["citation"][:50]),
+            str(row["detected_year"] or "none found"),
+            escape(row["reason"]),
+        )
+    console.print(table)
+    console.print(
+        f"[yellow]{len(rows)} rule(s) flagged.[/yellow] Confirm each one is still current "
+        "and update its citation/effective dates via a normal edit to facts.yaml, or run "
+        "`mark facts mine` again over anything newer already in the source library."
+    )
+
+
 PROPOSALS_FILE = "facts-proposals.json"
 
 

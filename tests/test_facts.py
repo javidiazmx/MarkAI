@@ -16,6 +16,7 @@ from markai.sources.facts import (
     facts_path,
     load_facts,
     select,
+    stale_candidates,
 )
 
 TODAY = date(2026, 9, 8)
@@ -322,3 +323,85 @@ def test_a_fraction_is_not_rounded_away():
     assert CostRange(id="c2", item="x", low=1.5, high=2.25, unit="per job").money() == (
         "$1.5 to $2.25"
     )
+
+
+# --- flagging a rate/fee figure worth a second look ---------------------------------------
+
+
+def test_a_fixed_notice_period_is_never_flagged_no_matter_how_old_its_source():
+    """A structural mechanic doesn't go stale the way a dollar figure does - this must
+    never turn into a flood of every old citation in the file."""
+    book = FactBook(
+        ordinances=[
+            _rule(
+                id="notice-1",
+                topic="Non-renewal notice",
+                rule="60 days notice, or 120 if the tenant has lived there three years or longer.",
+                citation="Old blog post from 2018",
+            )
+        ]
+    )
+    assert stale_candidates(book, TODAY) == []
+
+
+def test_a_dollar_figure_with_no_year_anywhere_is_flagged():
+    book = FactBook(
+        ordinances=[
+            _rule(
+                id="fee-1",
+                topic="Late fees",
+                rule="Late fees cannot exceed $10 for the first $1,000 of rent plus 5%.",
+                citation="Cook County RTLO",
+            )
+        ]
+    )
+    rows = stale_candidates(book, TODAY)
+    assert [r["id"] for r in rows] == ["fee-1"]
+    assert rows[0]["detected_year"] is None
+
+
+def test_a_dollar_figure_with_a_recent_year_is_not_flagged():
+    book = FactBook(
+        ordinances=[
+            _rule(
+                id="fee-2",
+                topic="Late fees",
+                rule="Late fees cannot exceed $10 for the first $1,000 of rent plus 5%.",
+                citation="Illinois Late Fee Laws (2026)",
+            )
+        ]
+    )
+    assert stale_candidates(book, TODAY) == []
+
+
+def test_a_dollar_figure_with_an_old_year_is_flagged_with_that_year():
+    book = FactBook(
+        ordinances=[
+            _rule(
+                id="fee-3",
+                topic="Late fees",
+                rule="Late fees cannot exceed $10 for the first $1,000 of rent plus 5%.",
+                citation="What Is the Cook County RTLO That Passed January 2021",
+            )
+        ]
+    )
+    rows = stale_candidates(book, TODAY, max_age_years=2)
+    assert [r["id"] for r in rows] == ["fee-3"]
+    assert rows[0]["detected_year"] == 2021
+
+
+def test_a_superseded_rate_figure_is_not_flagged_either():
+    """Already excluded from what Jay would ever answer with - flagging it for review too
+    would just be noise."""
+    book = FactBook(
+        ordinances=[
+            _rule(
+                id="fee-4",
+                topic="Late fees",
+                rule="Late fees cannot exceed $10 for the first $1,000 of rent.",
+                citation="Old rule from 2015",
+                effective_to=date(2020, 1, 1),
+            )
+        ]
+    )
+    assert stale_candidates(book, TODAY) == []
