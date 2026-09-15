@@ -391,6 +391,12 @@
         }
         if (user.last_ip) {
           titleWrap.appendChild(locationLine(user.last_ip));
+        } else {
+          // Their address is only captured from a question asked after this feature shipped -
+          // an older visitor with none on file is not a bug, just nothing to look up yet.
+          titleWrap.appendChild(
+            el("div", "detail-contact", "Location: not on file yet - ask a new question to capture it")
+          );
         }
         head.appendChild(titleWrap);
         var close = el("button", "card-close", "×");
