@@ -10,6 +10,7 @@ import hmac
 import json
 import logging
 import threading
+import time
 from collections import OrderedDict
 from collections.abc import Callable, Iterator
 from contextlib import asynccontextmanager
@@ -219,6 +220,45 @@ class _DailyCounter:
             return self._count
 
 
+class _AdminAttemptLimiter:
+    """A basic brute-force backoff on the admin code header.
+
+    Unlike the landlord access code, this one gate sits in front of every landlord's
+    contact details at once - `hmac.compare_digest` alone makes guessing no faster than
+    trying codes one at a time, but nothing before this stopped an unattended script from
+    doing exactly that. Bounded to a fixed number of addresses (LRU-evicted) so a spoofed
+    flood of source addresses cannot grow this without bound.
+    """
+
+    _MAX_ATTEMPTS = 5
+    _LOCKOUT_SECONDS = 60.0
+    _TRACKED_ADDRESSES = 1000
+
+    def __init__(self) -> None:
+        self._attempts: OrderedDict[str, tuple[int, float]] = OrderedDict()
+        self._guard = threading.Lock()
+
+    def blocked(self, address: str) -> bool:
+        with self._guard:
+            entry = self._attempts.get(address)
+            if entry is None:
+                return False
+            count, locked_until = entry
+            return count >= self._MAX_ATTEMPTS and time.monotonic() < locked_until
+
+    def record_failure(self, address: str) -> None:
+        with self._guard:
+            count, _ = self._attempts.get(address, (0, 0.0))
+            self._attempts[address] = (count + 1, time.monotonic() + self._LOCKOUT_SECONDS)
+            self._attempts.move_to_end(address)
+            while len(self._attempts) > self._TRACKED_ADDRESSES:
+                self._attempts.popitem(last=False)
+
+    def record_success(self, address: str) -> None:
+        with self._guard:
+            self._attempts.pop(address, None)
+
+
 def create_app(
     settings: Any | None = None,
     advisor: Any | None = None,
@@ -258,6 +298,7 @@ def create_app(
     }
     sessions = _Sessions(settings.max_sessions)
     daily = _DailyCounter()
+    admin_attempts = _AdminAttemptLimiter()
 
     def require_access(x_access_code: str | None = Header(default=None)) -> None:
         expected = settings.access_code()
@@ -266,16 +307,24 @@ def create_app(
         if not x_access_code or not hmac.compare_digest(x_access_code, expected):
             raise HTTPException(status_code=401, detail="Access code required.")
 
-    def require_admin_access(x_admin_code: str | None = Header(default=None)) -> None:
+    def require_admin_access(
+        request: Request, x_admin_code: str | None = Header(default=None)
+    ) -> None:
         """Independent of `require_access`: knowing the landlord code grants nothing here.
 
         Unlike the landlord gate, an unset code refuses rather than allows - this surface
         holds every landlord's contact details at once, so it must never be reachable with
-        no code configured at all.
+        no code configured at all. Repeated wrong guesses from one address are throttled
+        for the same reason - see `_AdminAttemptLimiter`.
         """
+        address = client_ip_of(request)
+        if admin_attempts.blocked(address):
+            raise HTTPException(status_code=429, detail="Too many attempts. Try again shortly.")
         expected = settings.admin_code()
         if not expected or not x_admin_code or not hmac.compare_digest(x_admin_code, expected):
+            admin_attempts.record_failure(address)
             raise HTTPException(status_code=401, detail="Admin code required.")
+        admin_attempts.record_success(address)
 
     def browser_of(x_browser_id: str | None = Header(default=None)) -> str:
         """Which browser is asking. Sent as a header so ids stay out of the request log."""

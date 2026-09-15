@@ -2426,6 +2426,39 @@ def test_the_landlord_access_code_does_not_open_the_admin_gate(settings, store):
     assert client.get("/api/admin/users", headers={"X-Admin-Code": "letmein"}).status_code == 401
 
 
+def test_repeated_wrong_admin_codes_from_one_address_are_locked_out(settings, store):
+    """Five wrong guesses lock that address out for a cooldown - a script guessing the
+    admin code one attempt at a time must not be free to keep trying forever."""
+    settings = settings.model_copy(update={"admin_access_code": "staffonly"})
+    client = _client(settings, store)
+
+    for _ in range(5):
+        resp = client.get("/api/admin/users", headers={"X-Admin-Code": "wrong"})
+        assert resp.status_code == 401
+
+    locked = client.get("/api/admin/users", headers={"X-Admin-Code": "staffonly"})
+    assert locked.status_code == 429, (
+        "the correct code must still be refused while this address is locked out"
+    )
+
+
+def test_a_correct_admin_code_resets_the_failure_count(settings, store):
+    """Getting it right clears the slate - a landlord mistyping the code a couple of
+    times before getting it right must not be creeping toward a lockout."""
+    settings = settings.model_copy(update={"admin_access_code": "staffonly"})
+    client = _client(settings, store)
+
+    for _ in range(3):
+        assert client.get("/api/admin/users", headers={"X-Admin-Code": "wrong"}).status_code == 401
+    ok = client.get("/api/admin/users", headers={"X-Admin-Code": "staffonly"})
+    assert ok.status_code == 200
+
+    for _ in range(3):
+        assert client.get("/api/admin/users", headers={"X-Admin-Code": "wrong"}).status_code == 401
+    still_ok = client.get("/api/admin/users", headers={"X-Admin-Code": "staffonly"})
+    assert still_ok.status_code == 200, "the earlier failures must not have carried over"
+
+
 def test_admin_users_lists_signups_with_a_summary_and_signals(settings, store):
     settings = settings.model_copy(update={"admin_access_code": "staffonly"})
     client = _client(settings, store, FakeAdvisor(flags=[]))
