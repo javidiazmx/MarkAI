@@ -32,11 +32,13 @@ accounts_app = typer.Typer(
     help="The landlords who created an account on the page.", no_args_is_help=True
 )
 leads_app = typer.Typer(help="Leads on their way to your CRM.", no_args_is_help=True)
+digest_app = typer.Typer(help="The monthly summary emailed to each landlord.", no_args_is_help=True)
 app.add_typer(sources_app, name="sources")
 app.add_typer(calc_app, name="calc")
 app.add_typer(facts_app, name="facts")
 app.add_typer(accounts_app, name="accounts")
 app.add_typer(leads_app, name="leads")
+app.add_typer(digest_app, name="digest")
 
 
 def _printable(stream: Any) -> Any:
@@ -1483,6 +1485,104 @@ def leads_test() -> None:
         f"It did not go out ({failed} failed).",
         "Run `mark leads list` for the reason it gave.",
     )
+
+
+# --------------------------------------------------------------------------------------
+# The monthly digest
+# --------------------------------------------------------------------------------------
+
+
+@digest_app.command("send")
+def digest_send(
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation."),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Show who would get one and what it says, send nothing."
+    ),
+) -> None:
+    """Email each landlord with an account this month's numbers and open items.
+
+    Nothing here schedules itself - run this by hand, or point Windows Task Scheduler or
+    cron at it once a month. A landlord with nothing to report (no money moved, nothing
+    open on their log) is skipped, not sent an empty email.
+    """
+    import logging
+    import smtplib
+    from datetime import date, timedelta
+    from email.message import EmailMessage
+
+    from markai.web.digest import build_digest, digest_email
+    from markai.web.ledger import Ledger
+    from markai.web.portfolio import Portfolio
+
+    settings = _settings()
+    host = (settings.smtp_host or "").strip()
+    if not dry_run and not host:
+        _fail(
+            "No mail server configured.",
+            "Set MARKAI_SMTP_HOST and the rest of the MARKAI_SMTP_* lines in .env first.",
+        )
+
+    accounts = _accounts_store(settings)
+    ledger = Ledger(settings.data_dir / "ledger.db")
+    portfolio = Portfolio(settings.data_dir / "portfolio.db")
+    since = date.today() - timedelta(days=30)
+
+    digests = []
+    for account, _created_at in accounts.all():
+        if not account.email:
+            continue
+        one = build_digest(account, ledger, portfolio, since)
+        if one.has_anything_to_say:
+            digests.append(one)
+    accounts.close()
+    ledger.close_db()
+    portfolio.close()
+
+    if not digests:
+        console.print("[dim]Nobody has anything to report this month. Nothing to send.[/dim]")
+        return
+
+    console.print(f"[bold]{len(digests)}[/bold] landlord(s) have something to report.")
+    for one in digests:
+        console.print(f"  · {one.name} <{one.email}>: net ${one.net:,.2f}")
+    if dry_run:
+        console.print("[dim]Dry run: nothing sent.[/dim]")
+        return
+    if not yes and not typer.confirm("Send these now?", default=False):
+        console.print("[dim]Nothing sent.[/dim]")
+        return
+
+    username = (settings.smtp_username or "").strip()
+    password = settings.smtp_secret() or ""
+    from_address = (settings.smtp_from or "").strip() or username
+    port = int(settings.smtp_port)
+    starttls = bool(settings.smtp_starttls)
+
+    sent = failed = 0
+    opener = smtplib.SMTP_SSL if port == 465 else smtplib.SMTP
+    with opener(host, port, timeout=15.0) as smtp:
+        if starttls and port != 465:
+            smtp.starttls()
+        if username:
+            smtp.login(username, password)
+        for one in digests:
+            subject, body = digest_email(one)
+            message = EmailMessage()
+            message["To"] = one.email
+            message["From"] = from_address
+            message["Subject"] = subject
+            message.set_content(body)
+            try:
+                smtp.send_message(message)
+                sent += 1
+            except Exception as exc:  # one bad address should not stop the rest
+                failed += 1
+                # The class and message, never the address: the same rule crm.py follows
+                # for a failed lead.
+                logging.getLogger(__name__).warning(
+                    "digest send failed (%d of %d): %s", failed, len(digests), exc
+                )
+    console.print(f"[green]✓[/green] Sent {sent}, {failed} failed.")
 
 
 # --------------------------------------------------------------------------------------

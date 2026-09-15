@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from markai.web.accounts import Account
 from markai.web.admin_store import (
     AdminStore,
@@ -446,3 +448,215 @@ def test_a_failed_alert_never_raises_into_the_caller():
 
 def test_a_missing_sender_is_a_no_op():
     send_pm_fit_alert_soon(None, ACCOUNT, "pm_interest", "reason")  # must not raise
+
+
+# --- AI classification, staff-triggered ----------------------------------------------------
+
+
+def test_set_ai_analysis_creates_a_row_with_no_prior_signal(tmp_path):
+    store = AdminStore(tmp_path / "admin.db")
+    store.set_ai_analysis("browser:b1", True, "Sounds burned out and asked about a PM.")
+    fit = store.get("browser:b1")
+    assert fit.ai_good_fit is True
+    assert fit.ai_reasoning == "Sounds burned out and asked about a PM."
+    assert fit.ai_analyzed_at is not None
+    assert fit.signals == []
+    store.close()
+
+
+def test_ai_analysis_sits_between_override_and_signals_in_precedence(tmp_path):
+    store = AdminStore(tmp_path / "admin.db")
+    # No signal, no override, no AI read yet: falls back to the blunt regex signals (none).
+    assert store.get("a1") is None
+
+    store.set_ai_analysis("a1", True, "Real interest in hiring a PM.")
+    assert store.get("a1").good_fit is True, "the AI's own read, with no signals behind it"
+
+    store.record_signal("a1", "tenant_trouble")
+    store.set_ai_analysis("a1", False, "Just a one-off factual question, no real signal.")
+    assert store.get("a1").good_fit is False, "the AI's read overrides the blunt keyword match"
+
+    store.set_override("a1", True)
+    assert store.get("a1").good_fit is True, "and a human overrides the AI"
+    store.close()
+
+
+def test_reanalyzing_overwrites_the_previous_verdict(tmp_path):
+    store = AdminStore(tmp_path / "admin.db")
+    store.set_ai_analysis("a1", False, "First read.")
+    store.set_ai_analysis("a1", True, "Second read, after more of the conversation.")
+    fit = store.get("a1")
+    assert fit.ai_good_fit is True
+    assert fit.ai_reasoning == "Second read, after more of the conversation."
+    store.close()
+
+
+def test_reassign_carries_the_ai_analysis_forward(tmp_path):
+    store = AdminStore(tmp_path / "admin.db")
+    store.set_ai_analysis("browser:b1", True, "Anonymous read.")
+    store.reassign("browser:b1", "account:a1")
+    merged = store.get("account:a1")
+    assert merged.ai_good_fit is True
+    assert merged.ai_reasoning == "Anonymous read."
+    store.close()
+
+
+def test_reassign_prefers_the_accounts_own_analysis_if_it_has_one(tmp_path):
+    """If staff already analyzed the signed-up account directly, an older anonymous read
+    from before signup should not clobber it."""
+    store = AdminStore(tmp_path / "admin.db")
+    store.set_ai_analysis("browser:b1", True, "Anonymous read.")
+    store.set_ai_analysis("account:a1", False, "Analyzed after they signed up.")
+    store.reassign("browser:b1", "account:a1")
+    merged = store.get("account:a1")
+    assert merged.ai_good_fit is False
+    assert merged.ai_reasoning == "Analyzed after they signed up."
+    store.close()
+
+
+def test_a_database_with_no_ai_columns_is_migrated(tmp_path):
+    """The shape this table shipped in before AI classification was added."""
+    import sqlite3
+
+    path = tmp_path / "admin.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        "CREATE TABLE pm_fit (owner_id TEXT PRIMARY KEY, signals TEXT NOT NULL DEFAULT '[]',"
+        " manual_override INTEGER, last_ip TEXT NOT NULL DEFAULT '',"
+        " notes TEXT NOT NULL DEFAULT '', hidden INTEGER NOT NULL DEFAULT 0,"
+        " updated_at REAL NOT NULL);"
+    )
+    conn.execute(
+        "INSERT INTO pm_fit (owner_id, signals, updated_at) VALUES (?, ?, ?)",
+        ("account:a1", '["pm_interest"]', 0.0),
+    )
+    conn.commit()
+    conn.close()
+
+    store = AdminStore(path)
+    fit = store.get("account:a1")
+    assert fit.signals == ["pm_interest"]
+    assert fit.ai_good_fit is None
+    assert fit.ai_reasoning == ""
+    assert fit.ai_analyzed_at is None
+    store.set_ai_analysis("account:a1", True, "Now analyzed.")
+    assert store.get("account:a1").ai_good_fit is True
+    store.close()
+
+
+class _FakeTextBlock:
+    def __init__(self, text: str) -> None:
+        self.type = "text"
+        self.text = text
+
+
+class _FakeMessage:
+    def __init__(self, text: str) -> None:
+        self.content = [_FakeTextBlock(text)]
+
+
+class _FakeClient:
+    """Enough of the Anthropic SDK's shape for `classify_fit`, nothing more."""
+
+    def __init__(self, reply_text: str, error: Exception | None = None) -> None:
+        self._reply_text = reply_text
+        self._error = error
+        self.calls: list[dict] = []
+
+        class _Messages:
+            def create(inner_self, **kwargs):
+                self.calls.append(kwargs)
+                if self._error:
+                    raise self._error
+                return _FakeMessage(self._reply_text)
+
+        self.messages = _Messages()
+
+
+class _FakeThread:
+    def __init__(self, messages: list[dict]) -> None:
+        self.messages = messages
+
+
+def test_classify_fit_parses_a_good_verdict():
+    from markai.web.admin_store import classify_fit
+
+    client = _FakeClient(
+        '{"good_fit": true, "confidence": "high", '
+        '"reasoning": "Explicitly asked about hiring a property manager."}'
+    )
+    threads = [
+        _FakeThread(
+            [
+                {"role": "user", "content": "Should I just hire a property manager?"},
+                {"role": "assistant", "content": "Depends on a few things..."},
+            ]
+        )
+    ]
+    good_fit, reasoning = classify_fit(object(), threads, client=client)
+    assert good_fit is True
+    assert "property manager" in reasoning
+    assert client.calls[0]["model"] == "claude-haiku-4-5-20251001"
+
+
+def test_classify_fit_parses_a_not_a_fit_verdict():
+    from markai.web.admin_store import classify_fit
+
+    client = _FakeClient('{"good_fit": false, "reasoning": "Just a factual question."}')
+    threads = [_FakeThread([{"role": "user", "content": "How long to return a deposit?"}])]
+    good_fit, reasoning = classify_fit(object(), threads, client=client)
+    assert good_fit is False
+    assert reasoning == "Just a factual question."
+
+
+def test_classify_fit_handles_extra_text_around_the_json():
+    """Cheap models sometimes wrap the JSON in a sentence anyway - still usable."""
+    from markai.web.admin_store import classify_fit
+
+    client = _FakeClient(
+        'Here is my answer: {"good_fit": true, "reasoning": "Sounds burned out."} Hope that helps!'
+    )
+    threads = [_FakeThread([{"role": "user", "content": "I am so tired of this tenant."}])]
+    good_fit, reasoning = classify_fit(object(), threads, client=client)
+    assert good_fit is True
+    assert reasoning == "Sounds burned out."
+
+
+def test_classify_fit_raises_on_no_conversation():
+    from markai.web.admin_store import ClassificationError, classify_fit
+
+    with pytest.raises(ClassificationError, match="No conversation|no conversation"):
+        classify_fit(object(), [], client=_FakeClient("{}"))
+
+
+def test_classify_fit_raises_on_unparseable_response():
+    from markai.web.admin_store import ClassificationError, classify_fit
+
+    client = _FakeClient("I'm not sure how to answer that.")
+    threads = [_FakeThread([{"role": "user", "content": "Hi"}])]
+    with pytest.raises(ClassificationError):
+        classify_fit(object(), threads, client=client)
+
+
+def test_classify_fit_raises_when_the_model_call_fails():
+    from markai.web.admin_store import ClassificationError, classify_fit
+
+    client = _FakeClient("", error=RuntimeError("503 from Anthropic"))
+    threads = [_FakeThread([{"role": "user", "content": "Hi"}])]
+    with pytest.raises(ClassificationError, match="Could not reach the model"):
+        classify_fit(object(), threads, client=client)
+
+
+def test_classify_fit_needs_no_api_key_argument_when_a_client_is_injected():
+    """Settings is never touched when a fake client is passed - confirms the key lookup is
+    skipped entirely, the same injectable-client pattern the rest of this project uses."""
+    from markai.web.admin_store import classify_fit
+
+    class _ExplodingSettings:
+        def anthropic_key(self):
+            raise AssertionError("should not be called when a client is injected")
+
+    client = _FakeClient('{"good_fit": true, "reasoning": "ok"}')
+    threads = [_FakeThread([{"role": "user", "content": "Hi"}])]
+    good_fit, _ = classify_fit(_ExplodingSettings(), threads, client=client)
+    assert good_fit is True

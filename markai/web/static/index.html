@@ -108,15 +108,6 @@
   .start { padding: 8px 4px 4px; }
   .start h2 { margin: 0 0 4px; font-size: 17px; font-weight: 600; }
   .start p { margin: 0 0 18px; color: var(--muted); font-size: 14px; max-width: 52ch; }
-  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
-  .chip {
-    border: 1px solid var(--line); background: var(--panel); color: inherit;
-    border-radius: 20px; padding: 8px 14px; font: inherit; font-size: 14px;
-    cursor: pointer; text-align: left; line-height: 1.35;
-  }
-  .chip:hover, .chip:focus-visible { border-color: var(--accent); color: var(--accent); }
-  .lang { margin: 20px 0 8px; font-size: 12px; text-transform: uppercase;
-          letter-spacing: .06em; color: var(--muted); }
   footer {
     position: fixed; bottom: 0; left: 0; right: 0; background: var(--panel);
     border-top: 1px solid var(--line); padding: 12px 16px;
@@ -326,6 +317,61 @@
   .deal-metric .value { font-weight: 600; }
   .deal-metric .value.pass { color: var(--success); }
   .deal-note { color: var(--muted); font-size: 12px; margin-top: 12px; line-height: 1.5; }
+  /* A landlord picks a building and saves the numbers to it without leaving the panel. */
+  .deal-save { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+  .deal-save-row { display: flex; gap: 6px; }
+  .deal-save-row select {
+    flex: 1; min-width: 0; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px;
+    background: var(--bg); color: var(--ink); font: inherit; font-size: 13px;
+  }
+  .deal-save-row button { padding: 7px 12px; font-size: 13px; border-radius: 7px; white-space: nowrap; }
+  .deal-save-msg { display: block; margin-top: 6px; font-size: 12px; min-height: 16px; }
+
+  /* A nudge is a reminder, not an alert - calm, dismissible, gone for good once dismissed. */
+  #nudges { max-width: 780px; margin: 0 auto; }
+  .nudge-card {
+    display: flex; gap: 10px; align-items: flex-start; margin: 0 0 14px; padding: 10px 12px;
+    border-left: 3px solid var(--accent); border-radius: 8px; background: var(--panel);
+    box-shadow: var(--shadow-sm);
+  }
+  .nudge-body { flex: 1; min-width: 0; font-size: 13.5px; line-height: 1.5; }
+  .nudge-body strong { display: block; margin-bottom: 2px; }
+  .nudge-body .nudge-text { color: var(--muted); }
+  .nudge-dismiss {
+    background: none; border: 0; color: var(--muted); cursor: pointer; font-size: 16px;
+    line-height: 1; padding: 2px 4px; flex-shrink: 0;
+  }
+  .nudge-dismiss:hover { color: var(--ink); }
+
+  /* The property this question is about - lives next to the input, not buried in a form. */
+  .context-row { max-width: 780px; margin: 0 auto 8px; display: flex; justify-content: flex-end; }
+  .context-row select {
+    max-width: 240px; padding: 6px 9px; border: 1px solid var(--line); border-radius: 7px;
+    background: var(--bg); color: var(--ink); font: inherit; font-size: 12.5px;
+  }
+
+  /* Command palette - its own small modal, filtered live against a short jump list. */
+  .palette-card { max-width: 32rem; width: 100%; padding: 14px; }
+  #palette-input {
+    width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px;
+    background: var(--bg); color: var(--ink); font: inherit; font-size: 15px; margin-bottom: 8px;
+  }
+  .palette-list { max-height: 50vh; overflow-y: auto; }
+  .palette-item {
+    display: block; width: 100%; text-align: left; background: none; border: 0;
+    padding: 9px 10px; border-radius: 7px; font: inherit; font-size: 14px; color: inherit;
+    cursor: pointer;
+  }
+  .palette-item .hint {
+    display: block; font-size: 11px; color: var(--muted); margin-top: 1px;
+  }
+  .palette-item:hover, .palette-item.hi { background: var(--user); }
+
+  /* The mic button only ever exists where speech recognition actually exists - it is
+     never rendered and then left to fail on click. */
+  #mic.on { color: var(--accent); animation: mic-pulse 1.1s ease-in-out infinite; }
+  @keyframes mic-pulse { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { #mic.on { animation: none; opacity: 1; } }
 </style>
 </head>
 <body>
@@ -583,15 +629,33 @@
   </div>
 </div>
 
+<div class="scrim" id="tour-card" hidden>
+  <div class="card">
+    <h2 id="tour-title"></h2>
+    <p id="tour-body"></p>
+    <div class="row-buttons">
+      <button id="tour-next" type="button">Next</button>
+      <button class="ghost" id="tour-skip" type="button">Skip</button>
+    </div>
+  </div>
+</div>
+
+<div class="scrim" id="palette-card" hidden>
+  <div class="card palette-card">
+    <label class="vh" for="palette-input">Jump to</label>
+    <input id="palette-input" type="text" placeholder="Type a command or search conversations…"
+           autocomplete="off" />
+    <div id="palette-list" class="palette-list"></div>
+  </div>
+</div>
+
 <main>
+<div id="nudges"></div>
 <section class="start" id="start" hidden>
   <h2>Ask me anything about renting property in Chicagoland.</h2>
   <p>Built specifically to help Chicagoland landlords manage their rental property, not a
      general chatbot. If I don't know something, I'll say so.
      Pregunta en español si prefieres.</p>
-  <div class="chips" id="chips-en"></div>
-  <div class="lang">En español</div>
-  <div class="chips" id="chips-es"></div>
 </section>
 <div id="log"></div>
 </main>
@@ -605,10 +669,17 @@
   <div class="files" id="files" hidden></div>
   <div class="file-notice" id="file-notice" hidden aria-live="polite"></div>
   <div class="free-counter" id="free-counter" hidden></div>
+  <div class="context-row">
+    <label class="vh" for="property-context">Which property this question is about</label>
+    <select id="property-context">
+      <option value="">All properties</option>
+    </select>
+  </div>
   <div class="row">
     <input id="file" type="file" multiple hidden
            accept="image/jpeg,image/png,image/gif,image/webp,application/pdf,text/plain,text/csv" />
     <button class="ghost attach" id="attach" type="button" title="Attach photos or a PDF" aria-label="Attach photos or a PDF">📎</button>
+    <button class="ghost attach" id="mic" type="button" title="Speak your question" aria-label="Speak your question" hidden>🎤</button>
     <label class="vh" for="q">Ask Jay a question about renting property in Chicagoland</label>
     <textarea id="q" placeholder="Ask about screening, deposits, leases, a deal you're looking at…"></textarea>
     <button id="send" type="button">Ask</button>
@@ -616,6 +687,8 @@
     <button class="ghost" id="reset" type="button">New</button>
   </div>
 </footer>
+
+<div class="toast-stack" id="toast-stack"></div>
 
 <script>
 (function () {
@@ -627,7 +700,19 @@
   var stopBtn = document.getElementById("stop");
   var gate = document.getElementById("gate");
   var codeInput = document.getElementById("code");
+  var toastStack = document.getElementById("toast-stack");
   var busy = false;
+
+  // A small, calm confirmation for actions that have no other feedback (saving a Deal
+  // Analyzer result, say). Same shape as admin.html's toast so the two surfaces read the
+  // same way.
+  function toast(message, kind) {
+    var node = el("div", "toast " + (kind || ""), message);
+    toastStack.appendChild(node);
+    setTimeout(function () {
+      if (node.parentNode) node.parentNode.removeChild(node);
+    }, 4000);
+  }
 
   function newId(prefix) {
     return prefix + Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -841,6 +926,13 @@
     row.appendChild(up);
     row.appendChild(down);
     row.appendChild(said);
+
+    var regen = el("button", null, "Regenerate");
+    regen.type = "button";
+    regen.title = "Ask the same question again and replace this answer";
+    regen.addEventListener("click", function () { regenerate(slot); });
+    row.appendChild(regen);
+
     slot.wrap.appendChild(row);
 
   }
@@ -1050,30 +1142,13 @@
   });
 
   var inFlight = null;  // the AbortController for the answer being streamed
+  var propertyContext = document.getElementById("property-context");
 
-  async function send() {
-    var question = box.value.trim();
-    if ((!question && !pending.length) || busy) return;
-    if (account.required && !account.signed_in && account.free_left === 0) {
-      heldQuestion = question;
-      askToSignUp();
-      return;
-    }
-    busy = true;
-    sendBtn.disabled = true;
-    box.value = "";
-    var files = pending;
-    pending = [];
-    drawFiles();
-
-    showStarters(false);
-    var mine = addMessage("you", "You");
-    mine.bubble.textContent = question;
-    if (files.length) {
-      var names = files.map(function (f) { return f.name; }).join(", ");
-      mine.wrap.appendChild(el("div", "meta", "📎 " + names));
-    }
-    var slot = addMessage("mark", "Jay");
+  // Shared by a fresh send and a regenerate: stream one answer into `slot`. Everything
+  // about *starting* the turn (reading the box, gating on signup, creating the "You"
+  // bubble) stays in send() itself - this only ever needs a slot to fill and a message
+  // to send.
+  async function runStream(slot, apiMessage, files, rawQuestion) {
     // Opus 5 thinks before it writes. The reasoning is streamed into this line while it
     // does, so the wait shows work instead of a blank bubble.
     var reasoning = el("div", "reasoning", "");
@@ -1110,7 +1185,7 @@
         headers: headers(),
         signal: inFlight.signal,
         body: JSON.stringify({
-          session_id: sessionId, message: question, attachments: files
+          session_id: sessionId, message: apiMessage, attachments: files
         })
       });
       if (!response.ok) {
@@ -1121,7 +1196,7 @@
           // The server is the authority on this, so it can arrive even when the page
           // thought there was a question left.
           slot.wrap.remove();
-          heldQuestion = question;
+          heldQuestion = rawQuestion;
           account.free_left = 0;
           askToSignUp(payload.message);
           return;
@@ -1209,26 +1284,65 @@
     }
   }
 
-  // The opening screen. A blank page tells a landlord nothing about what Mark covers, and
-  // the chips double as a hint that Spanish works - the guardrails read both languages.
-  var STARTERS = {
-    "chips-en": [
-      "How long do I have to return a security deposit in Chicago?",
-      "My tenant stopped paying in January. What are my steps?",
-      "What should I check on a rental application?",
-      "Do I have to accept a housing voucher?",
-      "When does the heat ordinance season start?",
-      "Run the cash flow on a $400k two-flat with 25% down",
-      "What could I rent my property for? Run a free rental analysis."
-    ],
-    "chips-es": [
-      "¿Cuánto tiempo tengo para devolver el depósito?",
-      "¿Cómo desalojo a un inquilino que no paga?",
-      "¿Qué documentos le pido a un solicitante?",
-      "¿Puedo cobrar una multa por pago tardío?",
-      "¿Cuánto podría rentar mi propiedad? Quiero un análisis de renta gratis."
-    ]
-  };
+  async function send() {
+    var question = box.value.trim();
+    if ((!question && !pending.length) || busy) return;
+    if (account.required && !account.signed_in && account.free_left === 0) {
+      heldQuestion = question;
+      askToSignUp();
+      return;
+    }
+    busy = true;
+    sendBtn.disabled = true;
+    box.value = "";
+    var files = pending;
+    pending = [];
+    drawFiles();
+
+    showStarters(false);
+    var mine = addMessage("you", "You");
+    mine.bubble.textContent = question;
+    if (files.length) {
+      var names = files.map(function (f) { return f.name; }).join(", ");
+      mine.wrap.appendChild(el("div", "meta", "📎 " + names));
+    }
+    var slot = addMessage("mark", "Jay");
+
+    // A property picked in the context switcher rides along in what is sent to the API,
+    // never in what the "You" bubble shows - the landlord's own words stay their own words.
+    var apiMessage = question;
+    var contextOption = propertyContext.options[propertyContext.selectedIndex];
+    if (propertyContext.value && contextOption) {
+      apiMessage = "Regarding " + contextOption.textContent + ": " + question;
+    }
+    // Kept on the slot itself, not a shared "last question" variable - with more than one
+    // answer on screen, a bare global would make Regenerate on an EARLIER answer silently
+    // replace it with the reply to whatever was asked most recently.
+    slot.apiMessage = apiMessage;
+    slot.rawQuestion = question;
+
+    await runStream(slot, apiMessage, files, question);
+  }
+
+  // Re-asks the same question that produced this answer and replaces it in place, rather
+  // than appending a new turn to the log.
+  function resetSlotForStream(slot) {
+    Array.prototype.slice.call(slot.wrap.children).forEach(function (child) {
+      if (child === slot.bubble) return;
+      if (child.classList && child.classList.contains("who")) return;
+      slot.wrap.removeChild(child);
+    });
+    slot.bubble.classList.remove("err");
+    slot.bubble.textContent = "";
+  }
+
+  function regenerate(slot) {
+    if (busy || !slot.apiMessage) return;
+    busy = true;
+    sendBtn.disabled = true;
+    resetSlotForStream(slot);
+    runStream(slot, slot.apiMessage, [], slot.rawQuestion);
+  }
 
   var start = document.getElementById("start");
 
@@ -1259,27 +1373,79 @@
     });
   })();
 
-  function buildStarters() {
-    Object.keys(STARTERS).forEach(function (id) {
-      var row = document.getElementById(id);
-      row.textContent = "";
-      STARTERS[id].forEach(function (question) {
-        var chip = el("button", "chip", question);
-        chip.type = "button";
-        chip.addEventListener("click", function () {
-          box.value = question;
-          send();
-        });
-        row.appendChild(chip);
-      });
+  // A short, skippable tour on a first visit - gated by its own key so it never fires
+  // again once seen, and never fights the legal notice above for the same modal slot.
+  var TOUR_STEPS = [
+    {
+      title: "Ask anything about renting in Chicagoland",
+      body: "Type your own question below, in English or Spanish - Jay was built for " +
+        "this one job, not general chat."
+    },
+    {
+      title: "Track your properties",
+      body: "Add a building in the sidebar and Jay answers about that one instead of a " +
+        "generic one."
+    },
+    {
+      title: "Run real numbers",
+      body: "Open the Deal Analyzer any time to check cash flow, cap rate and the 1% " +
+        "rule before you buy."
+    }
+  ];
+
+  (function tour() {
+    var scrim = document.getElementById("tour-card");
+    var titleEl = document.getElementById("tour-title");
+    var bodyEl = document.getElementById("tour-body");
+    var nextBtn = document.getElementById("tour-next");
+    var skipBtn = document.getElementById("tour-skip");
+    var step = 0;
+
+    function finish() {
+      scrim.hidden = true;
+      try {
+        localStorage.setItem("jay_onboarded", "1");
+      } catch (e) { /* nothing to do */ }
+    }
+
+    function draw() {
+      var current = TOUR_STEPS[step];
+      titleEl.textContent = current.title;
+      bodyEl.textContent = current.body;
+      nextBtn.textContent = step === TOUR_STEPS.length - 1 ? "Get started" : "Next";
+    }
+
+    nextBtn.addEventListener("click", function () {
+      step++;
+      if (step >= TOUR_STEPS.length) { finish(); return; }
+      draw();
     });
-  }
+    skipBtn.addEventListener("click", finish);
+
+    function maybeStart() {
+      var onboarded = true;
+      try {
+        onboarded = localStorage.getItem("jay_onboarded") === "1";
+      } catch (e) { onboarded = true; /* private window: never stack two modals */ }
+      if (onboarded) return;
+      step = 0;
+      draw();
+      scrim.hidden = false;
+    }
+
+    // Only ever after the legal notice is out of the way - immediately if it already was.
+    var welcomeScrim = document.getElementById("welcome");
+    if (welcomeScrim.hidden) {
+      maybeStart();
+    } else {
+      document.getElementById("welcome-ok").addEventListener("click", maybeStart);
+    }
+  })();
 
   function showStarters(show) {
     start.hidden = !show;
   }
 
-  buildStarters();
   showStarters(true);
 
   // Attachments. Held in memory for one message and never uploaded anywhere but the
@@ -1506,6 +1672,7 @@
     remember("mark_session", sessionId);
     log.textContent = "";
     showStarters(true);
+    propertyContext.value = "";
     closeSide();
     loadThreads();
     box.focus();
@@ -1588,9 +1755,15 @@
     drawProperties(data.properties || []);
   }
 
+  // The properties array, kept around so the Deal Analyzer's "save to a property" control
+  // and the context switcher can reuse it without a fetch of their own.
+  var allProperties = [];
+
   function drawProperties(items) {
+    allProperties = items;
     propRow.textContent = "";
     drawPropPicker(items);
+    drawPropertyContext(items);
     if (!items.length) {
       propRow.appendChild(el("div", "side-empty",
         "Add a building and Jay answers about that one instead of a generic one."));
@@ -1662,6 +1835,24 @@
       });
       select.value = chosen;
     });
+  }
+
+  // The dropdown next to the input. Kept separate from drawPropPicker's two selects
+  // because "All properties" is a real, load-bearing default here rather than a
+  // fallback label, and the selection is meant to persist across questions in this
+  // session rather than being tied to a single form.
+  function drawPropertyContext(items) {
+    var chosen = propertyContext.value;
+    propertyContext.textContent = "";
+    var any = el("option", null, "All properties");
+    any.value = "";
+    propertyContext.appendChild(any);
+    items.forEach(function (item) {
+      var option = el("option", null, item.label);
+      option.value = item.id;
+      propertyContext.appendChild(option);
+    });
+    propertyContext.value = chosen;
   }
 
   function clearLogForm() {
@@ -2016,7 +2207,7 @@
     dealResults.appendChild(el("div", "danger-text", message));
   }
 
-  function drawDealResults(data) {
+  function drawDealResults(data, inputs) {
     dealResults.textContent = "";
     dealMetric("Loan amount", money2(data.loan_amount));
     dealMetric("Monthly payment", money2(data.monthly_payment));
@@ -2027,6 +2218,93 @@
     dealMetric("DSCR", data.dscr.toFixed(2));
     var passes = !!(data.one_percent_rule && data.one_percent_rule.passes);
     dealMetric("1% rule", passes ? "passes" : "fails", passes ? "pass" : "danger-text");
+    dealSaveControl(data, inputs || {});
+  }
+
+  // One line a landlord could paste into a lease renewal note - built from the same
+  // numbers just rendered above it, not re-fetched or re-derived.
+  function dealSummaryLine(data, inputs) {
+    var price = data.purchase_price != null ? data.purchase_price : (inputs.price || 0);
+    var head = "Deal analysis: " + money(price);
+    var terms = [];
+    if (inputs.down_payment_pct != null) {
+      terms.push(Math.round(inputs.down_payment_pct * 100) + "% down");
+    }
+    if (inputs.annual_rate != null) {
+      terms.push((inputs.annual_rate * 100).toFixed(2).replace(/\.?0+$/, "") + "%");
+    }
+    if (terms.length) head += " @ " + terms.join(", ");
+    var metrics = [];
+    if (data.cash_flow_monthly != null) {
+      metrics.push("cash flow " + money(data.cash_flow_monthly) + "/mo");
+    }
+    if (data.cap_rate != null) metrics.push("cap rate " + (data.cap_rate * 100).toFixed(1) + "%");
+    if (data.dscr != null) metrics.push("DSCR " + data.dscr.toFixed(2));
+    if (data.one_percent_rule) {
+      metrics.push("1% rule " + (data.one_percent_rule.passes ? "passes" : "fails"));
+    }
+    return head + (metrics.length ? ": " + metrics.join(", ") : "");
+  }
+
+  // Saves the numbers just calculated onto a building's own log - the same /api/log a
+  // landlord's own "What's going on" entries use, just written by a button instead of
+  // by hand.
+  function dealSaveControl(data, inputs) {
+    var wrap = el("div", "deal-save");
+    if (!allProperties.length) {
+      wrap.appendChild(el("div", "side-empty", "Add a property first to save this to it."));
+      dealResults.appendChild(wrap);
+      return;
+    }
+    var row = el("div", "deal-save-row");
+    var select = el("select", null);
+    allProperties.forEach(function (item) {
+      var option = el("option", null, item.label);
+      option.value = item.id;
+      select.appendChild(option);
+    });
+    var saveBtn = el("button", "ghost", "Save to a property");
+    saveBtn.type = "button";
+    var msg = el("div", "deal-save-msg", "");
+    saveBtn.addEventListener("click", async function () {
+      msg.textContent = "";
+      msg.classList.remove("err");
+      saveBtn.disabled = true;
+      var propLabelChosen = select.options[select.selectedIndex]
+        ? select.options[select.selectedIndex].textContent : "that property";
+      try {
+        var response = await fetch("/api/log", {
+          method: "POST",
+          headers: headers(),
+          body: JSON.stringify({
+            kind: "note",
+            what: dealSummaryLine(data, inputs),
+            property_id: select.value
+          })
+        });
+        if (!response.ok) {
+          var detail = "Could not save that.";
+          try { detail = (await response.json()).detail || detail; } catch (e) {}
+          msg.textContent = detail;
+          msg.classList.add("err");
+          return;
+        }
+        msg.textContent = "Saved.";
+        toast("Saved to " + propLabelChosen + ".", "success");
+        setTimeout(function () { msg.textContent = ""; }, 3000);
+        refreshLog();
+      } catch (error) {
+        msg.textContent = "Could not save that: " + error;
+        msg.classList.add("err");
+      } finally {
+        saveBtn.disabled = false;
+      }
+    });
+    row.appendChild(select);
+    row.appendChild(saveBtn);
+    wrap.appendChild(row);
+    wrap.appendChild(msg);
+    dealResults.appendChild(wrap);
   }
 
   async function runDealCalc() {
@@ -2080,7 +2358,7 @@
       drawDealError(data.error);
       return;
     }
-    drawDealResults(data || {});
+    drawDealResults(data || {}, payload);
   }
 
   function scheduleDealCalc() {
@@ -2138,11 +2416,211 @@
     }
   }
 
+  // Nudges -----------------------------------------------------------------------------
+  // A quiet reminder near the top of the chat, not an alert. Silent on any failure or an
+  // empty list - there is nothing here worth telling a landlord went wrong.
+  var nudgesRow = document.getElementById("nudges");
+
+  async function loadNudges() {
+    var data;
+    try {
+      var response = await fetch("/api/nudges", { headers: headers() });
+      if (!response.ok) return;
+      data = await response.json();
+    } catch (error) {
+      return;
+    }
+    (data.nudges || []).forEach(function (nudge) {
+      if (!nudge || !nudge.id) return;
+      if (recall("jay_nudge_dismissed_" + nudge.id) === "1") return;
+      drawNudge(nudge);
+    });
+  }
+
+  function drawNudge(nudge) {
+    var card = el("div", "nudge-card");
+    var body = el("div", "nudge-body");
+    body.appendChild(el("strong", null, nudge.title || ""));
+    body.appendChild(el("div", "nudge-text", nudge.text || ""));
+    card.appendChild(body);
+    var dismiss = el("button", "nudge-dismiss", "×");
+    dismiss.type = "button";
+    dismiss.title = "Dismiss";
+    dismiss.setAttribute("aria-label", "Dismiss: " + (nudge.title || "reminder"));
+    dismiss.addEventListener("click", function () {
+      remember("jay_nudge_dismissed_" + nudge.id, "1");
+      card.remove();
+    });
+    card.appendChild(dismiss);
+    nudgesRow.appendChild(card);
+  }
+
+  // Command palette ----------------------------------------------------------------------
+  // Cmd/Ctrl+K anywhere on the page. A self-contained jump list built from state the page
+  // already has (threads, properties, the Deal Analyzer, handoff) - nothing new to load.
+  var paletteCard = document.getElementById("palette-card");
+  var paletteInput = document.getElementById("palette-input");
+  var paletteList = document.getElementById("palette-list");
+  var paletteFiltered = [];
+  var paletteHi = 0;
+
+  function paletteActions() {
+    var items = [
+      { label: "New conversation", run: function () { startNew(); } },
+      { label: "Open Deal Analyzer", run: function () {
+          document.getElementById("open-deal").click();
+        } },
+      { label: "Open your properties", run: function () {
+          side.classList.add("open");
+          var propsSection = document.getElementById("props");
+          if (propsSection.scrollIntoView) propsSection.scrollIntoView({ block: "center" });
+        } },
+      { label: "Hand this to a property manager", run: function () {
+          document.getElementById("handoff").click();
+        } }
+    ];
+    allThreads.forEach(function (thread) {
+      items.push({
+        label: thread.title,
+        hint: "Conversation",
+        run: function () { openThread(thread.id); }
+      });
+    });
+    return items;
+  }
+
+  function renderPalette(query) {
+    var needle = query.trim().toLowerCase();
+    var all = paletteActions();
+    paletteFiltered = !needle ? all : all.filter(function (item) {
+      return item.label.toLowerCase().indexOf(needle) !== -1;
+    });
+    paletteList.textContent = "";
+    if (!paletteFiltered.length) {
+      paletteList.appendChild(el("div", "side-empty", "Nothing matches."));
+      paletteHi = -1;
+      return;
+    }
+    if (paletteHi < 0 || paletteHi >= paletteFiltered.length) paletteHi = 0;
+    paletteFiltered.forEach(function (item, index) {
+      var row = el("button", "palette-item" + (index === paletteHi ? " hi" : ""), item.label);
+      row.type = "button";
+      if (item.hint) row.appendChild(el("span", "hint", item.hint));
+      row.addEventListener("click", function () {
+        closePalette();
+        item.run();
+      });
+      paletteList.appendChild(row);
+    });
+  }
+
+  function openPalette() {
+    paletteHi = 0;
+    paletteInput.value = "";
+    renderPalette("");
+    paletteCard.hidden = false;
+    paletteInput.focus();
+  }
+
+  function closePalette() {
+    paletteCard.hidden = true;
+  }
+
+  paletteInput.addEventListener("input", function () {
+    paletteHi = 0;
+    renderPalette(paletteInput.value);
+  });
+
+  paletteInput.addEventListener("keydown", function (event) {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      if (paletteHi < paletteFiltered.length - 1) paletteHi++;
+      renderPalette(paletteInput.value);
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      if (paletteHi > 0) paletteHi--;
+      renderPalette(paletteInput.value);
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      var pick = paletteFiltered[paletteHi];
+      if (pick) { closePalette(); pick.run(); }
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      closePalette();
+    }
+  });
+
+  document.addEventListener("keydown", function (event) {
+    if (event.key === "k" && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      if (paletteCard.hidden) openPalette(); else closePalette();
+    } else if (event.key === "Escape" && !paletteCard.hidden) {
+      closePalette();
+    }
+  });
+
+  // Voice input ----------------------------------------------------------------------
+  // The browser's own speech recognition, nothing server-side. Firefox has neither
+  // constructor, so the button is simply never drawn there rather than shown and left to
+  // error on the first click.
+  var micBtn = document.getElementById("mic");
+  var SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (SpeechRecognitionCtor) {
+    micBtn.hidden = false;
+    var recognizer = null;
+    var listening = false;
+    var micBaseText = "";  // what was already in the box when listening started
+
+    function stopListening() {
+      listening = false;
+      micBtn.classList.remove("on");
+      if (recognizer) {
+        try { recognizer.stop(); } catch (e) { /* already stopped */ }
+      }
+    }
+
+    micBtn.addEventListener("click", function () {
+      if (listening) { stopListening(); return; }
+      recognizer = new SpeechRecognitionCtor();
+      recognizer.lang = "en-US";
+      recognizer.interimResults = true;
+      recognizer.continuous = true;
+      micBaseText = box.value;
+      listening = true;
+      micBtn.classList.add("on");
+      recognizer.onresult = function (event) {
+        var finalText = "";
+        var interim = "";
+        for (var i = 0; i < event.results.length; i++) {
+          var result = event.results[i];
+          if (result.isFinal) finalText += result[0].transcript;
+          else interim += result[0].transcript;
+        }
+        var heard = finalText + interim;
+        var sep = micBaseText && heard && !/\s$/.test(micBaseText) ? " " : "";
+        box.value = micBaseText + sep + heard;
+      };
+      recognizer.onerror = function () {
+        stopListening();
+      };
+      recognizer.onend = function () {
+        listening = false;
+        micBtn.classList.remove("on");
+      };
+      try {
+        recognizer.start();
+      } catch (e) {
+        stopListening();
+      }
+    });
+  }
+
   loadStatus();
   loadThreads();
   loadProperties();
   loadLog();
   loadAccount();
+  loadNudges();
 })();
 </script>
 </body>

@@ -54,9 +54,21 @@
   .fit { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
   .fit .note { color: var(--muted); font-size: 11px; }
   .fit .reset { border: none; background: none; color: var(--accent); font-size: 11px; padding: 0; cursor: pointer; }
+  .ai-badge {
+    display: inline-block; font-size: 10px; font-weight: 600; padding: 1px 6px;
+    border-radius: 20px; background: var(--accent); color: var(--accent-ink);
+    text-transform: uppercase; letter-spacing: .03em;
+  }
+  th.select-col, td.select-col { width: 24px; }
   tbody tr { cursor: pointer; }
   tbody tr:hover { background: var(--user, var(--bg)); }
   tr.row-hidden { opacity: .55; }
+  .bulk-bar {
+    display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap;
+    background: var(--warn-bg); border: 1px solid var(--line); border-radius: var(--radius-sm);
+    padding: 8px 12px; font-size: 13px;
+  }
+  .bulk-bar .bulk-count { font-weight: 600; }
 
   .card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
   .card-head h2 { margin: 0 0 4px; font-size: 19px; }
@@ -80,6 +92,8 @@
   .thread-msg { padding: 10px 12px; border-top: 1px solid var(--line); font-size: 13.5px; white-space: pre-wrap; }
   .thread-msg .who { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-bottom: 3px; }
   .thread-msg.assistant { background: var(--bg); }
+  .ai-verdict { font-weight: 600; margin-bottom: 4px; }
+  .ai-verdict.pass { color: var(--success); }
 </style>
 </head>
 <body>
@@ -115,6 +129,11 @@
       <button class="btn btn-sm" id="export-csv" type="button">Export CSV</button>
       <span class="count" id="count"></span>
     </div>
+    <div class="bulk-bar" id="bulk-bar" hidden>
+      <span class="bulk-count" id="bulk-count"></span>
+      <button class="btn btn-sm" id="bulk-hide-btn" type="button">Hide selected</button>
+      <button class="btn btn-ghost btn-sm" id="bulk-clear-btn" type="button">Clear selection</button>
+    </div>
     <div id="table-wrap"></div>
   </div>
 </main>
@@ -141,11 +160,17 @@
   var showHiddenToggle = document.getElementById("show-hidden");
   var exportBtn = document.getElementById("export-csv");
 
+  var bulkBar = document.getElementById("bulk-bar");
+  var bulkCount = document.getElementById("bulk-count");
+  var bulkHideBtn = document.getElementById("bulk-hide-btn");
+  var bulkClearBtn = document.getElementById("bulk-clear-btn");
+
   var SIGNAL_FLAGS = [
     "pm_interest", "tenant_trouble", "self_manage_burnout", "vacancy_help", "buying_interest"
   ];
 
   var allUsers = [];
+  var selectedIds = new Set();
 
   function adminCode() { return sessionStorage.getItem("mark_admin_code") || ""; }
 
@@ -266,6 +291,12 @@
     renderTable(filteredAndSorted());
   }
 
+  function updateBulkBar() {
+    var n = selectedIds.size;
+    bulkBar.hidden = n === 0;
+    bulkCount.textContent = n + " selected";
+  }
+
   function renderRow(user) {
     var tr = el("tr");
     if (user.hidden) tr.classList.add("row-hidden");
@@ -273,6 +304,19 @@
       if (e.target.closest("input, button")) return;
       openDetail(user.id);
     });
+
+    var selectTd = el("td", "select-col");
+    var selectBox = document.createElement("input");
+    selectBox.type = "checkbox";
+    selectBox.checked = selectedIds.has(user.id);
+    selectBox.setAttribute("aria-label", "Select this visitor");
+    selectBox.addEventListener("change", function () {
+      if (selectBox.checked) selectedIds.add(user.id);
+      else selectedIds.delete(user.id);
+      updateBulkBar();
+    });
+    selectTd.appendChild(selectBox);
+    tr.appendChild(selectTd);
 
     var who = el("td");
     if (user.anonymous) {
@@ -314,6 +358,11 @@
       setOverride(user.id, box.checked);
     });
     fitWrap.appendChild(box);
+    if (user.ai_analyzed_at) {
+      var aiBadge = el("span", "ai-badge", "AI");
+      aiBadge.title = "AI-analyzed" + (user.ai_reasoning ? ": " + user.ai_reasoning : "");
+      fitWrap.appendChild(aiBadge);
+    }
     if (user.manual_override !== null && user.manual_override !== undefined) {
       fitWrap.appendChild(el("span", "note", "staff set"));
       var reset = el("button", "reset", "reset to AI");
@@ -350,6 +399,23 @@
     var table = el("table");
     var thead = el("thead");
     var headRow = el("tr");
+    var selectAllTh = el("th", "select-col");
+    var selectAllBox = document.createElement("input");
+    selectAllBox.type = "checkbox";
+    selectAllBox.setAttribute("aria-label", "Select all visible visitors");
+    selectAllBox.checked = users.length > 0 && users.every(function (u) {
+      return selectedIds.has(u.id);
+    });
+    selectAllBox.addEventListener("change", function () {
+      users.forEach(function (u) {
+        if (selectAllBox.checked) selectedIds.add(u.id);
+        else selectedIds.delete(u.id);
+      });
+      updateBulkBar();
+      renderTable(users);
+    });
+    selectAllTh.appendChild(selectAllBox);
+    headRow.appendChild(selectAllTh);
     ["Landlord", "When", "Summary", "Signals", "Good fit for PM", "Actions"].forEach(function (label) {
       headRow.appendChild(el("th", "", label));
     });
@@ -411,6 +477,41 @@
   goodFitFilter.addEventListener("change", renderFiltered);
   sortSelect.addEventListener("change", renderFiltered);
   showHiddenToggle.addEventListener("change", load);
+
+  bulkClearBtn.addEventListener("click", function () {
+    selectedIds.clear();
+    updateBulkBar();
+    renderFiltered();
+  });
+
+  bulkHideBtn.addEventListener("click", function () {
+    var ids = [];
+    selectedIds.forEach(function (id) { ids.push(id); });
+    if (!ids.length) return;
+    bulkHideBtn.disabled = true;
+    fetch("/api/admin/users/bulk-hidden", {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({ owner_ids: ids, hidden: true })
+    })
+      .then(function (resp) {
+        if (!resp.ok) throw new Error("bulk hide failed");
+        return resp.json();
+      })
+      .then(function (data) {
+        var n = data && typeof data.count === "number" ? data.count : ids.length;
+        showToast(n + " visitor" + (n === 1 ? "" : "s") + " hidden", "success");
+        selectedIds.clear();
+        updateBulkBar();
+        load();
+      })
+      .catch(function () {
+        showToast("Could not hide the selected visitors. Try again.", "error");
+      })
+      .then(function () {
+        bulkHideBtn.disabled = false;
+      });
+  });
 
   exportBtn.addEventListener("click", function () {
     var url = "/api/admin/users/export.csv" + (showHiddenToggle.checked ? "?include_hidden=1" : "");
@@ -502,6 +603,63 @@
     });
   }
 
+  function analyzeUser(ownerId, btn) {
+    var originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "Analyzing…";
+    fetch("/api/admin/users/" + encodeURIComponent(ownerId) + "/analyze", {
+      method: "POST",
+      headers: headers()
+    })
+      .then(function (resp) {
+        return resp.json().catch(function () { return {}; }).then(function (data) {
+          if (!resp.ok) throw new Error(data.detail || "Could not analyze this visitor.");
+          return data;
+        });
+      })
+      .then(function () {
+        showToast("AI analysis complete", "success");
+        openDetail(ownerId);
+      })
+      .catch(function (err) {
+        btn.disabled = false;
+        btn.textContent = originalText;
+        showToast((err && err.message) || "Could not analyze this visitor.", "error");
+      });
+  }
+
+  function renderAiSection(user, ownerId) {
+    var section = el("div", "detail-section");
+    section.appendChild(el("h3", "", "AI Analysis"));
+
+    if (!user.ai_analyzed_at) {
+      var analyzeBtn = el("button", "btn btn-sm", "Analyze with AI");
+      analyzeBtn.type = "button";
+      analyzeBtn.addEventListener("click", function () {
+        analyzeUser(ownerId, analyzeBtn);
+      });
+      section.appendChild(analyzeBtn);
+      return section;
+    }
+
+    var verdict = el(
+      "div",
+      "ai-verdict " + (user.ai_good_fit ? "pass" : "danger-text"),
+      "AI says: " + (user.ai_good_fit ? "Good fit" : "Not a fit")
+    );
+    section.appendChild(verdict);
+    if (user.ai_reasoning) {
+      section.appendChild(el("p", "detail-contact", user.ai_reasoning));
+    }
+    var reanalyzeBtn = el("button", "btn btn-ghost btn-sm", "Re-analyze");
+    reanalyzeBtn.type = "button";
+    reanalyzeBtn.addEventListener("click", function () {
+      analyzeUser(ownerId, reanalyzeBtn);
+    });
+    section.appendChild(reanalyzeBtn);
+    return section;
+  }
+
   function openDetail(ownerId) {
     card.textContent = "";
     card.appendChild(el("p", "contact", "Loading…"));
@@ -557,6 +715,8 @@
         }
         flags.appendChild(signalsWrap);
         card.appendChild(flags);
+
+        card.appendChild(renderAiSection(user, ownerId));
 
         var notesSection = el("div", "detail-section");
         notesSection.appendChild(el("h3", "", "Notes"));

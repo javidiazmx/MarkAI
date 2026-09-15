@@ -35,6 +35,9 @@ CREATE TABLE IF NOT EXISTS pm_fit (
     last_ip         TEXT NOT NULL DEFAULT '',
     notes           TEXT NOT NULL DEFAULT '',
     hidden          INTEGER NOT NULL DEFAULT 0,
+    ai_good_fit     INTEGER,
+    ai_reasoning    TEXT NOT NULL DEFAULT '',
+    ai_analyzed_at  REAL,
     updated_at      REAL NOT NULL
 );
 """
@@ -50,13 +53,19 @@ class PmFit:
     last_ip: str
     notes: str
     hidden: bool
+    ai_good_fit: bool | None
+    ai_reasoning: str
+    ai_analyzed_at: float | None
     updated_at: float
 
     @property
     def good_fit(self) -> bool:
-        """The AI's call, unless staff overrode it."""
+        """Staff's own call, else the AI's read of the transcript, else the blunt regex
+        signals - each one a fallback for when the one before it has nothing to say."""
         if self.manual_override is not None:
             return self.manual_override
+        if self.ai_good_fit is not None:
+            return self.ai_good_fit
         return bool(self.signals)
 
     def to_dict(self) -> dict[str, Any]:
@@ -67,6 +76,9 @@ class PmFit:
             "last_ip": self.last_ip,
             "notes": self.notes,
             "hidden": self.hidden,
+            "ai_good_fit": self.ai_good_fit,
+            "ai_reasoning": self.ai_reasoning,
+            "ai_analyzed_at": self.ai_analyzed_at,
             "updated_at": self.updated_at,
         }
 
@@ -114,6 +126,13 @@ class AdminStore:
         if "hidden" not in columns:
             self._conn.execute("ALTER TABLE pm_fit ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0")
             self._conn.commit()
+        if "ai_good_fit" not in columns:
+            self._conn.execute("ALTER TABLE pm_fit ADD COLUMN ai_good_fit INTEGER")
+            self._conn.execute(
+                "ALTER TABLE pm_fit ADD COLUMN ai_reasoning TEXT NOT NULL DEFAULT ''"
+            )
+            self._conn.execute("ALTER TABLE pm_fit ADD COLUMN ai_analyzed_at REAL")
+            self._conn.commit()
 
     @staticmethod
     def _row_to_fit(row: sqlite3.Row) -> PmFit:
@@ -122,6 +141,8 @@ class AdminStore:
         except ValueError:
             signals = []
         override = row["manual_override"]
+        ai_fit = row["ai_good_fit"]
+        analyzed_at = row["ai_analyzed_at"]
         return PmFit(
             owner_id=row["owner_id"],
             signals=[str(s) for s in signals],
@@ -129,6 +150,9 @@ class AdminStore:
             last_ip=row["last_ip"] or "",
             notes=row["notes"] or "",
             hidden=bool(row["hidden"]),
+            ai_good_fit=None if ai_fit is None else bool(ai_fit),
+            ai_reasoning=row["ai_reasoning"] or "",
+            ai_analyzed_at=None if analyzed_at is None else float(analyzed_at),
             updated_at=float(row["updated_at"]),
         )
 
@@ -233,6 +257,34 @@ class AdminStore:
                     (int(value), time.time(), owner_id),
                 )
 
+    def set_ai_analysis(self, owner_id: str, good_fit: bool, reasoning: str) -> None:
+        """Record the AI's own read of the transcript, staff-triggered and on-demand.
+
+        Sits between `manual_override` and the regex `signals` in `good_fit`'s precedence -
+        a real judgment call over the full conversation, not just five keyword matches, but
+        still overridable by a human who disagrees with it.
+        """
+        if not owner_id:
+            return
+        text = str(reasoning or "").strip()[:MAX_NOTES_CHARS]
+        with self._lock, self._conn:
+            row = self._conn.execute(
+                "SELECT owner_id FROM pm_fit WHERE owner_id = ?", (owner_id,)
+            ).fetchone()
+            if row is None:
+                self._conn.execute(
+                    "INSERT INTO pm_fit"
+                    " (owner_id, signals, ai_good_fit, ai_reasoning, ai_analyzed_at, updated_at)"
+                    " VALUES (?, '[]', ?, ?, ?, ?)",
+                    (owner_id, int(good_fit), text, time.time(), time.time()),
+                )
+            else:
+                self._conn.execute(
+                    "UPDATE pm_fit SET ai_good_fit = ?, ai_reasoning = ?, ai_analyzed_at = ?,"
+                    " updated_at = ? WHERE owner_id = ?",
+                    (int(good_fit), text, time.time(), time.time(), owner_id),
+                )
+
     def note_visit(self, owner_id: str, ip: str) -> None:
         """Remember the most recent IP a request from this owner arrived from.
 
@@ -282,6 +334,8 @@ class AdminStore:
             if new_row is None:
                 signals, override, ip = old_fit.signals, old_fit.manual_override, old_fit.last_ip
                 notes, hidden = old_fit.notes, old_fit.hidden
+                ai_fit = old_fit.ai_good_fit
+                ai_reasoning, ai_at = old_fit.ai_reasoning, old_fit.ai_analyzed_at
             else:
                 new_fit = self._row_to_fit(new_row)
                 # De-duplicated, oldest first: order does not matter, only membership does.
@@ -294,13 +348,29 @@ class AdminStore:
                 ip = new_fit.last_ip or old_fit.last_ip
                 notes = new_fit.notes or old_fit.notes
                 hidden = new_fit.hidden or old_fit.hidden
+                # Whichever transcript was actually analyzed - the account's own if staff
+                # already ran it there, otherwise carry the anonymous read forward.
+                if new_fit.ai_analyzed_at is not None:
+                    ai_fit, ai_reasoning, ai_at = (
+                        new_fit.ai_good_fit,
+                        new_fit.ai_reasoning,
+                        new_fit.ai_analyzed_at,
+                    )
+                else:
+                    ai_fit, ai_reasoning, ai_at = (
+                        old_fit.ai_good_fit,
+                        old_fit.ai_reasoning,
+                        old_fit.ai_analyzed_at,
+                    )
             self._conn.execute(
                 "INSERT INTO pm_fit (owner_id, signals, manual_override, last_ip, notes,"
-                " hidden, updated_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(owner_id) DO UPDATE SET"
+                " hidden, ai_good_fit, ai_reasoning, ai_analyzed_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(owner_id) DO UPDATE SET"
                 " signals = excluded.signals, manual_override = excluded.manual_override,"
                 " last_ip = excluded.last_ip, notes = excluded.notes,"
-                " hidden = excluded.hidden, updated_at = excluded.updated_at",
+                " hidden = excluded.hidden, ai_good_fit = excluded.ai_good_fit,"
+                " ai_reasoning = excluded.ai_reasoning,"
+                " ai_analyzed_at = excluded.ai_analyzed_at, updated_at = excluded.updated_at",
                 (
                     new_owner_id,
                     json.dumps(signals),
@@ -308,6 +378,9 @@ class AdminStore:
                     ip,
                     notes,
                     int(hidden),
+                    None if ai_fit is None else int(ai_fit),
+                    ai_reasoning,
+                    ai_at,
                     time.time(),
                 ),
             )
@@ -418,3 +491,87 @@ def send_pm_fit_alert_soon(
             logger.exception("could not send the PM-fit alert email")
 
     threading.Thread(target=run, name="markai-pm-fit-alert", daemon=True).start()
+
+
+CLASSIFY_MODEL = "claude-haiku-4-5-20251001"
+MAX_TRANSCRIPT_CHARS = 12000
+
+
+class ClassificationError(RuntimeError):
+    """The AI could not produce a usable verdict - no key, a bad response, network trouble."""
+
+
+def _transcript_text(threads: list[Any]) -> str:
+    """Every message across every thread, oldest first, capped so the call stays cheap.
+
+    Cut from the front, not the back: the most recent exchange is the one most likely to
+    hold whatever made staff want to check in the first place.
+    """
+    lines: list[str] = []
+    for thread in threads:
+        for message in getattr(thread, "messages", []) or []:
+            role = "Landlord" if message.get("role") == "user" else "Jay"
+            content = str(message.get("content", "")).strip()
+            if content:
+                lines.append(f"{role}: {content}")
+    text = "\n".join(lines)
+    if len(text) > MAX_TRANSCRIPT_CHARS:
+        text = "…" + text[-MAX_TRANSCRIPT_CHARS:]
+    return text
+
+
+CLASSIFY_SYSTEM_PROMPT = """You are helping a Chicagoland property management company \
+(GC Realty) decide whether a landlord who has been chatting with their AI advisor, Jay, \
+looks like a good candidate to reach out to about hiring a property manager.
+
+Read the conversation below and answer only with a single JSON object, no other text:
+{"good_fit": true or false, "confidence": "high", "medium", or "low", \
+"reasoning": "one or two sentences, specific to what they actually said"}
+
+A good fit shows real signs of being worth a call: burnout, a tenant problem they are \
+struggling with, a vacancy they cannot fill, interest in hiring a PM, or scaling a \
+portfolio. A landlord who is just asking a quick factual question (deposit rules, a \
+notice period) with no sign of a deeper problem is not a good fit on that alone. Judge \
+the substance of what they said, not just whether pain-point words appear."""
+
+
+def classify_fit(settings: Any, threads: list[Any], client: Any = None) -> tuple[bool, str]:
+    """Ask a cheap model for a real read of the transcript, not five regex patterns.
+
+    Staff-triggered only (never called from the chat path), so the cost is one small call
+    per click, not one per question. Raises `ClassificationError` on anything that keeps a
+    usable verdict from coming back - no key, an empty transcript, a bad response shape -
+    so the caller can tell staff plainly rather than silently storing a guess.
+    """
+    transcript = _transcript_text(threads)
+    if not transcript:
+        raise ClassificationError("There is no conversation to analyze yet.")
+    if client is None:
+        import anthropic
+
+        key = settings.anthropic_key()
+        if not key:
+            raise ClassificationError("ANTHROPIC_API_KEY is not set.")
+        client = anthropic.Anthropic(api_key=key)
+    try:
+        response = client.messages.create(
+            model=CLASSIFY_MODEL,
+            max_tokens=300,
+            system=CLASSIFY_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": transcript}],
+        )
+    except Exception as exc:
+        raise ClassificationError(f"Could not reach the model: {exc}") from exc
+    text = "".join(
+        block.text
+        for block in getattr(response, "content", [])
+        if getattr(block, "type", "") == "text"
+    ).strip()
+    try:
+        start, end = text.index("{"), text.rindex("}") + 1
+        parsed = json.loads(text[start:end])
+        good_fit = bool(parsed["good_fit"])
+        reasoning = str(parsed.get("reasoning", "")).strip()
+    except (ValueError, KeyError) as exc:
+        raise ClassificationError(f"The model's answer was not usable: {text[:200]}") from exc
+    return good_fit, reasoning or "No reasoning given."

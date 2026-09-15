@@ -41,6 +41,18 @@ PM_FIT_FLAGS = {
 
 logger = logging.getLogger(__name__)
 
+# A cell that opens with one of these is a formula to Excel/Sheets, not text - and every
+# field in the admin export can hold text nobody here wrote: a landlord's own name, or an
+# AI-generated reasoning string built from their words. A leading apostrophe is the standard
+# defusal; it displays as-is and never evaluates.
+_CSV_FORMULA_PREFIXES = ("=", "+", "-", "@")
+
+
+def _csv_safe(value: Any) -> str:
+    text = str(value)
+    return f"'{text}" if text.startswith(_CSV_FORMULA_PREFIXES) else text
+
+
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 SESSION_COOKIE = "mark_auth"
 
@@ -108,6 +120,13 @@ class PmFitNotesRequest(BaseModel):
 class PmFitHiddenRequest(BaseModel):
     """Soft-hide (or restore) a visitor from the default admin view."""
 
+    hidden: bool = False
+
+
+class BulkHiddenRequest(BaseModel):
+    """Hide or restore several visitors at once, from a multi-select in the admin table."""
+
+    owner_ids: list[str] = Field(default_factory=list, max_length=500)
     hidden: bool = False
 
 
@@ -483,6 +502,13 @@ def create_app(
     def gaps(limit: int = 20, _: None = Depends(require_access)) -> dict[str, Any]:
         return {"gaps": get_store().list_gaps(min(max(limit, 1), 200))}
 
+    @app.get("/api/nudges")
+    def nudges(_: None = Depends(require_access)) -> dict[str, Any]:
+        """Small, dismissible, time-relevant reminders - proactive, not just reactive."""
+        from markai.web.nudges import active_nudges
+
+        return {"nudges": active_nudges()}
+
     @app.get("/api/threads")
     def threads(
         owner: str = Depends(owner_of), _: None = Depends(require_access)
@@ -622,11 +648,23 @@ def create_app(
 
         Shared by the JSON listing and the CSV export so the two can never drift apart.
         """
+
+        def fit_fields(fit: Any) -> dict[str, Any]:
+            return {
+                "signals": fit.signals if fit else [],
+                "good_fit": fit.good_fit if fit else False,
+                "manual_override": fit.manual_override if fit else None,
+                "notes": fit.notes if fit else "",
+                "hidden": fit.hidden if fit else False,
+                "ai_good_fit": fit.ai_good_fit if fit else None,
+                "ai_reasoning": fit.ai_reasoning if fit else "",
+                "ai_analyzed_at": fit.ai_analyzed_at if fit else None,
+            }
+
         accounts = get_accounts()
         rows: list[dict[str, Any]] = []
         for account, created_at in accounts.all():
             threads = history.list(account.owner_id, limit=5)
-            fit = fits.get(account.owner_id)
             rows.append(
                 {
                     "id": account.owner_id,
@@ -638,16 +676,11 @@ def create_app(
                     "created_at": created_at,
                     # Their own words, newest first - the cheapest honest summary there is.
                     "summary": [t.title for t in threads],
-                    "signals": fit.signals if fit else [],
-                    "good_fit": fit.good_fit if fit else False,
-                    "manual_override": fit.manual_override if fit else None,
-                    "notes": fit.notes if fit else "",
-                    "hidden": fit.hidden if fit else False,
+                    **fit_fields(fits.get(account.owner_id)),
                 }
             )
         for owner_id, last_seen in history.anonymous_owners():
             threads = history.list(owner_id, limit=5)
-            fit = fits.get(owner_id)
             rows.append(
                 {
                     "id": owner_id,
@@ -658,11 +691,7 @@ def create_app(
                     "neighborhood": "",
                     "created_at": last_seen,
                     "summary": [t.title for t in threads],
-                    "signals": fit.signals if fit else [],
-                    "good_fit": fit.good_fit if fit else False,
-                    "manual_override": fit.manual_override if fit else None,
-                    "notes": fit.notes if fit else "",
-                    "hidden": fit.hidden if fit else False,
+                    **fit_fields(fits.get(owner_id)),
                 }
             )
         return rows
@@ -703,20 +732,22 @@ def create_app(
                 "signals",
                 "good_fit",
                 "notes",
+                "ai_reasoning",
             ]
         )
         for row in rows:
             when = datetime.fromtimestamp(row["created_at"], tz=UTC).isoformat()
             writer.writerow(
                 [
-                    row["name"],
-                    row["email"],
-                    row["phone"],
-                    row["neighborhood"],
+                    _csv_safe(row["name"]),
+                    _csv_safe(row["email"]),
+                    _csv_safe(row["phone"]),
+                    _csv_safe(row["neighborhood"]),
                     when,
-                    ";".join(row["signals"]),
+                    _csv_safe(";".join(row["signals"])),
                     row["good_fit"],
-                    row["notes"],
+                    _csv_safe(row["notes"]),
+                    _csv_safe(row["ai_reasoning"]),
                 ]
             )
         return Response(
@@ -751,6 +782,9 @@ def create_app(
             "manual_override": fit.manual_override if fit else None,
             "notes": fit.notes if fit else "",
             "hidden": fit.hidden if fit else False,
+            "ai_good_fit": fit.ai_good_fit if fit else None,
+            "ai_reasoning": fit.ai_reasoning if fit else "",
+            "ai_analyzed_at": fit.ai_analyzed_at if fit else None,
             "threads": [t.to_dict(with_messages=True) for t in threads],
         }
 
@@ -780,6 +814,30 @@ def create_app(
     ) -> dict[str, Any]:
         get_admin_store().set_hidden(owner_id, payload.hidden)
         return {"saved": True}
+
+    @app.post("/api/admin/users/bulk-hidden")
+    def admin_bulk_hidden(
+        payload: BulkHiddenRequest, _: None = Depends(require_admin_access)
+    ) -> dict[str, Any]:
+        store = get_admin_store()
+        for owner_id in payload.owner_ids:
+            store.set_hidden(owner_id, payload.hidden)
+        return {"saved": True, "count": len(payload.owner_ids)}
+
+    @app.post("/api/admin/users/{owner_id}/analyze")
+    def admin_analyze(owner_id: str, _: None = Depends(require_admin_access)) -> dict[str, Any]:
+        """One cheap, staff-triggered model call over the full transcript - a real read,
+        not five regex patterns. Never runs on its own; only a click spends anything.
+        """
+        from markai.web.admin_store import ClassificationError, classify_fit
+
+        threads = get_history().list_with_messages(owner_id)
+        try:
+            good_fit, reasoning = classify_fit(settings, threads)
+        except ClassificationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        get_admin_store().set_ai_analysis(owner_id, good_fit, reasoning)
+        return {"ai_good_fit": good_fit, "ai_reasoning": reasoning}
 
     @app.get("/api/log")
     def read_log(

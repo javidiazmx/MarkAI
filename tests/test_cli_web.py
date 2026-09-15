@@ -2855,3 +2855,402 @@ def test_the_admin_page_has_a_notes_textarea_in_the_detail_view():
     page = Path("markai/web/static/admin.html").read_text(encoding="utf-8")
     assert "notes-area" in page
     assert "/notes" in page
+
+
+# --- AI classification and bulk hide (admin panel) -----------------------------------------
+
+
+def test_analyze_stores_the_verdict_and_it_appears_in_the_listing(settings, store, monkeypatch):
+    settings = settings.model_copy(update={"admin_access_code": "staffonly"})
+    client = _client(settings, store, FakeAdvisor("45 days in Chicago."))
+    admin_headers = {"X-Admin-Code": "staffonly"}
+    client.post("/api/account", json=SIGNUP, headers={"X-Browser-Id": "b1"})
+    _ask(client, "t1", "How long for a deposit?")
+
+    monkeypatch.setattr(
+        "markai.web.admin_store.classify_fit",
+        lambda settings, threads, client=None: (True, "Sounds like a real prospect."),
+    )
+    owner_id = client.get("/api/admin/users", headers=admin_headers).json()["users"][0]["id"]
+    response = client.post(f"/api/admin/users/{owner_id}/analyze", headers=admin_headers)
+    assert response.status_code == 200
+    assert response.json() == {"ai_good_fit": True, "ai_reasoning": "Sounds like a real prospect."}
+
+    listed = client.get("/api/admin/users", headers=admin_headers).json()["users"][0]
+    assert listed["ai_good_fit"] is True
+    assert listed["ai_reasoning"] == "Sounds like a real prospect."
+    assert listed["good_fit"] is True
+
+    detail = client.get(f"/api/admin/users/{owner_id}", headers=admin_headers).json()
+    assert detail["ai_good_fit"] is True
+    assert detail["ai_analyzed_at"] is not None
+
+
+def test_analyze_reports_a_classification_failure_as_422(settings, store, monkeypatch):
+    from markai.web.admin_store import ClassificationError
+
+    settings = settings.model_copy(update={"admin_access_code": "staffonly"})
+    client = _client(settings, store)
+    admin_headers = {"X-Admin-Code": "staffonly"}
+    client.post("/api/account", json=SIGNUP, headers={"X-Browser-Id": "b1"})
+    owner_id = client.get("/api/admin/users", headers=admin_headers).json()["users"][0]["id"]
+
+    def boom(settings, threads, client=None):
+        raise ClassificationError("There is no conversation to analyze yet.")
+
+    monkeypatch.setattr("markai.web.admin_store.classify_fit", boom)
+    response = client.post(f"/api/admin/users/{owner_id}/analyze", headers=admin_headers)
+    assert response.status_code == 422
+    assert "no conversation" in response.json()["detail"].lower()
+
+
+def test_analyze_route_is_gated_by_the_admin_code(settings, store):
+    settings = settings.model_copy(update={"admin_access_code": "staffonly"})
+    client = _client(settings, store)
+    assert client.post("/api/admin/users/a1/analyze").status_code == 401
+
+
+def test_bulk_hidden_hides_several_visitors_at_once(settings, store):
+    """Two genuinely separate visitors - a signed-in TestClient carries its cookie on every
+    request regardless of X-Browser-Id, so the second one needs its own client instance,
+    the same way a second physical device would have its own cookie jar."""
+    settings = settings.model_copy(update={"admin_access_code": "staffonly"})
+    app_under_test = create_app(settings, advisor=FakeAdvisor(), store=store)
+    client = TestClient(app_under_test)
+    admin_headers = {"X-Admin-Code": "staffonly"}
+    client.post("/api/account", json=SIGNUP, headers={"X-Browser-Id": "b1"})
+
+    other_device = TestClient(app_under_test)
+    _ask(other_device, "t1", "A question", browser="b2")
+
+    users = client.get("/api/admin/users", headers=admin_headers).json()["users"]
+    ids = [u["id"] for u in users]
+    assert len(ids) == 2
+
+    response = client.post(
+        "/api/admin/users/bulk-hidden",
+        json={"owner_ids": ids, "hidden": True},
+        headers=admin_headers,
+    )
+    assert response.json() == {"saved": True, "count": 2}
+    assert client.get("/api/admin/users", headers=admin_headers).json()["users"] == []
+    restored = client.get(
+        "/api/admin/users", params={"include_hidden": True}, headers=admin_headers
+    ).json()["users"]
+    assert len(restored) == 2
+    assert all(u["hidden"] for u in restored)
+
+
+def test_bulk_hidden_route_is_gated_by_the_admin_code(settings, store):
+    settings = settings.model_copy(update={"admin_access_code": "staffonly"})
+    client = _client(settings, store)
+    response = client.post(
+        "/api/admin/users/bulk-hidden", json={"owner_ids": ["a1"], "hidden": True}
+    )
+    assert response.status_code == 401
+
+
+# --- proactive nudges -----------------------------------------------------------------------
+
+
+def test_nudges_shows_the_heat_season_reminder_in_season(settings, store, monkeypatch):
+    import datetime as datetime_module
+
+    class _FixedDate(datetime_module.date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 1, 15)
+
+    monkeypatch.setattr("markai.web.nudges.date", _FixedDate)
+    client = _client(settings, store)
+    nudges = client.get("/api/nudges").json()["nudges"]
+    assert any(n["id"] == "heat-season" for n in nudges)
+
+
+def test_nudges_is_empty_outside_heat_season(settings, store, monkeypatch):
+    import datetime as datetime_module
+
+    class _FixedDate(datetime_module.date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 7, 4)
+
+    monkeypatch.setattr("markai.web.nudges.date", _FixedDate)
+    client = _client(settings, store)
+    assert client.get("/api/nudges").json()["nudges"] == []
+
+
+def test_nudges_is_gated_by_the_access_code(settings, store):
+    settings = settings.model_copy(update={"web_access_code": "letmein"})
+    client = _client(settings, store)
+    assert client.get("/api/nudges").status_code == 401
+
+
+# --- mark digest send ---------------------------------------------------------------------
+
+
+def _digest_dirs(tmp_path, monkeypatch):
+    manifest = tmp_path / "sources.yaml"
+    manifest.write_text("websites: []\n", encoding="utf-8")
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("MARKAI_SOURCES_FILE", str(manifest))
+    monkeypatch.setenv("MARKAI_DATA_DIR", str(data_dir))
+    return data_dir
+
+
+def test_digest_send_says_so_when_nobody_has_anything_to_report(tmp_path, monkeypatch):
+    data_dir = _digest_dirs(tmp_path, monkeypatch)
+    data_dir.mkdir(parents=True)
+    from markai.web.accounts import Accounts
+
+    accounts = Accounts(data_dir / "accounts.db", free_questions=2)
+    accounts.create(SIGNUP)
+    accounts.close()
+
+    result = runner.invoke(app, ["digest", "send", "--dry-run"])
+    assert result.exit_code == 0
+    assert "Nothing to send" in result.stdout
+
+
+def test_digest_send_dry_run_lists_who_would_get_one(tmp_path, monkeypatch):
+    data_dir = _digest_dirs(tmp_path, monkeypatch)
+    data_dir.mkdir(parents=True)
+    from markai.web.accounts import Accounts
+    from markai.web.ledger import Ledger
+
+    accounts = Accounts(data_dir / "accounts.db", free_questions=2)
+    account, _token = accounts.create(SIGNUP)
+    accounts.close()
+    ledger = Ledger(data_dir / "ledger.db")
+    ledger.add(account.owner_id, {"kind": "income", "what": "September rent", "amount": 4200})
+    ledger.close_db()
+
+    result = runner.invoke(app, ["digest", "send", "--dry-run"])
+    assert result.exit_code == 0
+    assert "javier@example.com" in result.stdout
+    assert "Dry run" in result.stdout
+
+
+def test_digest_send_refuses_with_no_smtp_host(tmp_path, monkeypatch):
+    data_dir = _digest_dirs(tmp_path, monkeypatch)
+    data_dir.mkdir(parents=True)
+    from markai.web.accounts import Accounts
+    from markai.web.ledger import Ledger
+
+    accounts = Accounts(data_dir / "accounts.db", free_questions=2)
+    account, _token = accounts.create(SIGNUP)
+    accounts.close()
+    ledger = Ledger(data_dir / "ledger.db")
+    ledger.add(account.owner_id, {"kind": "income", "what": "Rent", "amount": 100})
+    ledger.close_db()
+
+    result = runner.invoke(app, ["digest", "send", "--yes"])
+    assert result.exit_code == 1
+    assert "MARKAI_SMTP_HOST" in result.stdout + str(result.stderr)
+
+
+def test_digest_send_emails_everyone_who_has_something_to_report(tmp_path, monkeypatch):
+    data_dir = _digest_dirs(tmp_path, monkeypatch)
+    data_dir.mkdir(parents=True)
+    from markai.web.accounts import Accounts
+    from markai.web.ledger import Ledger
+
+    accounts = Accounts(data_dir / "accounts.db", free_questions=2)
+    account, _token = accounts.create(SIGNUP)
+    accounts.close()
+    ledger = Ledger(data_dir / "ledger.db")
+    ledger.add(account.owner_id, {"kind": "income", "what": "September rent", "amount": 4200})
+    ledger.close_db()
+
+    monkeypatch.setenv("MARKAI_SMTP_HOST", "smtp.gmail.com")
+    monkeypatch.setenv("MARKAI_SMTP_USERNAME", "jay@gcrealtyinc.com")
+
+    sent = {"messages": []}
+
+    class FakeSMTP:
+        def __init__(self, host, port, timeout=None):
+            sent["host"], sent["port"] = host, port
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def starttls(self):
+            sent["starttls"] = True
+
+        def login(self, username, password):
+            sent["login"] = username
+
+        def send_message(self, message):
+            sent["messages"].append(message)
+
+    import smtplib
+
+    monkeypatch.setattr(smtplib, "SMTP", FakeSMTP)
+    result = runner.invoke(app, ["digest", "send", "--yes"])
+    assert result.exit_code == 0
+    assert "Sent 1, 0 failed" in result.stdout
+    assert len(sent["messages"]) == 1
+    assert sent["messages"][0]["To"] == "javier@example.com"
+
+
+def test_digest_send_needs_confirmation_without_yes_or_dry_run(tmp_path, monkeypatch):
+    data_dir = _digest_dirs(tmp_path, monkeypatch)
+    data_dir.mkdir(parents=True)
+    from markai.web.accounts import Accounts
+    from markai.web.ledger import Ledger
+
+    accounts = Accounts(data_dir / "accounts.db", free_questions=2)
+    account, _token = accounts.create(SIGNUP)
+    accounts.close()
+    ledger = Ledger(data_dir / "ledger.db")
+    ledger.add(account.owner_id, {"kind": "income", "what": "Rent", "amount": 100})
+    ledger.close_db()
+
+    monkeypatch.setenv("MARKAI_SMTP_HOST", "smtp.gmail.com")
+    result = runner.invoke(app, ["digest", "send"], input="n\n")
+    assert result.exit_code == 0
+    assert "Nothing sent" in result.stdout
+
+
+# --- Phase 2/3: nudges, save-to-property, property switcher, palette, voice, regenerate,
+# onboarding (index.html) ------------------------------------------------------------------
+
+
+def test_the_page_has_a_nudge_container():
+    from pathlib import Path
+
+    page = Path("markai/web/static/index.html").read_text(encoding="utf-8")
+    assert 'id="nudges"' in page
+    assert "/api/nudges" in page
+
+
+def test_the_page_can_save_a_deal_result_to_a_property():
+    from pathlib import Path
+
+    page = Path("markai/web/static/index.html").read_text(encoding="utf-8")
+    assert "dealSaveControl" in page
+    assert "/api/log" in page
+
+
+def test_the_page_has_a_property_context_switcher():
+    from pathlib import Path
+
+    page = Path("markai/web/static/index.html").read_text(encoding="utf-8")
+    assert 'id="property-context"' in page
+    assert "Regarding " in page
+
+
+def test_the_page_has_a_command_palette():
+    from pathlib import Path
+
+    page = Path("markai/web/static/index.html").read_text(encoding="utf-8")
+    assert 'id="palette-card"' in page
+    assert 'id="palette-input"' in page
+
+
+def test_the_page_has_voice_input_that_feature_detects():
+    from pathlib import Path
+
+    page = Path("markai/web/static/index.html").read_text(encoding="utf-8")
+    assert 'id="mic"' in page
+    assert "SpeechRecognition" in page
+
+
+def test_the_page_has_a_regenerate_action_and_an_onboarding_tour():
+    from pathlib import Path
+
+    page = Path("markai/web/static/index.html").read_text(encoding="utf-8")
+    assert "Regenerate" in page
+    assert 'id="tour-card"' in page
+    assert "jay_onboarded" in page
+
+
+def test_the_page_still_has_no_innerhtml_after_the_big_rewrite():
+    from pathlib import Path
+
+    page = Path("markai/web/static/index.html").read_text(encoding="utf-8")
+    assert ".innerHTML" not in page.replace("never innerHTML", "")
+    assert "insertAdjacentHTML" not in page
+
+
+# --- admin.html Phase 2: AI classify + bulk select --------------------------------------
+
+
+def test_the_admin_page_has_an_ai_analyze_control():
+    from pathlib import Path
+
+    page = Path("markai/web/static/admin.html").read_text(encoding="utf-8")
+    assert "/analyze" in page
+    assert "analyzeUser" in page
+
+
+def test_the_admin_page_has_bulk_select_and_bulk_hide():
+    from pathlib import Path
+
+    page = Path("markai/web/static/admin.html").read_text(encoding="utf-8")
+    assert 'id="bulk-bar"' in page
+    assert "bulk-hidden" in page
+    assert ".innerHTML" not in page.replace("never innerHTML", "")
+
+
+# --- CSV export formula-injection guard ----------------------------------------------------
+
+
+def test_csv_export_defuses_a_formula_looking_name(settings, store):
+    settings = settings.model_copy(update={"admin_access_code": "staffonly"})
+    client = _client(settings, store)
+    admin_headers = {"X-Admin-Code": "staffonly"}
+    client.post(
+        "/api/account",
+        json={
+            "name": '=HYPERLINK("http://evil.test","x")',
+            "email": "javier@example.com",
+            "phone": "312-555-0134",
+            "neighborhood": "Logan Square",
+        },
+        headers={"X-Browser-Id": "b1"},
+    )
+    body = client.get("/api/admin/users/export.csv", headers=admin_headers).text
+    assert "'=HYPERLINK" in body, "a leading apostrophe defuses it as a formula in Excel/Sheets"
+    assert ',"=HYPERLINK' not in body, "the raw formula must never reach a cell unescaped"
+
+
+def test_csv_safe_leaves_ordinary_text_untouched():
+    from markai.web.app import _csv_safe
+
+    assert _csv_safe("Javier Diaz") == "Javier Diaz"
+    assert _csv_safe("") == ""
+    assert _csv_safe(False) == "False"
+
+
+def test_csv_safe_defuses_every_dangerous_leading_character():
+    from markai.web.app import _csv_safe
+
+    for prefix in ("=", "+", "-", "@"):
+        assert _csv_safe(prefix + "cmd|calc").startswith("'" + prefix)
+
+
+# --- regenerate must resend the question that produced THAT answer, not the latest one -----
+
+
+def test_regenerate_reads_the_question_off_its_own_slot_not_a_shared_variable():
+    """With two answers on screen, clicking Regenerate on the older one used to silently
+    replace it with the reply to the newer question instead - a global "last question"
+    variable, read by every Regenerate button regardless of which slot it belongs to. The
+    fix keeps the question on the slot object itself."""
+    from pathlib import Path
+
+    page = Path("markai/web/static/index.html").read_text(encoding="utf-8")
+    assert "lastSentQuestion" not in page and "lastRawQuestion" not in page
+    assert "slot.apiMessage = apiMessage" in page
+    assert "slot.rawQuestion = question" in page
+    regenerate_body = page[
+        page.index("function regenerate(slot)") : page.index(
+            "function ", page.index("function regenerate(slot)") + 10
+        )
+    ]
+    assert "slot.apiMessage" in regenerate_body
+    assert "slot.rawQuestion" in regenerate_body
