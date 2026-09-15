@@ -3051,6 +3051,21 @@ def test_the_page_has_a_deal_analyzer_panel():
     assert ".innerHTML" not in page.replace("never innerHTML", "")
 
 
+def test_every_deal_analyzer_field_has_a_visible_label():
+    """A field pre-filled with a default (down %, rate, years, vacancy %...) shows a bare
+    number once its placeholder is masked by that value - a screen-reader-only label
+    doesn't help a sighted user tell what "25" or "7" means, so none of these can be
+    `class="vh"` the way the rest of the app hides a label."""
+    from pathlib import Path
+
+    page = Path("markai/web/static/index.html").read_text(encoding="utf-8")
+    start = page.index('<form id="deal-form">')
+    end = page.index("</form>", start)
+    form = page[start:end]
+    assert form.count("<label") == form.count("<label for=")
+    assert '<label class="vh"' not in form, "a pre-filled deal field needs an on-screen label"
+
+
 def test_the_page_has_a_conversation_search_box():
     from pathlib import Path
 

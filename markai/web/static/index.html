@@ -305,7 +305,15 @@
   .deal-sub { color: var(--muted); font-size: 13px; margin: 0 0 14px; }
   #deal-form { display: grid; gap: 8px; }
   #deal-form .pair { display: flex; gap: 6px; }
-  #deal-form .field { flex: 1; min-width: 0; }
+  #deal-form .field { display: grid; gap: 4px; flex: 1; min-width: 0; }
+  /* A field with a pre-filled default (down %, rate, years, vacancy %...) shows a bare
+     number with nothing else on screen once its placeholder is no longer visible - the
+     label has to be on screen, not just present for a screen reader, or there is no way
+     to tell what that number means. */
+  #deal-form .field label {
+    font-size: 11px; color: var(--muted); font-weight: 600;
+    text-transform: uppercase; letter-spacing: .02em;
+  }
   #deal-form input {
     width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px;
     background: var(--bg); color: var(--ink); font: inherit; font-size: 13px;
@@ -557,29 +565,29 @@
     <form id="deal-form">
       <div class="pair">
         <div class="field">
-          <label class="vh" for="deal-price">Purchase price</label>
+          <label for="deal-price">Purchase price</label>
           <input id="deal-price" type="number" min="0" step="1000" inputmode="decimal"
                  placeholder="Purchase price" required />
         </div>
         <div class="field">
-          <label class="vh" for="deal-rent">Monthly rent</label>
+          <label for="deal-rent">Monthly rent</label>
           <input id="deal-rent" type="number" min="0" step="10" inputmode="decimal"
                  placeholder="Monthly rent" required />
         </div>
       </div>
       <div class="pair">
         <div class="field">
-          <label class="vh" for="deal-down-pct">Down payment %</label>
+          <label for="deal-down-pct">Down payment %</label>
           <input id="deal-down-pct" type="number" min="0" max="100" step="1" value="25"
                  placeholder="Down payment %" />
         </div>
         <div class="field">
-          <label class="vh" for="deal-rate">Interest rate %</label>
+          <label for="deal-rate">Interest rate %</label>
           <input id="deal-rate" type="number" min="0" max="100" step="0.125" value="7"
                  placeholder="Interest rate %" />
         </div>
         <div class="field">
-          <label class="vh" for="deal-years">Loan term, years</label>
+          <label for="deal-years">Loan term, years</label>
           <input id="deal-years" type="number" min="1" max="50" step="1" value="30"
                  placeholder="Years" />
         </div>
@@ -589,61 +597,61 @@
         <div class="deal-expenses-grid">
           <div class="pair">
             <div class="field">
-              <label class="vh" for="deal-taxes">Taxes per year</label>
+              <label for="deal-taxes">Taxes per year</label>
               <input id="deal-taxes" type="number" min="0" step="100" placeholder="Taxes/year, e.g. 6000" />
             </div>
             <div class="field">
-              <label class="vh" for="deal-insurance">Insurance per year</label>
+              <label for="deal-insurance">Insurance per year</label>
               <input id="deal-insurance" type="number" min="0" step="50" placeholder="Insurance/year" />
             </div>
           </div>
           <div class="pair">
             <div class="field">
-              <label class="vh" for="deal-hoa">HOA per month</label>
+              <label for="deal-hoa">HOA per month</label>
               <input id="deal-hoa" type="number" min="0" step="10" placeholder="HOA/month" />
             </div>
             <div class="field">
-              <label class="vh" for="deal-utilities">Utilities per month</label>
+              <label for="deal-utilities">Utilities per month</label>
               <input id="deal-utilities" type="number" min="0" step="10" placeholder="Utilities/month" />
             </div>
           </div>
           <div class="pair">
             <div class="field">
-              <label class="vh" for="deal-vacancy">Vacancy %</label>
+              <label for="deal-vacancy">Vacancy %</label>
               <input id="deal-vacancy" type="number" min="0" max="100" step="1" value="5"
                      placeholder="Vacancy %" />
             </div>
             <div class="field">
-              <label class="vh" for="deal-maintenance">Maintenance %</label>
+              <label for="deal-maintenance">Maintenance %</label>
               <input id="deal-maintenance" type="number" min="0" max="100" step="1" value="5"
                      placeholder="Maintenance %" />
             </div>
           </div>
           <div class="pair">
             <div class="field">
-              <label class="vh" for="deal-capex">Capex %</label>
+              <label for="deal-capex">Capex %</label>
               <input id="deal-capex" type="number" min="0" max="100" step="1" value="5"
                      placeholder="Capex %" />
             </div>
             <div class="field">
-              <label class="vh" for="deal-management">Management %</label>
+              <label for="deal-management">Management %</label>
               <input id="deal-management" type="number" min="0" max="100" step="1" value="0"
                      placeholder="Management %" />
             </div>
           </div>
           <div class="pair">
             <div class="field">
-              <label class="vh" for="deal-other-income">Other income per month</label>
+              <label for="deal-other-income">Other income per month</label>
               <input id="deal-other-income" type="number" min="0" step="10" placeholder="Other income/month" />
             </div>
             <div class="field">
-              <label class="vh" for="deal-closing">Closing costs</label>
+              <label for="deal-closing">Closing costs</label>
               <input id="deal-closing" type="number" min="0" step="100" placeholder="Closing costs" />
             </div>
           </div>
           <div class="pair">
             <div class="field">
-              <label class="vh" for="deal-rehab">Rehab budget</label>
+              <label for="deal-rehab">Rehab budget</label>
               <input id="deal-rehab" type="number" min="0" step="100" placeholder="Rehab budget" />
             </div>
           </div>
