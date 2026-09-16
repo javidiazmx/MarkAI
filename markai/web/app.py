@@ -984,7 +984,10 @@ def create_app(
         owner: str = Depends(owner_of),
         _: None = Depends(require_access),
     ) -> dict[str, Any]:
-        """Their log for the panel: what happened, what is still open, what it adds up to."""
+        """Their money log for the panel: what happened, what is still open, what it adds
+        up to. A maintenance/visit/note row with no dollar amount is tracking, not money -
+        it belongs to the Maintenance Tracker, not here, so it is left out rather than
+        cluttering a view that is supposed to be about what moved."""
         log = get_ledger()
         labels = {p.id: p.label for p in get_portfolio().list(owner)}
 
@@ -993,9 +996,20 @@ def create_app(
             data["property_label"] = labels.get(entry.property_id, "")
             return data
 
+        def is_money_entry(entry: Any) -> bool:
+            return entry.kind in ("expense", "bill", "income") or bool(entry.amount)
+
+        # Fetched wider than the display cap, since filtering after a plain limit could
+        # otherwise let a run of costless maintenance notes push real money entries out of
+        # the page entirely.
+        entries = [
+            e for e in log.list(owner, property_id=property_id, limit=240) if is_money_entry(e)
+        ]
+        open_items = [e for e in log.open_items(owner, limit=80) if is_money_entry(e)]
+
         return {
-            "entries": [rendered(e) for e in log.list(owner, property_id=property_id, limit=60)],
-            "open": [rendered(e) for e in log.open_items(owner, limit=20)],
+            "entries": [rendered(e) for e in entries[:60]],
+            "open": [rendered(e) for e in open_items[:20]],
             "totals": log.totals(owner, property_id=property_id),
             "count": log.count(owner),
         }

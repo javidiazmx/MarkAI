@@ -1997,6 +1997,34 @@ def test_another_browser_sees_no_log(settings, store):
     assert other["entries"] == [] and other["count"] == 0
 
 
+def test_costless_maintenance_and_notes_are_left_out_of_the_money_log(settings, store):
+    """Live feedback: the Income & expenses panel was showing every tracking entry - a
+    heater complaint, a note about a tenant lockout - with no dollar amount at all. That
+    view is about money moving; a costless maintenance/note row belongs to the Maintenance
+    Tracker instead. A row that DOES carry a cost, even a still-open maintenance one, still
+    belongs here - it just isn't counted in the totals until it's actually done."""
+    client = _client(settings, store)
+    headers = {"X-Browser-Id": "b1"}
+    client.post("/api/log", json={"kind": "maintenance", "what": "Heater is out"}, headers=headers)
+    client.post("/api/log", json={"kind": "note", "what": "Tenant locked out"}, headers=headers)
+    client.post(
+        "/api/log",
+        json={"kind": "maintenance", "what": "Replace kitchen filter", "amount": "200"},
+        headers=headers,
+    )
+    client.post(
+        "/api/log",
+        json={"kind": "expense", "what": "New boiler", "amount": "8000"},
+        headers=headers,
+    )
+
+    read = client.get("/api/log", headers=headers).json()
+    whats = {e["what"] for e in read["entries"]}
+    assert whats == {"Replace kitchen filter", "New boiler"}
+    open_whats = {e["what"] for e in read["open"]}
+    assert open_whats == {"Replace kitchen filter"}
+
+
 def test_an_open_item_can_be_closed_and_deleted(settings, store):
     client = _client(settings, store)
     headers = {"X-Browser-Id": "b1"}
