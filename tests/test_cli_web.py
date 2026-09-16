@@ -2025,6 +2025,64 @@ def test_costless_maintenance_and_notes_are_left_out_of_the_money_log(settings, 
     assert open_whats == {"Replace kitchen filter"}
 
 
+def test_monthly_route_returns_a_full_window_oldest_first(settings, store):
+    from datetime import date
+
+    client = _client(settings, store)
+    headers = {"X-Browser-Id": "b1"}
+    this_month = date.today().isoformat()[:7]
+    client.post(
+        "/api/log",
+        json={"kind": "income", "what": "Rent", "amount": "1000", "date": this_month + "-05"},
+        headers=headers,
+    )
+    months = client.get("/api/log/monthly?months=3", headers=headers).json()["months"]
+    assert len(months) == 3
+    assert months[-1]["month"] == this_month, "the current month is last, oldest first"
+    assert months[-1]["in"] == 1000
+
+
+def test_by_property_route_covers_every_building_plus_unassigned(settings, store):
+    client = _client(settings, store)
+    headers = {"X-Browser-Id": "b1"}
+    p1 = client.post("/api/properties", json={"label": "2145 W Division"}, headers=headers).json()[
+        "property"
+    ]["id"]
+    client.post(
+        "/api/log",
+        json={"kind": "expense", "what": "Boiler", "amount": "8000", "property_id": p1},
+        headers=headers,
+    )
+    client.post(
+        "/api/log", json={"kind": "income", "what": "Cash gig, no building"}, headers=headers
+    )
+    client.post(
+        "/api/log",
+        json={"kind": "income", "what": "Odd job", "amount": "500"},
+        headers=headers,
+    )
+
+    rows = client.get("/api/log/by-property", headers=headers).json()["properties"]
+    by_label = {r["label"]: r for r in rows}
+    assert by_label["2145 W Division"]["out"] == 8000
+    assert by_label["Unassigned"]["in"] == 500
+
+
+def test_by_property_route_leaves_out_unassigned_when_everything_has_a_building(settings, store):
+    client = _client(settings, store)
+    headers = {"X-Browser-Id": "b1"}
+    p1 = client.post("/api/properties", json={"label": "2145 W Division"}, headers=headers).json()[
+        "property"
+    ]["id"]
+    client.post(
+        "/api/log",
+        json={"kind": "expense", "what": "Boiler", "amount": "8000", "property_id": p1},
+        headers=headers,
+    )
+    rows = client.get("/api/log/by-property", headers=headers).json()["properties"]
+    assert [r["label"] for r in rows] == ["2145 W Division"]
+
+
 def test_an_open_item_can_be_closed_and_deleted(settings, store):
     client = _client(settings, store)
     headers = {"X-Browser-Id": "b1"}

@@ -308,6 +308,56 @@ def test_a_total_can_be_asked_for_one_building_and_one_window(ledger):
     assert ledger.totals(OWNER, since=date.today() - timedelta(days=365))["out"] == 28000
 
 
+def test_monthly_totals_groups_by_calendar_month_oldest_first(ledger):
+    ledger.add(OWNER, {"kind": "income", "what": "July rent", "amount": 1000, "date": "2026-07-05"})
+    ledger.add(
+        OWNER, {"kind": "expense", "what": "July repair", "amount": 200, "date": "2026-07-20"}
+    )
+    ledger.add(OWNER, {"kind": "income", "what": "Aug rent", "amount": 1000, "date": "2026-08-01"})
+    ledger.add(OWNER, {"kind": "bill", "what": "Aug water", "amount": 100, "date": "2026-08-15"})
+    months = ledger.monthly_totals(OWNER, months=3, today=date(2026, 9, 9))
+    assert [m["month"] for m in months] == ["2026-07", "2026-08", "2026-09"]
+    assert months[0] == {"month": "2026-07", "in": 1000, "out": 200, "net": 800}
+    assert months[1] == {"month": "2026-08", "in": 1000, "out": 100, "net": 900}
+    assert months[2] == {"month": "2026-09", "in": 0, "out": 0, "net": 0}, (
+        "a month with nothing in it is still present, not skipped"
+    )
+
+
+def test_monthly_totals_ignores_maintenance_and_notes_same_as_totals(ledger):
+    ledger.add(
+        OWNER,
+        {"kind": "maintenance", "what": "Boiler is dead", "amount": 8000, "date": "2026-09-05"},
+    )
+    months = ledger.monthly_totals(OWNER, months=1, today=date(2026, 9, 9))
+    assert months == [{"month": "2026-09", "in": 0, "out": 0, "net": 0}]
+
+
+def test_monthly_totals_can_be_scoped_to_one_property(ledger):
+    ledger.add(
+        OWNER,
+        {
+            "kind": "expense",
+            "what": "P1 repair",
+            "amount": 100,
+            "date": "2026-09-05",
+            "property_id": "p1",
+        },
+    )
+    ledger.add(
+        OWNER,
+        {
+            "kind": "expense",
+            "what": "P2 repair",
+            "amount": 900,
+            "date": "2026-09-05",
+            "property_id": "p2",
+        },
+    )
+    months = ledger.monthly_totals(OWNER, property_id="p1", months=1, today=date(2026, 9, 9))
+    assert months == [{"month": "2026-09", "in": 0, "out": 100, "net": -100}]
+
+
 def test_a_signup_carries_the_log_over_from_the_browser(ledger):
     ledger.add("browser:xyz", {"kind": "expense", "what": "New boiler", "amount": 8000})
     assert ledger.reassign("browser:xyz", "account:abc") == 1

@@ -1025,6 +1025,59 @@ def create_app(
             "count": log.count(owner),
         }
 
+    @app.get("/api/log/monthly")
+    def read_log_monthly(
+        property_id: str = "",
+        months: int = 12,
+        owner: str = Depends(owner_of),
+        _: None = Depends(require_access),
+    ) -> dict[str, Any]:
+        """Money in vs out, month by month - the trend chart on the Income & expenses
+        page, not something the chat or the Maintenance Tracker needs."""
+        return {
+            "months": get_ledger().monthly_totals(owner, property_id=property_id, months=months)
+        }
+
+    @app.get("/api/log/by-property")
+    def read_log_by_property(
+        owner: str = Depends(owner_of), _: None = Depends(require_access)
+    ) -> dict[str, Any]:
+        """Net income by building, for the portfolio comparison chart - the same totals()
+        the rest of the accounting view trusts, just run once per building. Anything not
+        assigned to a building is its own row rather than silently missing from a chart
+        that is supposed to account for every dollar."""
+        log = get_ledger()
+        properties = get_portfolio().list(owner)
+        whole = log.totals(owner)
+        rows = []
+        assigned_in = assigned_out = 0.0
+        for p in properties:
+            t = log.totals(owner, property_id=p.id)
+            rows.append(
+                {
+                    "property_id": p.id,
+                    "label": p.label,
+                    "in": t.get("in", 0.0),
+                    "out": t.get("out", 0.0),
+                    "net": t.get("net", 0.0),
+                }
+            )
+            assigned_in += t.get("in", 0.0)
+            assigned_out += t.get("out", 0.0)
+        unassigned_in = round(whole.get("in", 0.0) - assigned_in, 2)
+        unassigned_out = round(whole.get("out", 0.0) - assigned_out, 2)
+        if unassigned_in or unassigned_out:
+            rows.append(
+                {
+                    "property_id": "",
+                    "label": "Unassigned",
+                    "in": unassigned_in,
+                    "out": unassigned_out,
+                    "net": round(unassigned_in - unassigned_out, 2),
+                }
+            )
+        return {"properties": rows}
+
     @app.post("/api/log")
     def add_log(
         payload: LogRequest,

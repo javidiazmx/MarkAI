@@ -228,9 +228,38 @@
     display: flex; align-items: center; justify-content: space-between; gap: 6px;
   }
   .acct-open::after { content: "\203A"; color: var(--muted); }
-  .acct-card { max-width: 40rem; width: 100%; }
-  .acct-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
-  .acct-head h2 { margin: 0; flex: 1; }
+  /* A full-page "tool tab" - not a dimmed overlay over the chat, a real takeover, since
+     this will eventually be a proper app with real navigation between tools rather than
+     modals stacked on the chat. Any tool can move from .scrim/.card to this pattern by
+     swapping those two classes for .tool-page and using showToolPage()/hideToolPage(). */
+  .tool-page {
+    position: fixed; inset: 0; z-index: 40; background: var(--bg); overflow-y: auto;
+    display: none;
+  }
+  .tool-page.open { display: block; }
+  .tool-page-head {
+    position: sticky; top: 0; background: var(--bg); border-bottom: 1px solid var(--line);
+    padding: 14px 20px; display: flex; align-items: center; gap: 14px; z-index: 1;
+  }
+  .tool-page-head h2 { margin: 0; flex: 1; font-size: 18px; }
+  .tool-page-body { max-width: 900px; margin: 0 auto; padding: 16px 20px 60px; }
+  .chart-card {
+    border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin-bottom: 16px;
+  }
+  .chart-card svg { display: block; width: 100%; height: auto; }
+  .chart-empty { color: var(--muted); font-size: 13px; padding: 8px 2px; }
+  .chart-legend {
+    display: flex; gap: 14px; margin-top: 8px; font-size: 12px; color: var(--muted);
+    flex-wrap: wrap;
+  }
+  .chart-legend .swatch {
+    display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px;
+    vertical-align: -1px;
+  }
+  .chart-bar-in.swatch, .chart-card .chart-bar-in { fill: var(--accent); }
+  .chart-bar-out.swatch, .chart-card .chart-bar-out { fill: var(--danger); }
+  .chart-card .chart-grid { stroke: var(--line); stroke-width: 1; }
+  .chart-card .chart-axis-label { fill: var(--muted); font-size: 10px; }
   #acct-prop {
     width: 100%; padding: 7px 9px; margin-bottom: 12px; border: 1px solid var(--line);
     border-radius: 7px; background: var(--bg); color: var(--ink); font: inherit; font-size: 13px;
@@ -257,7 +286,8 @@
     margin: 0 0 6px; font-size: 12px; font-weight: 600; text-transform: uppercase;
     letter-spacing: .06em; color: var(--muted);
   }
-  #acct-entries { max-height: 46vh; overflow-y: auto; }
+  /* No fixed height here on purpose - this is a full page now, not a small modal, so it
+     scrolls with the rest of the page instead of trapping its own scroll inside a box. */
   #log-form { padding: 4px 4px 8px 4px; display: grid; gap: 6px; }
   #log-form input, #log-form select {
     width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px;
@@ -644,15 +674,27 @@
   </div>
 </div>
 
-<div class="scrim" id="accounting-card" hidden>
-  <div class="card acct-card">
-    <div class="acct-head">
-      <h2>Income &amp; expenses</h2>
-      <button class="ghost" id="acct-close" type="button" title="Close" aria-label="Close">✕</button>
-    </div>
+<div class="tool-page" id="accounting-card">
+  <div class="tool-page-head">
+    <button class="ghost" id="acct-close" type="button">&larr; Back to chat</button>
+    <h2>Income &amp; expenses</h2>
+  </div>
+  <div class="tool-page-body">
     <select id="acct-prop" title="Which building"></select>
     <div class="acct-summary" id="acct-summary"></div>
     <div class="acct-breakdown" id="acct-breakdown"></div>
+
+    <h3 class="acct-subhead">Cash flow over time</h3>
+    <div class="chart-card" id="chart-trend"></div>
+
+    <h3 class="acct-subhead">Where it's going</h3>
+    <div class="chart-card" id="chart-category"></div>
+
+    <div id="chart-property-block" hidden>
+      <h3 class="acct-subhead">By building</h3>
+      <div class="chart-card" id="chart-property"></div>
+    </div>
+
     <h3 class="acct-subhead">All entries</h3>
     <div id="acct-entries"></div>
   </div>
@@ -2066,6 +2108,19 @@
   var logWhat = document.getElementById("log-what");
   var logProp = document.getElementById("log-prop");
   var maintenanceProp = document.getElementById("maintenance-prop");
+  // A full-page "tool tab" (see the .tool-page CSS) - a real takeover of the screen rather
+  // than a dimmed overlay over the chat, since this is meant to feel like navigating to a
+  // different part of an app, not popping up a dialog. Body scroll is locked while one is
+  // open so the chat underneath cannot scroll along with it.
+  function showToolPage(el) {
+    el.classList.add("open");
+    document.body.style.overflow = "hidden";
+  }
+  function hideToolPage(el) {
+    el.classList.remove("open");
+    document.body.style.overflow = "";
+  }
+
   var acctTeaser = document.getElementById("acct-teaser");
   var acctCard = document.getElementById("accounting-card");
   var acctProp = document.getElementById("acct-prop");
@@ -2660,7 +2715,7 @@
 
   function refreshLog() {
     loadLog();
-    if (!acctCard.hidden) loadAccounting();
+    if (acctCard.classList.contains("open")) loadAccounting();
     // Same log_entries table as the Maintenance Tracker modal - closing an item from the
     // sidebar panel, or Jay logging one in chat, must not leave that modal showing a stale
     // list if it happens to be open at the same time.
@@ -2682,6 +2737,168 @@
     });
   }
 
+  // Charts -------------------------------------------------------------------------------
+  // Hand-rolled SVG, not a charting library - this page has never pulled in a third-party
+  // script, and three small charts do not need one either. Colors are CSS classes, not
+  // inline values, so a chart follows the same theme (including dark mode) as everything
+  // else instead of carrying its own palette.
+  var SVG_NS = "http://www.w3.org/2000/svg";
+
+  function svgEl(tag, attrs) {
+    var node = document.createElementNS(SVG_NS, tag);
+    for (var key in attrs) node.setAttribute(key, attrs[key]);
+    return node;
+  }
+
+  function chartEmpty(container, text) {
+    container.textContent = "";
+    container.appendChild(el("div", "chart-empty", text));
+  }
+
+  function chartLegend(items) {
+    var legend = el("div", "chart-legend");
+    items.forEach(function (item) {
+      var span = el("span", null);
+      span.appendChild(el("span", "swatch " + item[0]));
+      span.appendChild(document.createTextNode(item[1]));
+      legend.appendChild(span);
+    });
+    return legend;
+  }
+
+  var MONTH_NAMES = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+  ];
+
+  function monthLabel(ym) {
+    var month = parseInt(ym.split("-")[1], 10) - 1;
+    return MONTH_NAMES[month] || ym;
+  }
+
+  // Money in vs out, grouped side by side - the same shape answers "how is this trending
+  // month to month" and "how do these buildings compare", just with a different x-axis
+  // label, so both charts share this one renderer.
+  function renderGroupedBars(container, rows, labelFn) {
+    container.textContent = "";
+    if (!rows.length) { chartEmpty(container, "Nothing logged yet."); return; }
+    var w = 640, h = 220, padL = 46, padB = 30, padT = 10, padR = 10;
+    var plotW = w - padL - padR, plotH = h - padT - padB;
+    var maxVal = 1;
+    rows.forEach(function (r) { maxVal = Math.max(maxVal, r.in, r.out); });
+    var groupW = plotW / rows.length;
+    var barW = Math.max(4, Math.min(18, groupW / 3));
+
+    var svg = svgEl("svg", {
+      viewBox: "0 0 " + w + " " + h, "aria-label": "Money in versus money out chart"
+    });
+
+    [0, 0.5, 1].forEach(function (frac) {
+      var y = padT + plotH - frac * plotH;
+      svg.appendChild(svgEl("line", { x1: padL, x2: w - padR, y1: y, y2: y, class: "chart-grid" }));
+      var tick = svgEl("text", {
+        x: padL - 6, y: y + 4, class: "chart-axis-label", "text-anchor": "end"
+      });
+      tick.textContent = money(Math.round(maxVal * frac));
+      svg.appendChild(tick);
+    });
+
+    rows.forEach(function (r, i) {
+      var groupX = padL + i * groupW;
+      var inH = Math.max((r.in / maxVal) * plotH, r.in > 0 ? 1 : 0);
+      var outH = Math.max((r.out / maxVal) * plotH, r.out > 0 ? 1 : 0);
+      svg.appendChild(svgEl("rect", {
+        x: groupX + groupW / 2 - barW - 2, y: padT + plotH - inH, width: barW, height: inH,
+        rx: 2, class: "chart-bar-in"
+      }));
+      svg.appendChild(svgEl("rect", {
+        x: groupX + groupW / 2 + 2, y: padT + plotH - outH, width: barW, height: outH,
+        rx: 2, class: "chart-bar-out"
+      }));
+      var label = svgEl("text", {
+        x: groupX + groupW / 2, y: h - padB + 16, class: "chart-axis-label", "text-anchor": "middle"
+      });
+      label.textContent = labelFn(r);
+      svg.appendChild(label);
+    });
+
+    container.appendChild(svg);
+    container.appendChild(chartLegend([["chart-bar-in", "Money in"], ["chart-bar-out", "Money out"]]));
+  }
+
+  function renderTrendChart(container, months) {
+    renderGroupedBars(container, months, function (r) { return monthLabel(r.month); });
+  }
+
+  function renderPropertyChart(container, rows) {
+    var block = document.getElementById("chart-property-block");
+    // A comparison needs at least two things to compare.
+    if (rows.length < 2) { block.hidden = true; return; }
+    block.hidden = false;
+    renderGroupedBars(container, rows, function (r) {
+      return r.label.length > 16 ? r.label.slice(0, 15) + "…" : r.label;
+    });
+  }
+
+  // Ranked bars, not a pie - "where is the money going" is a ranking question, and a bar
+  // chart answers that at a glance where a pie makes a landlord compare angles by eye.
+  function renderCategoryChart(container, totals) {
+    container.textContent = "";
+    var kinds = Object.keys(KIND_LABELS).filter(function (k) { return totals[k]; });
+    if (!kinds.length) { chartEmpty(container, "Nothing logged yet."); return; }
+    kinds.sort(function (a, b) { return (totals[b] || 0) - (totals[a] || 0); });
+    var maxVal = Math.max.apply(null, kinds.map(function (k) { return totals[k]; }));
+
+    var w = 640, rowH = 30, padL = 110, padR = 74;
+    var h = kinds.length * rowH + 6;
+    var svg = svgEl("svg", { viewBox: "0 0 " + w + " " + h, "aria-label": "Spending by category" });
+    var plotW = w - padL - padR;
+
+    kinds.forEach(function (kind, i) {
+      var y = i * rowH + 6;
+      var barW = Math.max((totals[kind] / maxVal) * plotW, 2);
+      var label = svgEl("text", {
+        x: padL - 8, y: y + 14, class: "chart-axis-label", "text-anchor": "end"
+      });
+      label.textContent = KIND_LABELS[kind];
+      svg.appendChild(label);
+      svg.appendChild(svgEl("rect", {
+        x: padL, y: y, width: barW, height: 16, rx: 3,
+        class: kind === "income" ? "chart-bar-in" : "chart-bar-out"
+      }));
+      var valueLabel = svgEl("text", { x: padL + barW + 6, y: y + 13, class: "chart-axis-label" });
+      valueLabel.textContent = money(totals[kind]);
+      svg.appendChild(valueLabel);
+    });
+
+    container.appendChild(svg);
+  }
+
+  async function loadAccountingCharts() {
+    var propId = acctProp.value;
+    var qs = propId ? "?property_id=" + encodeURIComponent(propId) : "";
+    try {
+      var response = await fetch("/api/log/monthly" + qs, { headers: headers() });
+      if (response.ok) {
+        var data = await response.json();
+        renderTrendChart(document.getElementById("chart-trend"), data.months || []);
+      }
+    } catch (error) {}
+
+    // A per-building comparison is portfolio-wide by definition - it stops meaning
+    // anything once a single building is already picked in the filter above it.
+    if (propId) {
+      document.getElementById("chart-property-block").hidden = true;
+      return;
+    }
+    try {
+      var response2 = await fetch("/api/log/by-property", { headers: headers() });
+      if (response2.ok) {
+        var data2 = await response2.json();
+        renderPropertyChart(document.getElementById("chart-property"), data2.properties || []);
+      }
+    } catch (error) {}
+  }
+
   function drawBreakdown(totals) {
     acctBreakdown.textContent = "";
     Object.keys(KIND_LABELS).forEach(function (kind) {
@@ -2694,19 +2911,24 @@
   }
 
   document.getElementById("open-accounting").addEventListener("click", function () {
-    acctCard.hidden = false;
+    showToolPage(acctCard);
     loadAccounting();
+    loadAccountingCharts();
   });
   document.getElementById("acct-close").addEventListener("click", function () {
-    acctCard.hidden = true;
+    hideToolPage(acctCard);
   });
-  acctProp.addEventListener("change", loadAccounting);
+  acctProp.addEventListener("change", function () {
+    loadAccounting();
+    loadAccountingCharts();
+  });
 
   function drawAccounting(data) {
     var entries = data.entries || [];
     var open = data.open || [];
     drawSummary(data.totals || {});
     drawBreakdown(data.totals || {});
+    renderCategoryChart(document.getElementById("chart-category"), data.totals || {});
 
     acctEntries.textContent = "";
     if (!entries.length) {
@@ -3448,8 +3670,14 @@
     } else if (event.key === "Escape") {
       for (var i = 0; i < ESCAPABLE_MODAL_CLOSE_IDS.length; i++) {
         var closeBtn = document.getElementById(ESCAPABLE_MODAL_CLOSE_IDS[i]);
-        var card = closeBtn && closeBtn.closest(".scrim");
+        if (!closeBtn) continue;
+        var card = closeBtn.closest(".scrim");
         if (card && !card.hidden) { closeBtn.click(); break; }
+        // A full-page tool tab (see showToolPage/hideToolPage) closes the same way, just
+        // tracked by a class instead of [hidden] since it is never actually removed from
+        // the layout while open.
+        var page = closeBtn.closest(".tool-page");
+        if (page && page.classList.contains("open")) { closeBtn.click(); break; }
       }
     }
   });

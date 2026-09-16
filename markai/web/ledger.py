@@ -634,6 +634,73 @@ class Ledger:
         by_kind["net"] = round(money_in - money_out, 2)
         return by_kind
 
+    def monthly_totals(
+        self,
+        owner_id: str,
+        property_id: str = "",
+        months: int = 12,
+        today: date | None = None,
+    ) -> list[dict[str, Any]]:
+        """Money in vs out, month by month, oldest first - the trend a landlord actually
+        wants from a chart: is this building getting better or worse, not just one number.
+
+        Same two kinds ``totals`` counts as real money (income; expense and bill), just
+        grouped by calendar month. Every month in the window is present even with nothing
+        in it, so a chart shows a real gap rather than skipping straight past it.
+        """
+        if not owner_id:
+            return []
+        months = max(1, min(months, 60))
+        now = today or date.today()
+        start_year = now.year
+        start_month = now.month - (months - 1)
+        while start_month <= 0:
+            start_month += 12
+            start_year -= 1
+        start = date(start_year, start_month, 1)
+
+        where = ["owner_id = ?", "amount IS NOT NULL", "happened_on >= ?"]
+        params: list[Any] = [owner_id, start.isoformat()]
+        if property_id:
+            where.append("property_id = ?")
+            params.append(property_id)
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT strftime('%Y-%m', happened_on) AS ym, kind, SUM(amount) AS total"
+                " FROM log_entries WHERE " + " AND ".join(where) + " GROUP BY ym, kind",
+                tuple(params),
+            ).fetchall()
+
+        by_month: dict[str, dict[str, float]] = {}
+        for row in rows:
+            ym = row["ym"]
+            if not ym:
+                continue
+            bucket = by_month.setdefault(ym, {"in": 0.0, "out": 0.0})
+            if row["kind"] == "income":
+                bucket["in"] += float(row["total"] or 0)
+            elif row["kind"] in ("expense", "bill"):
+                bucket["out"] += float(row["total"] or 0)
+
+        result = []
+        year, month = start.year, start.month
+        for _ in range(months):
+            ym = f"{year:04d}-{month:02d}"
+            bucket = by_month.get(ym, {"in": 0.0, "out": 0.0})
+            result.append(
+                {
+                    "month": ym,
+                    "in": round(bucket["in"], 2),
+                    "out": round(bucket["out"], 2),
+                    "net": round(bucket["in"] - bucket["out"], 2),
+                }
+            )
+            month += 1
+            if month > 12:
+                month = 1
+                year += 1
+        return result
+
     def count(self, owner_id: str) -> int:
         if not owner_id:
             return 0
