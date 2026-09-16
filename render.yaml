@@ -1,0 +1,64 @@
+# Render Blueprint for the production MarkAI web service.
+#
+# This deploys the same `mark serve` the owner already runs locally - no Docker, Render's
+# native Python runtime installs the package from pyproject.toml directly. A persistent
+# Disk is required (not optional): everything this app knows about a landlord - their
+# account, conversations, log entries, and the whole knowledge base itself - lives in local
+# SQLite files under MARKAI_DATA_DIR. Without a Disk, every redeploy would start from an
+# empty database.
+#
+# One-time setup after the first deploy (see the deploy notes for the exact commands):
+# enable SSH for this service in the Render dashboard, then SCP the existing local
+# data/*.db files onto the Disk at the mount path below - there is no other way to seed a
+# Render Disk with files that already exist on the developer's own machine.
+#
+# Secrets (`sync: false` below) are never written here - Render prompts for each one the
+# first time this Blueprint is applied, and stores it only in the dashboard.
+
+services:
+  - type: web
+    name: markai
+    runtime: python
+    plan: starter # cheapest paid plan - a Disk cannot attach to the free tier
+    buildCommand: pip install -e .
+    startCommand: mark serve --host 0.0.0.0 --port $PORT --yes
+    healthCheckPath: /api/status
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: VOYAGE_API_KEY
+        sync: false
+      - key: MARKAI_ADMIN_ACCESS_CODE
+        sync: false
+      - key: MARKAI_DATA_DIR
+        value: /mnt/data
+      # Real production posture: no landlord access code (open signup), which is why
+      # `mark serve` requires --yes above to start bound to 0.0.0.0 with one unset - the
+      # existing free-question limit and per-session/daily caps are what actually bound
+      # the API cost of an open site, not a login wall.
+      - key: MARKAI_COOKIE_SECURE
+        value: "true"
+      - key: MARKAI_SMTP_HOST
+        sync: false
+      - key: MARKAI_SMTP_PORT
+        sync: false
+      - key: MARKAI_SMTP_USERNAME
+        sync: false
+      - key: MARKAI_SMTP_PASSWORD
+        sync: false
+      - key: MARKAI_SMTP_FROM
+        sync: false
+      - key: MARKAI_SMTP_STARTTLS
+        value: "true"
+      - key: MARKAI_LEAD_EMAIL_TO
+        sync: false
+      - key: MARKAI_PM_FIT_ALERT_EMAIL_TO
+        sync: false
+      - key: MARKAI_CACHE_TTL
+        value: 1h
+    disk:
+      name: markai-data
+      mountPath: /mnt/data
+      sizeGB: 5 # ~$1.25/mo - the current knowledge base is ~300MB; room to grow
