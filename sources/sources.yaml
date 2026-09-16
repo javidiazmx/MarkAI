@@ -146,6 +146,13 @@ websites:
     max_pages: 40
     exclude_patterns: ["/news", "/event", "/search"]
 
+  # A new, single-page requirement effective January 1, 2026 - not guaranteed to survive
+  # the 40-page crawl above at this site's depth, so it gets its own guaranteed entry the
+  # same way the two ilga.gov workarounds below do.
+  - url: https://dhr.illinois.gov/compliance/real-estate-and-housing/summary-of-rights-for-safer-homes-act.html
+    title: IDHR - Summary of Rights for Safer Homes Act
+    crawl: false
+
   - url: https://illinoisattorneygeneral.gov/
     title: Illinois Attorney General
     crawl: true
