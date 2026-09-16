@@ -117,17 +117,24 @@
   .card h2 { margin: 0 0 10px; font-size: 17px; }
   .card p { margin: 0 0 18px; font-size: 14px; line-height: 1.6; color: var(--ink); }
   .card button { padding: 10px 18px; font: inherit; font-weight: 600; }
-  .start { padding: 8px 4px 4px; }
-  .start h2 { margin: 0 0 4px; font-size: 17px; font-weight: 600; }
-  .start p { margin: 0 0 18px; color: var(--muted); font-size: 14px; max-width: 52ch; }
-  /* A first-time visitor cannot yet know the sidebar exists. A plain, muted row of what
-     Jay can do - not chips, not buttons, just labels - says the full capability surface
-     up front instead of leaving it to be discovered by accident. */
-  .start-caps {
-    display: flex; flex-wrap: wrap; gap: 4px 10px; color: var(--muted); font-size: 13px;
-    margin: 0 0 18px;
+  .start { padding: 10px 4px 4px; }
+  .start h2 {
+    margin: 0 0 8px; font-size: var(--text-2xl); font-weight: 700; letter-spacing: -.01em;
+    line-height: 1.25;
   }
-  .start-caps span.dot { opacity: .6; }
+  .start p { margin: 0 0 20px; color: var(--muted); font-size: var(--text-md); max-width: 52ch; line-height: 1.6; }
+  /* A first-time visitor cannot yet know the sidebar exists. This says the full capability
+     surface up front instead of leaving it to be discovered by accident - a labeled tag
+     per capability, not chips or buttons (that was tried and looked like a row of
+     unfinished starter-question buttons, not a feature list), so it reads as "here is what
+     this does" rather than "click one of these". */
+  .start-caps {
+    display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 20px; padding: 0; list-style: none;
+  }
+  .start-caps li {
+    border: 1px solid var(--line); border-radius: 999px; padding: 5px 14px;
+    font-size: 12.5px; font-weight: 600; color: var(--ink); background: var(--panel);
+  }
   footer {
     position: fixed; bottom: 0; left: 0; right: 0; background: var(--panel);
     border-top: 1px solid var(--line); padding: 12px 16px;
@@ -827,18 +834,14 @@
 <div id="nudges"></div>
 <section class="start" id="start" hidden>
   <h2>Ask me anything about renting property in Chicagoland.</h2>
-  <p>Built specifically to help Chicagoland landlords manage their rental property, not a
-     general chatbot. If I don't know something, I'll say so.
-     Pregunta en español si prefieres.</p>
-  <div class="start-caps">
-    <span>Ask a question</span>
-    <span class="dot" aria-hidden="true">·</span>
-    <span>Run the numbers</span>
-    <span class="dot" aria-hidden="true">·</span>
-    <span>Track a property</span>
-    <span class="dot" aria-hidden="true">·</span>
-    <span>Check your notice</span>
-  </div>
+  <p>Built specifically for Chicagoland landlords - not a general chatbot. If I don't know
+     something, I'll say so. Pregunta en español si prefieres.</p>
+  <ul class="start-caps">
+    <li>Ask a question</li>
+    <li>Run the numbers</li>
+    <li>Track a property</li>
+    <li>Check your notice</li>
+  </ul>
 </section>
 <div id="log"></div>
 </main>
