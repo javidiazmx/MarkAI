@@ -413,6 +413,42 @@ class Ledger:
             )
         return cursor.rowcount > 0
 
+    def update(
+        self,
+        owner_id: str,
+        entry_id: str,
+        what: Any,
+        amount: Any,
+        vendor: Any,
+        happened_on: Any,
+        today: date | None = None,
+    ) -> Entry | None:
+        """Correct an entry already on the log - a typo in what happened, a first-guess
+        amount replaced by the real invoice, a vendor added, a wrong date fixed.
+
+        Deliberately its own statement rather than routing through ``add``'s ``INSERT OR
+        REPLACE``: that upsert only ever sets the columns it lists, so reusing it here
+        would silently wipe a photo already attached or a completion time already recorded
+        on the row, and would reset a maintenance item back to "open" since ``parse``
+        defaults status for that kind whenever the caller does not name one. Kind, status,
+        property, urgency, a photo, and ``closed_at`` all stay exactly as they were.
+        """
+        clean_what = _clean(what, MAX_WHAT_CHARS)
+        if not clean_what:
+            raise LogError("Say what happened, in a few words.")
+        clean_amount = parse_amount(amount)
+        clean_vendor = _clean(vendor, MAX_VENDOR_CHARS)
+        clean_date = parse_day(happened_on, today).isoformat()
+        with self._lock, self._conn:
+            cursor = self._conn.execute(
+                "UPDATE log_entries SET what = ?, amount = ?, vendor = ?, happened_on = ?"
+                " WHERE id = ? AND owner_id = ?",
+                (clean_what, clean_amount, clean_vendor, clean_date, entry_id, owner_id),
+            )
+        if cursor.rowcount == 0:
+            return None
+        return self.get(owner_id, entry_id)
+
     def delete(self, owner_id: str, entry_id: str) -> bool:
         with self._lock, self._conn:
             cursor = self._conn.execute(
@@ -710,6 +746,12 @@ class OwnerLog:
 
     def update_vendor_cost(self, entry_id: str, vendor: Any, amount: Any) -> bool:
         return self._ledger.update_vendor_cost(self._owner, entry_id, vendor, amount)
+
+    def update(
+        self, entry_id: str, what: Any, amount: Any, vendor: Any, happened_on: Any
+    ) -> Entry | None:
+        updated = self._ledger.update(self._owner, entry_id, what, amount, vendor, happened_on)
+        return self._label(updated) if updated else None
 
     def complete_maintenance(self, entry_id: str) -> Entry | None:
         """Mark a maintenance issue done, and - if it has a cost recorded - log a

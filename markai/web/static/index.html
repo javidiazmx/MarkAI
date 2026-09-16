@@ -176,6 +176,15 @@
   .side-top button { padding: 5px 11px; font-size: 13px; border-radius: 8px; }
   #threads { flex: 1; overflow-y: auto; padding: 8px; min-height: 60px; }
   .side-section { border-top: 1px solid var(--line); padding: 8px; }
+  /* A "jump to this section" action (the command palette, an empty-state shortcut) needs
+     something that visibly happens even when the section was already on screen the whole
+     time - which #side always is above the 900px breakpoint. An outline flash works there
+     and on a narrow screen alike, unlike scrolling to something already in view. */
+  @keyframes side-section-flash {
+    0% { outline: 2px solid var(--accent); outline-offset: 2px; }
+    100% { outline: 2px solid transparent; outline-offset: 2px; }
+  }
+  .side-section.flash { animation: side-section-flash 1.1s ease-out; border-radius: 8px; }
   .side-section .side-head, .side-foot .side-head {
     display: flex; align-items: center; gap: 6px; padding: 2px 4px 6px;
   }
@@ -202,14 +211,15 @@
   }
   #prop-form .pair { display: flex; gap: 6px; }
   #prop-form button { padding: 7px 12px; font-size: 13px; border-radius: 7px; }
-  .logline { display: flex; align-items: flex-start; gap: 4px; padding: 4px 4px 4px 9px; }
-  .logline .what { flex: 1; min-width: 0; font-size: 13px; line-height: 1.4; }
-  .logline .what small { color: var(--muted); display: block; }
+  .logline { padding: 4px 4px 4px 9px; }
+  .logline-row { display: flex; align-items: flex-start; gap: 4px; }
+  .logline-row .what { flex: 1; min-width: 0; font-size: 13px; line-height: 1.4; }
+  .logline-row .what small { color: var(--muted); display: block; }
   .logline.open .what { font-weight: 600; }
   .logline.open .what::before {
     content: "•"; color: var(--accent); font-weight: 700; margin-right: 5px;
   }
-  .logline button {
+  .logline-row button {
     background: none; border: 0; color: var(--muted); cursor: pointer; font-size: 12px;
     padding: 2px 5px;
   }
@@ -218,7 +228,7 @@
     display: flex; align-items: center; justify-content: space-between; gap: 6px;
   }
   .acct-open::after { content: "\203A"; color: var(--muted); }
-  .acct-card { max-width: 34rem; width: 100%; }
+  .acct-card { max-width: 40rem; width: 100%; }
   .acct-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
   .acct-head h2 { margin: 0; flex: 1; }
   #acct-prop {
@@ -247,7 +257,7 @@
     margin: 0 0 6px; font-size: 12px; font-weight: 600; text-transform: uppercase;
     letter-spacing: .06em; color: var(--muted);
   }
-  #acct-entries { max-height: 34vh; overflow-y: auto; }
+  #acct-entries { max-height: 46vh; overflow-y: auto; }
   #log-form { padding: 4px 4px 8px 4px; display: grid; gap: 6px; }
   #log-form input, #log-form select {
     width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px;
@@ -439,7 +449,8 @@
      in this app uses - this only tightens the size for an inline row action. A bare
      button element defaults to solid-accent-background-plus-white-text, which is exactly
      backwards for something meant to sit quietly in a list. */
-  .maintenance-done, .maintenance-inline-toggle, .maintenance-photo-btn {
+  .maintenance-done, .maintenance-edit, .maintenance-delete,
+  .maintenance-inline-toggle, .maintenance-photo-btn {
     padding: 3px 9px; font-size: 12px; border-radius: 6px; margin-top: 6px;
   }
   .maintenance-row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -448,6 +459,19 @@
     flex: 1; min-width: 0; padding: 6px 8px; border: 1px solid var(--line); border-radius: 7px;
     background: var(--bg); color: var(--ink); font: inherit; font-size: 12.5px;
   }
+  /* Shared inline "edit this entry" form - the Income & expenses list and the Maintenance
+     Tracker both use it, so a correction behaves and looks the same in either place. */
+  .entry-edit { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 2px; }
+  .entry-edit input {
+    padding: 6px 8px; border: 1px solid var(--line); border-radius: 7px;
+    background: var(--bg); color: var(--ink); font: inherit; font-size: 12.5px;
+  }
+  .entry-edit .edit-what { flex: 1 1 100%; min-width: 0; }
+  .entry-edit .edit-amount, .entry-edit .edit-vendor, .entry-edit .edit-date {
+    flex: 1; min-width: 92px;
+  }
+  .entry-edit .edit-buttons { display: flex; gap: 6px; flex: 1 1 100%; }
+  .entry-edit .edit-buttons button { padding: 5px 12px; font-size: 12.5px; border-radius: 6px; }
   .maintenance-photo {
     display: block; max-width: 100%; margin-top: 8px; border-radius: 8px;
     border: 1px solid var(--line);
@@ -2272,6 +2296,84 @@
     container.appendChild(wrap);
   }
 
+  // Correcting an entry's core fields - a typo, the real invoice amount, a vendor added
+  // after the fact, a wrong date. Shared between the Income & expenses list and the
+  // Maintenance Tracker so editing looks and behaves the same wherever an entry shows up.
+  // Returns {button, form}: the caller places the toggle button among its row actions and
+  // the (initially hidden) form wherever it should drop to its own line.
+  function buildEntryEdit(item, onSaved) {
+    var editBtn = el("button", "ghost maintenance-edit", "Edit");
+    editBtn.type = "button";
+    editBtn.setAttribute("aria-label", "Edit: " + item.what);
+
+    var form = el("div", "entry-edit");
+    form.hidden = true;
+
+    var whatInput = document.createElement("input");
+    whatInput.type = "text"; whatInput.maxLength = 240; whatInput.className = "edit-what";
+    whatInput.value = item.what || "";
+
+    var amountInput = document.createElement("input");
+    amountInput.type = "text"; amountInput.maxLength = 12; amountInput.inputMode = "decimal";
+    amountInput.placeholder = "$ (optional)"; amountInput.className = "edit-amount";
+    amountInput.value = item.amount ? String(item.amount) : "";
+
+    var vendorInput = document.createElement("input");
+    vendorInput.type = "text"; vendorInput.maxLength = 80;
+    vendorInput.placeholder = "Vendor (optional)"; vendorInput.className = "edit-vendor";
+    vendorInput.value = item.vendor || "";
+
+    var dateInput = document.createElement("input");
+    dateInput.type = "date"; dateInput.className = "edit-date";
+    dateInput.value = item.happened_on || "";
+
+    var buttons = el("div", "edit-buttons");
+    var saveBtn = el("button", "ghost", "Save");
+    saveBtn.type = "button";
+    var cancelBtn = el("button", "ghost", "Cancel");
+    cancelBtn.type = "button";
+
+    editBtn.addEventListener("click", function () {
+      form.hidden = !form.hidden;
+      if (!form.hidden) whatInput.focus();
+    });
+    cancelBtn.addEventListener("click", function () { form.hidden = true; });
+    saveBtn.addEventListener("click", async function () {
+      saveBtn.disabled = true;
+      try {
+        var response = await fetch("/api/log/" + encodeURIComponent(item.id) + "/edit", {
+          method: "POST", headers: headers(),
+          body: JSON.stringify({
+            what: whatInput.value, amount: amountInput.value,
+            vendor: vendorInput.value, date: dateInput.value
+          })
+        });
+        if (!response.ok) {
+          var detail = "Could not save that.";
+          try { detail = (await response.json()).detail || detail; } catch (parseError) {}
+          toast(detail, "error");
+          return;
+        }
+        toast("Saved.", "success");
+        onSaved();
+      } catch (error) {
+        toast("Could not save that.", "error");
+      } finally {
+        saveBtn.disabled = false;
+      }
+    });
+
+    form.appendChild(whatInput);
+    form.appendChild(amountInput);
+    form.appendChild(vendorInput);
+    form.appendChild(dateInput);
+    buttons.appendChild(saveBtn);
+    buttons.appendChild(cancelBtn);
+    form.appendChild(buttons);
+
+    return { button: editBtn, form: form };
+  }
+
   function maintenanceOpenRow(item) {
     var row = el("div", "maintenance-item");
     var urgency = item.urgency || "routine";
@@ -2319,7 +2421,27 @@
       refreshLog();
     });
     actions.appendChild(doneBtn);
+
+    var edit = buildEntryEdit(item, function () { loadMaintenance(); refreshLog(); });
+    actions.appendChild(edit.button);
+
+    var deleteBtn = el("button", "ghost maintenance-delete", "Delete");
+    deleteBtn.type = "button";
+    deleteBtn.setAttribute("aria-label", "Delete: " + item.what);
+    deleteBtn.addEventListener("click", async function () {
+      if (!window.confirm("Delete \"" + item.what + "\"?")) return;
+      try {
+        await fetch("/api/log/" + encodeURIComponent(item.id), {
+          method: "DELETE", headers: headers()
+        });
+      } catch (error) { return; }
+      loadMaintenance();
+      refreshLog();
+    });
+    actions.appendChild(deleteBtn);
+
     row.appendChild(actions);
+    row.appendChild(edit.form);
 
     if (!item.vendor && !item.amount) maintenanceVendorCostEditor(item, row);
     return row;
@@ -2342,6 +2464,28 @@
     } else {
       maintenancePhotoUpload(item, row);
     }
+
+    var actions = el("div", "maintenance-row-actions");
+    var edit = buildEntryEdit(item, function () { loadMaintenance(); refreshLog(); });
+    actions.appendChild(edit.button);
+
+    var deleteBtn = el("button", "ghost maintenance-delete", "Delete");
+    deleteBtn.type = "button";
+    deleteBtn.setAttribute("aria-label", "Delete: " + item.what);
+    deleteBtn.addEventListener("click", async function () {
+      if (!window.confirm("Delete \"" + item.what + "\"?")) return;
+      try {
+        await fetch("/api/log/" + encodeURIComponent(item.id), {
+          method: "DELETE", headers: headers()
+        });
+      } catch (error) { return; }
+      loadMaintenance();
+      refreshLog();
+    });
+    actions.appendChild(deleteBtn);
+    row.appendChild(actions);
+    row.appendChild(edit.form);
+
     return row;
   }
 
@@ -2579,6 +2723,7 @@
 
   function logLine(item) {
     var row = el("div", "logline" + (item.status === "open" ? " open" : ""));
+    var top = el("div", "logline-row");
     var what = el("div", "what");
     what.appendChild(document.createTextNode(item.what));
     var bits = [item.happened_on || "", item.kind];
@@ -2586,7 +2731,7 @@
     if (item.vendor) bits.push(item.vendor);
     if (item.property_label) bits.push(item.property_label);
     what.appendChild(el("small", null, bits.filter(Boolean).join(" \u00b7 ")));
-    row.appendChild(what);
+    top.appendChild(what);
 
     if (item.status === "open") {
       var done = el("button", null, "\u2713");
@@ -2601,8 +2746,13 @@
         } catch (error) { return; }
         refreshLog();
       });
-      row.appendChild(done);
+      top.appendChild(done);
     }
+
+    var edit = buildEntryEdit(item, refreshLog);
+    edit.button.title = "Edit";
+    top.appendChild(edit.button);
+
     var drop = el("button", null, "\u2715");
     drop.type = "button";
     drop.title = "Delete";
@@ -2616,7 +2766,10 @@
       } catch (error) { return; }
       refreshLog();
     });
-    row.appendChild(drop);
+    top.appendChild(drop);
+
+    row.appendChild(top);
+    row.appendChild(edit.form);
     return row;
   }
 
@@ -3148,6 +3301,18 @@
   var paletteFiltered = [];
   var paletteHi = 0;
 
+  // A "jump to this part of the sidebar" action needs to visibly do something even when
+  // #side was already showing the whole time - true above 900px, where it's permanently
+  // docked. Scrolling to something already in view does nothing a person can see; a brief
+  // outline flash does, on any screen size.
+  function flashSection(el) {
+    if (!el) return;
+    el.classList.remove("flash");
+    void el.offsetWidth;  // restart the animation if it's already mid-flash
+    el.classList.add("flash");
+    if (el.scrollIntoView) el.scrollIntoView({ block: "center" });
+  }
+
   function paletteActions() {
     var items = [
       { label: "New conversation", run: function () { startNew(); } },
@@ -3162,8 +3327,7 @@
         } },
       { label: "Open your properties", run: function () {
           side.classList.add("open");
-          var propsSection = document.getElementById("props");
-          if (propsSection.scrollIntoView) propsSection.scrollIntoView({ block: "center" });
+          flashSection(document.getElementById("props").closest(".side-section"));
         } },
       { label: "Hand this to a property manager", run: function () {
           document.getElementById("handoff").click();
@@ -3187,9 +3351,14 @@
     document.getElementById("open-deal").click();
   });
   document.getElementById("start-property").addEventListener("click", function () {
+    // #side is only ever an overlay to open/close on a narrow screen - above 900px it is
+    // permanently visible (see the min-width media query), so adding "open" alone was a
+    // silent no-op on desktop. Showing the add-property form and focusing it is the one
+    // thing that visibly does something on every screen size - set directly rather than
+    // toggling #add-prop's own button, which would close the form if it were already open.
     side.classList.add("open");
-    var propsSection = document.getElementById("props");
-    if (propsSection.scrollIntoView) propsSection.scrollIntoView({ block: "center" });
+    propForm.hidden = false;
+    propLabel.focus();
   });
   document.getElementById("start-notice").addEventListener("click", function () {
     document.getElementById("open-notice-wizard").click();

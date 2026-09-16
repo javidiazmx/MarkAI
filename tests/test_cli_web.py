@@ -2140,6 +2140,93 @@ def test_marking_a_priced_maintenance_entry_done_from_the_generic_route_also_log
     assert totals["out"] == 200, "the generic done route must log the expense too"
 
 
+def test_an_entry_can_be_edited(settings, store):
+    client = _client(settings, store)
+    headers = {"X-Browser-Id": "b1"}
+    entry = client.post(
+        "/api/log",
+        json={"kind": "expense", "what": "New boiler", "amount": "8000", "vendor": "ABC Heating"},
+        headers=headers,
+    ).json()["entry"]
+
+    edited = client.post(
+        f"/api/log/{entry['id']}/edit",
+        json={
+            "what": "New boiler (corrected)",
+            "amount": "8500",
+            "vendor": "ABC Heating Co",
+            "date": "2026-09-10",
+        },
+        headers=headers,
+    )
+    assert edited.status_code == 200
+    saved = edited.json()["entry"]
+    assert saved["what"] == "New boiler (corrected)"
+    assert saved["amount"] == 8500
+    assert saved["vendor"] == "ABC Heating Co"
+    assert saved["happened_on"] == "2026-09-10"
+
+    totals = client.get("/api/log", headers=headers).json()["totals"]
+    assert totals["out"] == 8500, "the edited amount, not the original, should count"
+
+
+def test_editing_does_not_touch_status_property_or_photo(settings, store):
+    """A dedicated UPDATE, not the add() upsert - so completing an item, attaching a
+    photo, and then only fixing its cost must leave the completion and the photo alone."""
+    client = _client(settings, store)
+    headers = {"X-Browser-Id": "b1"}
+    entry = client.post(
+        "/api/log",
+        json={"kind": "maintenance", "what": "New water heater", "amount": "900"},
+        headers=headers,
+    ).json()["entry"]
+    client.post(f"/api/maintenance/{entry['id']}/complete", headers=headers)
+    client.post(
+        f"/api/log/{entry['id']}/photo",
+        headers=headers,
+        files={"file": ("job.jpg", _jpeg_bytes(), "image/jpeg")},
+    )
+
+    edited = client.post(
+        f"/api/log/{entry['id']}/edit",
+        json={"what": "New water heater", "amount": "950", "vendor": "", "date": "2026-09-16"},
+        headers=headers,
+    )
+    assert edited.status_code == 200
+    saved = edited.json()["entry"]
+    assert saved["status"] == "done", "editing must not silently reopen a completed item"
+    assert saved["has_photo"] is True, "editing must not wipe the attached photo"
+
+
+def test_an_entry_with_nothing_in_it_cannot_be_edited_to_blank(settings, store):
+    client = _client(settings, store)
+    headers = {"X-Browser-Id": "b1"}
+    entry = client.post(
+        "/api/log", json={"kind": "note", "what": "Tenant locked out"}, headers=headers
+    ).json()["entry"]
+    bad = client.post(
+        f"/api/log/{entry['id']}/edit",
+        json={"what": "", "amount": "", "vendor": "", "date": ""},
+        headers=headers,
+    )
+    assert bad.status_code == 400
+
+
+def test_editing_someone_elses_entry_is_a_404(settings, store):
+    client = _client(settings, store)
+    entry = client.post(
+        "/api/log",
+        json={"kind": "note", "what": "Mine"},
+        headers={"X-Browser-Id": "b1"},
+    ).json()["entry"]
+    other = client.post(
+        f"/api/log/{entry['id']}/edit",
+        json={"what": "Not yours", "amount": "", "vendor": "", "date": ""},
+        headers={"X-Browser-Id": "b2"},
+    )
+    assert other.status_code == 404
+
+
 def test_vendor_cost_can_be_filled_in_after_the_fact(settings, store):
     client = _client(settings, store)
     headers = {"X-Browser-Id": "b1"}

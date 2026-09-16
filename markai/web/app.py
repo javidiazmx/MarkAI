@@ -123,6 +123,17 @@ class VendorCostRequest(BaseModel):
     amount: str = Field(default="", max_length=20)
 
 
+class LogEditRequest(BaseModel):
+    """Correcting an entry already on the log - a typo, the real invoice amount, a vendor
+    added after the fact, a wrong date. Never touches kind, status, property, a photo, or
+    a completion time - see ``Ledger.update`` for why."""
+
+    what: str = Field(default="", max_length=1000)
+    amount: str = Field(default="", max_length=20)
+    vendor: str = Field(default="", max_length=200)
+    date: str = Field(default="", max_length=20)
+
+
 class PmFitOverrideRequest(BaseModel):
     """The staff checkbox. ``None`` clears the override back to "follow the AI"."""
 
@@ -1045,6 +1056,28 @@ def create_app(
             completed = log.complete_maintenance(entry_id) if log else None
             return {"closed": completed is not None}
         return {"closed": get_ledger().close(owner, entry_id)}
+
+    @app.post("/api/log/{entry_id}/edit")
+    def edit_log(
+        entry_id: str,
+        payload: LogEditRequest,
+        owner: str = Depends(owner_of),
+        _: None = Depends(require_access),
+    ) -> dict[str, Any]:
+        from markai.web.ledger import LogError
+
+        log = owner_log(owner)
+        if log is None:
+            raise HTTPException(status_code=404, detail="No entry of yours has that id.")
+        try:
+            updated = log.update(
+                entry_id, payload.what, payload.amount, payload.vendor, payload.date
+            )
+        except LogError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if updated is None:
+            raise HTTPException(status_code=404, detail="No entry of yours has that id.")
+        return {"entry": updated.to_dict()}
 
     @app.delete("/api/log/{entry_id}")
     def forget_log(
