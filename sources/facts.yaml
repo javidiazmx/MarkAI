@@ -2963,10 +2963,24 @@ ordinances:
   - id: mined-35
     jurisdiction: "Evanston, IL"
     topic: "Non-renewal notice"
-    rule: "Landlords must give tenants 90 days' notice of intent not to renew a lease or to terminate a month-to-month tenancy."
-    citation: "Evanston RLTO (updated)"
+    rule: "Landlords must give tenants 90 days' notice of intent not to renew a lease or to terminate a month-to-month tenancy. This does not vary by how long the tenant has lived there."
+    citation: "Evanston RLTO Section 5-3-6-5(A)"
     url: "https://www.gcrealtyinc.com/blog/evanston-rtlo-changes-landlords-must-know-in-2025"
-    notes: "From: Under the updated RLTO, Evanston property managers must give tenants 90 days' notice if they intend not to renew a lease or plan to terminate a month-to-month lease. (stated in 2 of your sources)"
+    notes: "From: Under the updated RLTO, Evanston property managers must give tenants 90 days' notice if they intend not to renew a lease or plan to terminate a month-to-month lease. (stated in 2 of your sources). Section citation and the no-tenure-tiering detail added by hand after the wizard was found to have no Evanston fact at all for the nonpayment/lease-violation reasons - cross-checked against https://help.rentervention.com/article/291-understanding-eviction-notices-evanston-rtlo-nonrenewal-of-lease-notice."
+  - id: mined-546
+    jurisdiction: "Evanston, IL"
+    topic: "Nonpayment of rent notice"
+    rule: "Landlords must give a 10-day written notice for nonpayment of rent before filing for eviction; the tenant may pay the full amount owed within that period to stop the eviction."
+    citation: "Evanston RLTO"
+    url: "https://www.portabletenant.com/post/evanston-residential-landlord-tenant-ordinance"
+    notes: "Added by hand, not mined: the Notice Wizard had no Evanston fact for the nonpayment reason at all, so it fell back to showing the (wrong) 90-day non-renewal notice for every reason picked. Cross-checked against two independent sources: https://www.portabletenant.com/post/evanston-residential-landlord-tenant-ordinance and the City of Evanston's own 311 knowledgebase, which lists a \"Landlord's 10 Days' Notice\" form (https://evanstonil.qscend.com/311/knowledgebase/article/858). No exact RLTO section number was found in a fetchable source - Chicago's own 10-day nonpayment notice period should not be assumed to share a citation with Evanston's, since these are separate ordinances that happen to agree on the day count."
+  - id: mined-547
+    jurisdiction: "Evanston, IL"
+    topic: "Lease violation notice"
+    rule: "Landlords must give a 30-day written notice to correct a lease violation (other than nonpayment of rent) before filing for eviction; the tenant may cure the violation within that period to stop the eviction."
+    citation: "Evanston RLTO"
+    url: "https://www.portabletenant.com/post/evanston-residential-landlord-tenant-ordinance"
+    notes: "Added by hand, not mined: the Notice Wizard had no Evanston fact for the lease-violation reason at all, so it fell back to showing the (wrong) 90-day non-renewal notice for every reason picked. Cross-checked against two independent sources: https://www.portabletenant.com/post/evanston-residential-landlord-tenant-ordinance and the City of Evanston's own 311 knowledgebase, which lists a \"Landlord's 30 Day Notice to Correct\" form (https://evanstonil.qscend.com/311/knowledgebase/article/858). No exact RLTO section number was found in a fetchable source."
   - id: mined-34
     jurisdiction: "Illinois"
     topic: "Flood disclosure"
