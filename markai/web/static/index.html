@@ -1475,11 +1475,6 @@
             renderAnswer(slot.bubble, data.text || streamed, citations);
             renderCitations(slot.wrap, citations);
             addActions(slot);
-            var usage = data.usage || {};
-            var meta = el("div", "meta", coverageLabel(data.coverage));
-            meta.title = (data.model || "") + " · coverage " + (data.coverage || "?") +
-              " · " + (usage.output_tokens || 0) + " tokens out";
-            slot.wrap.appendChild(meta);
             loadThreads();  // the thread and its title exist only once an answer landed
             // Jay may have written something down while answering, so the panel is
             // refreshed rather than waiting for a reload to show it.
@@ -2462,17 +2457,6 @@
       return bits.join(", ");
     }
     return "Working out the numbers…";
-  }
-
-  // The one signal that actually says "how much should you trust this," and it was being
-  // shown as raw jargon ("coverage covered") a landlord has no reason to know how to read.
-  var COVERAGE_LABELS = {
-    covered: "Well-covered by your sources",
-    weak: "Thin coverage in your sources - worth double-checking",
-    none: "Not covered by your sources"
-  };
-  function coverageLabel(coverage) {
-    return COVERAGE_LABELS[coverage] || "Coverage unknown";
   }
 
   // The sidebar button always speaks for the whole portfolio - the property filter lives
