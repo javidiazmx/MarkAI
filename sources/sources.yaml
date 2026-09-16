@@ -240,9 +240,19 @@ websites:
 youtube:
   # Canales completos. Mark saca la lista de videos solo y guarda un cache; al re-ingestar
   # con --force vuelve a leer el canal y agarra los videos nuevos.
+  #
+  # Las URLs que terminan en /streams son a proposito, no un error de copiar-pegar: la
+  # pestana normal de un canal ("/videos") NUNCA lista sus transmisiones en vivo guardadas
+  # (los replays de "Chicago Landlord Secrets - Live", por ejemplo) - YouTube las separa en
+  # su propia pestana "En vivo". Sin esta linea, 35 de esos videos (la mayoria del ciclo
+  # semanal en vivo del dueno) quedaban invisibles para el ingest aunque el playlist publico
+  # del canal si los mostrara. El codigo ya soporta esto sin cambios: `_list_channel_videos`
+  # solo agrega "/videos" cuando la URL no termina ya en /videos, /streams o /shorts.
   channels:
     - https://www.youtube.com/@straightupchicagoinvestor
+    - https://www.youtube.com/@straightupchicagoinvestor/streams
     - https://www.youtube.com/@MarkAinleyGCRealty
+    - https://www.youtube.com/@MarkAinleyGCRealty/streams
   # TODOS los videos largos de ambos canales. Los shorts se descartan primero.
   # Son miles de peticiones a YouTube, y va a bloquear la IP en algun punto: el ingest se
   # detiene solo cuando eso pasa y te avisa. Lo ya descargado queda en cache, asi que basta

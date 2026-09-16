@@ -226,6 +226,40 @@ def test_a_channel_in_episodes_points_at_the_right_field():
     assert "youtube.channels" in excinfo.value.hint
 
 
+def test_listing_a_channel_appends_videos_but_leaves_a_streams_url_alone(monkeypatch):
+    """A channel's normal "/videos" tab never lists its saved livestreams - YouTube files
+    those under a separate "/streams" tab instead. sources.yaml relies on being able to
+    point at a channel URL that already names /streams (or /shorts) and have it passed
+    through unchanged rather than have "/videos" appended on top of it - which is exactly
+    how 35 "Chicago Landlord Secrets - Live" replays went uningested despite the channel
+    being fully configured."""
+    from markai.ingest import youtube as yt
+
+    seen_targets: list[str] = []
+
+    class FakeYoutubeDL:
+        def __init__(self, options):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def extract_info(self, target, download=False):
+            seen_targets.append(target)
+            return {"entries": [{"id": "abc12345678", "title": "t"}]}
+
+    monkeypatch.setattr("yt_dlp.YoutubeDL", FakeYoutubeDL)
+    yt._list_channel_videos("https://www.youtube.com/@MarkAinleyGCRealty", None)
+    yt._list_channel_videos("https://www.youtube.com/@MarkAinleyGCRealty/streams", None)
+    assert seen_targets == [
+        "https://www.youtube.com/@MarkAinleyGCRealty/videos",
+        "https://www.youtube.com/@MarkAinleyGCRealty/streams",
+    ]
+
+
 def test_expand_channel_turns_a_listing_into_episodes(tmp_path):
     from markai.ingest.youtube import expand_channel
 
