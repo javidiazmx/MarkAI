@@ -467,6 +467,62 @@ def test_a_handler_error_is_not_swallowed_as_a_keep_alive():
     assert handler > catch, "onEvent must sit outside the try that swallows parse failures"
 
 
+class _FakeLock:
+    """`_events` only ever calls `.release()` on the real per-session lock."""
+
+    def release(self) -> None:
+        pass
+
+
+def test_a_missing_api_key_does_not_leak_setup_instructions_to_the_browser():
+    """The message is meant for whoever runs the server, not whichever landlord's browser
+    happens to be open when the key falls out of .env."""
+    from markai.advisor.mark import MissingApiKeyError
+    from markai.web.app import _events
+
+    def broken_get_advisor():
+        raise MissingApiKeyError(
+            "ANTHROPIC_API_KEY is not set. Run `mark init`, or copy .env.example to .env."
+        )
+
+    events = list(_events(broken_get_advisor, conversation=None, message="hi", lock=_FakeLock()))
+    assert len(events) == 1 and events[0]["event"] == "error"
+    message = json.loads(events[0]["data"])["message"]
+    assert "ANTHROPIC_API_KEY" not in message and "mark init" not in message
+
+
+def test_a_missing_file_does_not_leak_the_server_s_path_layout():
+    """The raw OSError text is a filesystem path on the server (e.g. /mnt/data/...) - not
+    something a browser on the other end of the internet needs to see."""
+    from markai.web.app import _events
+
+    def broken_get_advisor():
+        raise FileNotFoundError(2, "No such file or directory", "/mnt/data/markai.db")
+
+    events = list(_events(broken_get_advisor, conversation=None, message="hi", lock=_FakeLock()))
+    assert len(events) == 1 and events[0]["event"] == "error"
+    message = json.loads(events[0]["data"])["message"]
+    assert "/mnt/data" not in message
+
+
+def test_an_unexpected_crash_mid_stream_does_not_echo_the_exception_text():
+    """The catch-all used to hand str(exc) straight to the browser - whatever a DB, SDK, or
+    filesystem error happened to say, verbatim."""
+    from markai.web.app import _events
+
+    class _CrashingAdvisor:
+        def stream(self, *args, **kwargs):
+            raise RuntimeError("connection to internal-db-host-04.prod failed: auth denied")
+            yield  # pragma: no cover - makes this a generator without ever running
+
+    events = list(
+        _events(lambda: _CrashingAdvisor(), conversation=None, message="hi", lock=_FakeLock())
+    )
+    assert len(events) == 1 and events[0]["event"] == "error"
+    message = json.loads(events[0]["data"])["message"]
+    assert "internal-db-host-04" not in message and "auth denied" not in message
+
+
 # --- Jay, and a page that does not repeat itself -------------------------------------------
 
 

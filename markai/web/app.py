@@ -1507,11 +1507,21 @@ def _events(
     try:
         try:
             advisor = get_advisor()
-        except MissingApiKeyError as exc:
-            yield {"event": "error", "data": json.dumps({"message": str(exc)})}
+        except MissingApiKeyError:
+            logger.exception("advisor unavailable: no API key configured")
+            yield {
+                "event": "error",
+                "data": json.dumps({"message": "Jay is not set up yet. Try again shortly."}),
+            }
             return
-        except FileNotFoundError as exc:
-            yield {"event": "error", "data": json.dumps({"message": str(exc)})}
+        except FileNotFoundError:
+            # The real message is a raw OS path (e.g. "[Errno 2] ... '/mnt/data/...'") - useful
+            # to the operator, not to whichever landlord's browser happens to receive it.
+            logger.exception("advisor unavailable: a required file was not found")
+            yield {
+                "event": "error",
+                "data": json.dumps({"message": "Jay is not set up yet. Try again shortly."}),
+            }
             return
 
         response = None
@@ -1563,9 +1573,12 @@ def _events(
                 }
             ),
         }
-    except Exception as exc:  # a crash here must not hang the browser
+    except Exception:  # a crash here must not hang the browser, or hand it the exception text
         logger.exception("chat stream failed")
-        yield {"event": "error", "data": json.dumps({"message": f"Something went wrong: {exc}"})}
+        yield {
+            "event": "error",
+            "data": json.dumps({"message": "Something went wrong. Please try again."}),
+        }
     finally:
         lock.release()
 
