@@ -1035,6 +1035,15 @@ def create_app(
         owner: str = Depends(owner_of),
         _: None = Depends(require_access),
     ) -> dict[str, Any]:
+        """Marking something done reaches the same completion logic no matter which panel
+        it was clicked in - a maintenance issue with a cost still gets its companion
+        expense logged here, not only through the Maintenance Tracker's own button, since a
+        priced issue now shows in both places."""
+        entry = get_ledger().get(owner, entry_id)
+        if entry is not None and entry.kind == "maintenance":
+            log = owner_log(owner)
+            completed = log.complete_maintenance(entry_id) if log else None
+            return {"closed": completed is not None}
         return {"closed": get_ledger().close(owner, entry_id)}
 
     @app.delete("/api/log/{entry_id}")

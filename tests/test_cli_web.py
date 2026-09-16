@@ -2111,6 +2111,35 @@ def test_completing_a_missing_maintenance_entry_is_a_404(settings, store):
     assert client.post("/api/maintenance/nope/complete", headers=headers).status_code == 404
 
 
+def test_marking_a_priced_maintenance_entry_done_from_the_generic_route_also_logs_the_expense(
+    settings, store
+):
+    """Live bug: a priced maintenance issue now shows in the Income & expenses panel too
+    (it has a cost), which has its own "mark done" control that hit the generic close route
+    - and that route used to just flip status, with none of the auto-expense logic the
+    Maintenance Tracker's own "Mark done" button has. Wherever "done" is clicked, a priced
+    maintenance issue must log its companion expense exactly the same way."""
+    client = _client(settings, store)
+    headers = {"X-Browser-Id": "b1"}
+    entry = client.post(
+        "/api/log",
+        json={
+            "kind": "maintenance",
+            "what": "Replace kitchen filter",
+            "vendor": "mE",
+            "amount": "200",
+        },
+        headers=headers,
+    ).json()["entry"]
+
+    done = client.post(f"/api/log/{entry['id']}/done", headers=headers)
+    assert done.status_code == 200
+    assert done.json() == {"closed": True}
+
+    totals = client.get("/api/log", headers=headers).json()["totals"]
+    assert totals["out"] == 200, "the generic done route must log the expense too"
+
+
 def test_vendor_cost_can_be_filled_in_after_the_fact(settings, store):
     client = _client(settings, store)
     headers = {"X-Browser-Id": "b1"}

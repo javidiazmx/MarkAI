@@ -2307,7 +2307,9 @@
             toast("Marked done.", "success");
           }
         } else {
-          toast("Could not mark that done.", "error");
+          var detail = "Could not mark that done.";
+          try { detail = (await response.json()).detail || detail; } catch (parseError) {}
+          toast(detail, "error");
         }
       } catch (error) {
         toast("Could not mark that done.", "error");
