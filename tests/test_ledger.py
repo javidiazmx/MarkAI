@@ -231,6 +231,43 @@ def test_closing_an_item_takes_it_off_the_list(ledger):
     assert ledger.close("browser:someone-else", saved.id) is False, "not theirs to close"
 
 
+def test_closing_records_when_and_reopening_clears_it(ledger):
+    saved = ledger.add(OWNER, {"kind": "maintenance", "what": "No heat in unit 2"})
+    assert ledger.get(OWNER, saved.id).closed_at is None
+    ledger.close(OWNER, saved.id)
+    assert ledger.get(OWNER, saved.id).closed_at is not None
+    ledger.close(OWNER, saved.id, done=False)
+    assert ledger.get(OWNER, saved.id).closed_at is None
+
+
+def test_get_returns_none_for_someone_elses_entry_or_a_missing_one(ledger):
+    saved = ledger.add(OWNER, {"kind": "maintenance", "what": "No heat in unit 2"})
+    assert ledger.get(OWNER, saved.id).id == saved.id
+    assert ledger.get("browser:someone-else", saved.id) is None
+    assert ledger.get(OWNER, "not-a-real-id") is None
+
+
+def test_maintenance_history_lists_only_done_maintenance_most_recent_first(ledger):
+    open_one = ledger.add(OWNER, {"kind": "maintenance", "what": "Still broken"})
+    first_done = ledger.add(OWNER, {"kind": "maintenance", "what": "Fixed the gutter"})
+    second_done = ledger.add(OWNER, {"kind": "maintenance", "what": "Fixed the buzzer"})
+    ledger.add(OWNER, {"kind": "expense", "what": "New sign", "status": "done"})
+    ledger.close(OWNER, first_done.id)
+    ledger.close(OWNER, second_done.id)
+    history = ledger.maintenance_history(OWNER)
+    assert [e.what for e in history] == ["Fixed the buzzer", "Fixed the gutter"]
+    assert open_one.id not in {e.id for e in history}
+
+
+def test_update_vendor_cost_fills_in_who_and_how_much(ledger):
+    saved = ledger.add(OWNER, {"kind": "maintenance", "what": "No heat in unit 2"})
+    assert ledger.update_vendor_cost(OWNER, saved.id, "ABC Heating", "450") is True
+    entry = ledger.get(OWNER, saved.id)
+    assert entry.vendor == "ABC Heating"
+    assert entry.amount == 450.0
+    assert ledger.update_vendor_cost("browser:someone-else", saved.id, "X", "1") is False
+
+
 def test_open_count_is_not_capped_the_way_open_items_is(ledger):
     """`open_items`' own `limit` is a display cap, not the truth about how much is
     outstanding - a portfolio with more open rows than that cap must still report its real
@@ -301,6 +338,52 @@ def test_the_bound_log_reads_back_with_the_building_named(ledger):
     log.add({"kind": "maintenance", "what": "No heat in unit 2", "property": "2145 W Division"})
     (item,) = log.open_items()
     assert item.property_label == "2145 W Division"
+
+
+# --- completing a maintenance issue logs the money it actually cost ------------------------
+
+
+def test_completing_a_priced_issue_logs_a_matching_expense(ledger):
+    log = _owner_log(ledger)
+    saved = log.add(
+        {
+            "kind": "maintenance",
+            "what": "No heat in unit 2",
+            "vendor": "ABC Heating",
+            "amount": 450,
+            "property": "berwyn",
+        }
+    )
+    result = log.complete_maintenance(saved.id)
+    assert result.status == "done"
+    (expense,) = [e for e in log.recent() if e.kind == "expense"]
+    assert expense.amount == 450
+    assert expense.vendor == "ABC Heating"
+    assert expense.property_label == "Berwyn six flat"
+    assert "No heat in unit 2" in expense.what
+    assert log.totals()["out"] == 450, "the money now counts, unlike a bare maintenance row"
+
+
+def test_completing_an_issue_with_no_cost_logs_no_expense(ledger):
+    log = _owner_log(ledger)
+    saved = log.add({"kind": "maintenance", "what": "Squeaky door"})
+    log.complete_maintenance(saved.id)
+    assert [e for e in log.recent() if e.kind == "expense"] == []
+
+
+def test_completing_an_already_done_issue_does_not_double_log_the_expense(ledger):
+    log = _owner_log(ledger)
+    saved = log.add({"kind": "maintenance", "what": "Leak", "amount": 200})
+    log.complete_maintenance(saved.id)
+    log.complete_maintenance(saved.id)
+    assert len([e for e in log.recent() if e.kind == "expense"]) == 1
+
+
+def test_completing_something_that_is_not_maintenance_does_nothing(ledger):
+    log = _owner_log(ledger)
+    saved = log.add({"kind": "expense", "what": "New sign", "amount": 200})
+    assert log.complete_maintenance(saved.id) is None
+    assert log.count() == 1, "nothing extra was logged"
 
 
 # --- maintenance urgency --------------------------------------------------------------------

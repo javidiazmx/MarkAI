@@ -35,6 +35,13 @@ dependencies = [
   "fastapi>=0.115",
   "uvicorn[standard]>=0.30",
   "sse-starlette>=2.0",
+  # Re-encodes a maintenance photo to a fixed size and strips EXIF (which can carry GPS
+  # coordinates) - already an indirect dependency via trafilatura, but the app now uses it
+  # directly, so it needs its own line rather than riding along on someone else's.
+  "pillow>=10.0",
+  # FastAPI's UploadFile (the maintenance-photo upload route) parses multipart/form-data
+  # through this at request time - without it every route in app.py fails to even build.
+  "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]

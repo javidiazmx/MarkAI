@@ -212,6 +212,8 @@ class Entry:
     property_id: str = ""
     property_label: str = ""
     urgency: str = ""
+    photo_path: str = ""
+    closed_at: float | None = None
     created_at: float = 0.0
 
     def money(self) -> str:
@@ -229,6 +231,8 @@ class Entry:
             "property_id": self.property_id,
             "property_label": self.property_label,
             "urgency": self.urgency,
+            "has_photo": bool(self.photo_path),
+            "closed_at": self.closed_at,
         }
 
     def one_line(self) -> str:
@@ -330,6 +334,12 @@ class Ledger:
                 "ALTER TABLE log_entries ADD COLUMN urgency TEXT NOT NULL DEFAULT ''"
             )
             self._conn.commit()
+        if "photo_path" not in columns:
+            self._conn.execute(
+                "ALTER TABLE log_entries ADD COLUMN photo_path TEXT NOT NULL DEFAULT ''"
+            )
+            self._conn.execute("ALTER TABLE log_entries ADD COLUMN closed_at REAL")
+            self._conn.commit()
 
     # -- writing -------------------------------------------------------------------------
 
@@ -371,11 +381,35 @@ class Ledger:
         return item
 
     def close(self, owner_id: str, entry_id: str, done: bool = True) -> bool:
-        """Mark an open item done, or reopen it."""
+        """Mark an open item done, or reopen it. ``closed_at`` records when, so a
+        completed maintenance issue can be shown in its own history, most-recently-done
+        first - reopening clears it, since it is no longer true that this is when it was
+        last finished."""
         with self._lock, self._conn:
             cursor = self._conn.execute(
-                "UPDATE log_entries SET status = ? WHERE id = ? AND owner_id = ?",
-                (DONE if done else OPEN, entry_id, owner_id),
+                "UPDATE log_entries SET status = ?, closed_at = ? WHERE id = ? AND owner_id = ?",
+                (DONE if done else OPEN, time.time() if done else None, entry_id, owner_id),
+            )
+        return cursor.rowcount > 0
+
+    def set_photo(self, owner_id: str, entry_id: str, photo_path: str) -> bool:
+        """Record where a completed job's photo was saved to disk."""
+        with self._lock, self._conn:
+            cursor = self._conn.execute(
+                "UPDATE log_entries SET photo_path = ? WHERE id = ? AND owner_id = ?",
+                (photo_path, entry_id, owner_id),
+            )
+        return cursor.rowcount > 0
+
+    def update_vendor_cost(self, owner_id: str, entry_id: str, vendor: Any, amount: Any) -> bool:
+        """Fill in who is doing the work and what it costs once that is known - the vendor
+        and the price are rarely both known the moment an issue is first reported."""
+        clean_vendor = _clean(vendor, MAX_VENDOR_CHARS)
+        clean_amount = parse_amount(amount)
+        with self._lock, self._conn:
+            cursor = self._conn.execute(
+                "UPDATE log_entries SET vendor = ?, amount = ? WHERE id = ? AND owner_id = ?",
+                (clean_vendor, clean_amount, entry_id, owner_id),
             )
         return cursor.rowcount > 0
 
@@ -414,10 +448,22 @@ class Ledger:
                 happened_on=row["happened_on"],
                 property_id=row["property_id"],
                 urgency=row["urgency"] if "urgency" in row.keys() else "",
+                photo_path=row["photo_path"] if "photo_path" in row.keys() else "",
+                closed_at=row["closed_at"] if "closed_at" in row.keys() else None,
                 created_at=float(row["created_at"]),
             )
             for row in rows
         ]
+
+    def get(self, owner_id: str, entry_id: str) -> Entry | None:
+        """One entry by id, or ``None`` if it is not theirs (or does not exist)."""
+        if not owner_id or not entry_id:
+            return None
+        found = self._rows(
+            "SELECT * FROM log_entries WHERE id = ? AND owner_id = ? LIMIT 1",
+            (entry_id, owner_id),
+        )
+        return found[0] if found else None
 
     def list(
         self,
@@ -495,6 +541,19 @@ class Ledger:
             " CASE urgency WHEN 'emergency' THEN 0 WHEN 'urgent' THEN 1 ELSE 2 END,"
             " happened_on ASC, created_at ASC LIMIT ?",
             (owner_id, OPEN, max(1, min(limit, MAX_ENTRIES_PER_OWNER))),
+        )
+
+    def maintenance_history(self, owner_id: str, limit: int = DEFAULT_LIMIT) -> list[Entry]:
+        """Completed maintenance, most-recently-finished first - without this, marking
+        something done makes it disappear from the one tool built to track it, and a
+        landlord has no way to answer "what did we already deal with here?" short of
+        digging through the generic log."""
+        if not owner_id:
+            return []
+        return self._rows(
+            "SELECT * FROM log_entries WHERE owner_id = ? AND kind = 'maintenance'"
+            " AND status = ? ORDER BY closed_at DESC, created_at DESC LIMIT ?",
+            (owner_id, DONE, max(1, min(limit, MAX_ENTRIES_PER_OWNER))),
         )
 
     def totals(
@@ -638,6 +697,44 @@ class OwnerLog:
 
     def open_maintenance(self, limit: int = DEFAULT_LIMIT) -> list[Entry]:
         return self._labelled(self._ledger.open_maintenance(self._owner, limit=limit))
+
+    def maintenance_history(self, limit: int = DEFAULT_LIMIT) -> list[Entry]:
+        return self._labelled(self._ledger.maintenance_history(self._owner, limit=limit))
+
+    def get(self, entry_id: str) -> Entry | None:
+        found = self._ledger.get(self._owner, entry_id)
+        return self._label(found) if found else None
+
+    def set_photo(self, entry_id: str, photo_path: str) -> bool:
+        return self._ledger.set_photo(self._owner, entry_id, photo_path)
+
+    def update_vendor_cost(self, entry_id: str, vendor: Any, amount: Any) -> bool:
+        return self._ledger.update_vendor_cost(self._owner, entry_id, vendor, amount)
+
+    def complete_maintenance(self, entry_id: str) -> Entry | None:
+        """Mark a maintenance issue done, and - if it has a cost recorded - log a
+        companion expense for that amount so the money actually counts in the totals a
+        landlord already trusts, instead of sitting invisibly on a "maintenance" row that
+        totals() deliberately never counts as spent. Only ever logs that expense once:
+        calling this again on an already-completed item changes nothing.
+        """
+        entry = self._ledger.get(self._owner, entry_id)
+        if entry is None or entry.kind != "maintenance":
+            return None
+        already_done = entry.status == DONE
+        if not self._ledger.close(self._owner, entry_id, done=True):
+            return None
+        if not already_done and entry.amount:
+            self.add(
+                {
+                    "kind": "expense",
+                    "what": f"Completed: {entry.what}",
+                    "amount": entry.amount,
+                    "vendor": entry.vendor,
+                    "property_id": entry.property_id,
+                }
+            )
+        return self.get(entry_id)
 
     def open_count(self) -> int:
         return self._ledger.open_count(self._owner)

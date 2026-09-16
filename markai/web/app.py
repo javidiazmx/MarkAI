@@ -18,7 +18,16 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Request, Response
+from fastapi import (
+    Cookie,
+    Depends,
+    FastAPI,
+    Header,
+    HTTPException,
+    Request,
+    Response,
+    UploadFile,
+)
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
@@ -105,6 +114,13 @@ class LogRequest(BaseModel):
     status: str = Field(default="", max_length=10)
     property_id: str = Field(default="", max_length=64)
     urgency: str = Field(default="", max_length=10)
+
+
+class VendorCostRequest(BaseModel):
+    """Filling in who is doing a logged job and what it costs, once that is known."""
+
+    vendor: str = Field(default="", max_length=200)
+    amount: str = Field(default="", max_length=20)
 
 
 class PmFitOverrideRequest(BaseModel):
@@ -1016,16 +1032,92 @@ def create_app(
         """Deleting is a person's decision, which is why it is here and not a tool."""
         return {"deleted": get_ledger().delete(owner, entry_id)}
 
+    @app.post("/api/log/{entry_id}/vendor-cost")
+    def set_vendor_cost(
+        entry_id: str,
+        payload: VendorCostRequest,
+        owner: str = Depends(owner_of),
+        _: None = Depends(require_access),
+    ) -> dict[str, Any]:
+        """Who is doing the work and what it costs - rarely both known the moment an
+        issue is first reported, so this fills them in any time before it is done."""
+        from markai.web.ledger import LogError
+
+        try:
+            saved = get_ledger().update_vendor_cost(owner, entry_id, payload.vendor, payload.amount)
+        except LogError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"saved": saved}
+
+    @app.post("/api/log/{entry_id}/photo")
+    async def upload_photo(
+        entry_id: str,
+        file: UploadFile,
+        owner: str = Depends(owner_of),
+        _: None = Depends(require_access),
+    ) -> dict[str, Any]:
+        from markai.web.photos import PhotoError, save_photo
+
+        log = owner_log(owner)
+        entry = log.get(entry_id) if log else None
+        if entry is None:
+            raise HTTPException(status_code=404, detail="No entry of yours has that id.")
+        raw = await file.read()
+        try:
+            photo_path = save_photo(settings.data_dir, owner, entry_id, raw)
+        except PhotoError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        get_ledger().set_photo(owner, entry_id, photo_path)
+        return {"saved": True}
+
+    @app.get("/api/log/{entry_id}/photo")
+    def read_photo(
+        entry_id: str,
+        owner: str = Depends(owner_of),
+        _: None = Depends(require_access),
+    ) -> FileResponse:
+        from markai.web.photos import photo_file
+
+        log = owner_log(owner)
+        entry = log.get(entry_id) if log else None
+        if entry is None or not entry.photo_path:
+            raise HTTPException(status_code=404, detail="No photo on that entry.")
+        path = photo_file(settings.data_dir, entry.photo_path)
+        if path is None:
+            raise HTTPException(status_code=404, detail="That photo is gone.")
+        return FileResponse(path, media_type="image/jpeg")
+
     @app.get("/api/maintenance")
     def read_maintenance(
         owner: str = Depends(owner_of), _: None = Depends(require_access)
     ) -> dict[str, Any]:
-        """Open maintenance issues only, worst-first - the same log_entries rows the
-        generic log already holds, just the one view "what needs attention right now"
-        actually needs: an emergency first regardless of how recently it was reported."""
+        """Open maintenance issues worst-first, and recently completed ones alongside -
+        the same log_entries rows the generic log already holds, just the one view "what
+        needs attention, and what did we already deal with here" actually needs."""
         log = owner_log(owner)
-        items = log.open_maintenance() if log else []
-        return {"open": [item.to_dict() for item in items]}
+        open_items = log.open_maintenance() if log else []
+        history = log.maintenance_history() if log else []
+        return {
+            "open": [item.to_dict() for item in open_items],
+            "history": [item.to_dict() for item in history],
+        }
+
+    @app.post("/api/maintenance/{entry_id}/complete")
+    def complete_maintenance(
+        entry_id: str,
+        owner: str = Depends(owner_of),
+        _: None = Depends(require_access),
+    ) -> dict[str, Any]:
+        """Mark a maintenance issue done - and if it has a cost recorded, this also logs
+        a matching expense, so the money actually counts instead of sitting invisibly on a
+        row `totals()` never counts as spent."""
+        log = owner_log(owner)
+        result = log.complete_maintenance(entry_id) if log else None
+        if result is None:
+            raise HTTPException(
+                status_code=404, detail="No open maintenance entry of yours has that id."
+            )
+        return {"entry": result.to_dict()}
 
     @app.get("/api/properties")
     def properties(

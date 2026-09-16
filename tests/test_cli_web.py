@@ -2041,6 +2041,145 @@ def test_maintenance_route_is_gated_by_the_access_code(settings, store):
     assert client.get("/api/maintenance", headers={"X-Browser-Id": "b1"}).status_code == 401
 
 
+def test_maintenance_route_also_returns_completed_history(settings, store):
+    client = _client(settings, store)
+    headers = {"X-Browser-Id": "b1"}
+    entry = client.post(
+        "/api/log", json={"kind": "maintenance", "what": "Loose cabinet handle"}, headers=headers
+    ).json()["entry"]
+
+    client.post(f"/api/maintenance/{entry['id']}/complete", headers=headers)
+
+    data = client.get("/api/maintenance", headers=headers).json()
+    assert data["open"] == []
+    assert [item["what"] for item in data["history"]] == ["Loose cabinet handle"]
+
+
+def test_completing_a_priced_maintenance_issue_logs_a_matching_expense(settings, store):
+    client = _client(settings, store)
+    headers = {"X-Browser-Id": "b1"}
+    entry = client.post(
+        "/api/log",
+        json={
+            "kind": "maintenance",
+            "what": "New water heater",
+            "vendor": "ABC Plumbing",
+            "amount": "$900",
+        },
+        headers=headers,
+    ).json()["entry"]
+
+    done = client.post(f"/api/maintenance/{entry['id']}/complete", headers=headers)
+    assert done.status_code == 200
+    assert done.json()["entry"]["status"] == "done"
+
+    totals = client.get("/api/log", headers=headers).json()["totals"]
+    assert totals["out"] == 900, "the completed job's cost should now count as money out"
+
+
+def test_completing_a_missing_maintenance_entry_is_a_404(settings, store):
+    client = _client(settings, store)
+    headers = {"X-Browser-Id": "b1"}
+    assert client.post("/api/maintenance/nope/complete", headers=headers).status_code == 404
+
+
+def test_vendor_cost_can_be_filled_in_after_the_fact(settings, store):
+    client = _client(settings, store)
+    headers = {"X-Browser-Id": "b1"}
+    entry = client.post(
+        "/api/log", json={"kind": "maintenance", "what": "Leaky faucet"}, headers=headers
+    ).json()["entry"]
+
+    saved = client.post(
+        f"/api/log/{entry['id']}/vendor-cost",
+        json={"vendor": "Joe's Plumbing", "amount": "$150"},
+        headers=headers,
+    )
+    assert saved.json() == {"saved": True}
+
+    open_items = client.get("/api/maintenance", headers=headers).json()["open"]
+    assert open_items[0]["vendor"] == "Joe's Plumbing"
+    assert open_items[0]["amount"] == 150
+
+
+def test_vendor_cost_rejects_a_negative_amount(settings, store):
+    client = _client(settings, store)
+    headers = {"X-Browser-Id": "b1"}
+    entry = client.post(
+        "/api/log", json={"kind": "maintenance", "what": "Leaky faucet"}, headers=headers
+    ).json()["entry"]
+    bad = client.post(
+        f"/api/log/{entry['id']}/vendor-cost",
+        json={"vendor": "Joe's Plumbing", "amount": "-50"},
+        headers=headers,
+    )
+    assert bad.status_code == 400
+
+
+def _jpeg_bytes() -> bytes:
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (40, 40), (10, 20, 30)).save(buf, format="JPEG")
+    return buf.getvalue()
+
+
+def test_a_photo_can_be_uploaded_and_read_back(settings, store):
+    client = _client(settings, store)
+    headers = {"X-Browser-Id": "b1"}
+    entry = client.post(
+        "/api/log", json={"kind": "maintenance", "what": "New water heater"}, headers=headers
+    ).json()["entry"]
+
+    uploaded = client.post(
+        f"/api/log/{entry['id']}/photo",
+        headers=headers,
+        files={"file": ("job.jpg", _jpeg_bytes(), "image/jpeg")},
+    )
+    assert uploaded.status_code == 200
+    assert uploaded.json() == {"saved": True}
+
+    listed = client.get("/api/maintenance", headers=headers).json()["open"]
+    assert listed[0]["has_photo"] is True
+
+    photo = client.get(f"/api/log/{entry['id']}/photo", headers=headers)
+    assert photo.status_code == 200
+    assert photo.headers["content-type"] == "image/jpeg"
+
+
+def test_a_photo_upload_rejects_a_non_image(settings, store):
+    client = _client(settings, store)
+    headers = {"X-Browser-Id": "b1"}
+    entry = client.post(
+        "/api/log", json={"kind": "maintenance", "what": "New water heater"}, headers=headers
+    ).json()["entry"]
+    bad = client.post(
+        f"/api/log/{entry['id']}/photo",
+        headers=headers,
+        files={"file": ("job.txt", b"not a photo", "text/plain")},
+    )
+    assert bad.status_code == 400
+
+
+def test_one_owners_photo_is_invisible_to_another(settings, store):
+    client = _client(settings, store)
+    entry = client.post(
+        "/api/log",
+        json={"kind": "maintenance", "what": "New water heater"},
+        headers={"X-Browser-Id": "b1"},
+    ).json()["entry"]
+    client.post(
+        f"/api/log/{entry['id']}/photo",
+        headers={"X-Browser-Id": "b1"},
+        files={"file": ("job.jpg", _jpeg_bytes(), "image/jpeg")},
+    )
+
+    other = client.get(f"/api/log/{entry['id']}/photo", headers={"X-Browser-Id": "b2"})
+    assert other.status_code == 404
+
+
 def test_the_handoff_carries_what_is_still_open(settings, store):
     client = _client(settings, store, FakeAdvisor("Call a plumber."))
     headers = {"X-Browser-Id": "b1"}

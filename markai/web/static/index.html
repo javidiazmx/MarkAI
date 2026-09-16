@@ -123,17 +123,20 @@
     line-height: 1.25;
   }
   .start p { margin: 0 0 20px; color: var(--muted); font-size: var(--text-md); max-width: 52ch; line-height: 1.6; }
-  /* A first-time visitor cannot yet know the sidebar exists. This says the full capability
-     surface up front instead of leaving it to be discovered by accident - a labeled tag
-     per capability, not chips or buttons (that was tried and looked like a row of
-     unfinished starter-question buttons, not a feature list), so it reads as "here is what
-     this does" rather than "click one of these". */
+  /* A first-time visitor cannot yet know the sidebar exists - this is the shortcut. Styled
+     as a pill either way, so it has to actually be a button: a label that looks clickable
+     but isn't is worse than either a plain sentence or a real shortcut. */
   .start-caps {
     display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 20px; padding: 0; list-style: none;
   }
-  .start-caps li {
+  .start-caps li { display: contents; }
+  .start-caps button {
     border: 1px solid var(--line); border-radius: 999px; padding: 5px 14px;
     font-size: 12.5px; font-weight: 600; color: var(--ink); background: var(--panel);
+    cursor: pointer;
+  }
+  .start-caps button:hover, .start-caps button:focus-visible {
+    border-color: var(--accent); color: var(--accent);
   }
   footer {
     position: fixed; bottom: 0; left: 0; right: 0; background: var(--panel);
@@ -398,8 +401,10 @@
   .notice-escalation { margin: 4px 0 0; font-size: 13px; }
 
   /* Maintenance Tracker - a focused view over the same log_entries the sidebar's "What's
-     going on" panel already writes, not a second store. */
-  .maintenance-card { max-width: 30rem; width: 100%; }
+     going on" panel already writes, not a second store. Widened past every other modal in
+     this file (30-34rem) because it now holds a form plus a scrolling, tabbed list, not
+     just a form. */
+  .maintenance-card { max-width: 40rem; width: 100%; }
   #maintenance-form { display: grid; gap: 8px; margin-bottom: 4px; }
   #maintenance-form input {
     width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px;
@@ -415,7 +420,12 @@
     width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px;
     background: var(--bg); color: var(--ink); font: inherit; font-size: 13px;
   }
-  #maintenance-results { margin-top: 6px; }
+  /* Open vs. history - marking something done used to make it vanish with no way to answer
+     "what did we already deal with here?" short of digging through the generic log. */
+  .maintenance-tabs { display: flex; gap: 6px; margin: 12px 0 2px; }
+  .maintenance-tabs button { flex: 1; padding: 6px 10px; font-size: 12.5px; font-weight: 600; }
+  .maintenance-tabs button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+  #maintenance-results { margin-top: 6px; max-height: 46vh; overflow-y: auto; }
   .maintenance-item { padding: 10px 2px; border-top: 1px solid var(--line); }
   .maintenance-item:first-child { border-top: 0; }
   .maintenance-what { font-size: 14px; line-height: 1.4; margin: 4px 0 2px; }
@@ -424,7 +434,19 @@
      in this app uses - this only tightens the size for an inline row action. A bare
      button element defaults to solid-accent-background-plus-white-text, which is exactly
      backwards for something meant to sit quietly in a list. */
-  .maintenance-done { padding: 3px 9px; font-size: 12px; border-radius: 6px; margin-top: 6px; }
+  .maintenance-done, .maintenance-inline-toggle, .maintenance-photo-btn {
+    padding: 3px 9px; font-size: 12px; border-radius: 6px; margin-top: 6px;
+  }
+  .maintenance-row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  .maintenance-inline { display: flex; gap: 6px; margin-top: 6px; }
+  .maintenance-inline input {
+    flex: 1; min-width: 0; padding: 6px 8px; border: 1px solid var(--line); border-radius: 7px;
+    background: var(--bg); color: var(--ink); font: inherit; font-size: 12.5px;
+  }
+  .maintenance-photo {
+    display: block; max-width: 100%; margin-top: 8px; border-radius: 8px;
+    border: 1px solid var(--line);
+  }
 
   /* A nudge is a reminder, not an alert - calm, dismissible, gone for good once dismissed. */
   #nudges { max-width: 780px; margin: 0 auto; }
@@ -787,8 +809,22 @@
           <select id="maintenance-prop" title="Which building"></select>
         </div>
       </div>
+      <div class="pair">
+        <div class="field">
+          <label for="maintenance-vendor">Vendor</label>
+          <input id="maintenance-vendor" type="text" maxlength="80" placeholder="Who's doing the work (optional)" />
+        </div>
+        <div class="field">
+          <label for="maintenance-cost">Cost</label>
+          <input id="maintenance-cost" type="text" maxlength="12" inputmode="decimal" placeholder="$ (optional)" />
+        </div>
+      </div>
       <button type="submit" id="maintenance-save">Log it</button>
     </form>
+    <div class="maintenance-tabs" role="tablist">
+      <button type="button" id="maintenance-tab-open" role="tab" aria-pressed="true">Open</button>
+      <button type="button" id="maintenance-tab-history" role="tab" aria-pressed="false">History</button>
+    </div>
     <div id="maintenance-results"></div>
   </div>
 </div>
@@ -837,10 +873,10 @@
   <p>Built specifically for Chicagoland landlords - not a general chatbot. If I don't know
      something, I'll say so. Pregunta en español si prefieres.</p>
   <ul class="start-caps">
-    <li>Ask a question</li>
-    <li>Run the numbers</li>
-    <li>Track a property</li>
-    <li>Check your notice</li>
+    <li><button type="button" id="start-ask">Ask a question</button></li>
+    <li><button type="button" id="start-numbers">Run the numbers</button></li>
+    <li><button type="button" id="start-property">Track a property</button></li>
+    <li><button type="button" id="start-notice">Which notice do I need?</button></li>
   </ul>
 </section>
 <div id="log"></div>
@@ -2116,11 +2152,127 @@
   var maintenanceForm = document.getElementById("maintenance-form");
   var maintenanceWhat = document.getElementById("maintenance-what");
   var maintenanceUrgency = document.getElementById("maintenance-urgency");
+  var maintenanceVendor = document.getElementById("maintenance-vendor");
+  var maintenanceCost = document.getElementById("maintenance-cost");
   var maintenanceResults = document.getElementById("maintenance-results");
+  var maintenanceTabOpen = document.getElementById("maintenance-tab-open");
+  var maintenanceTabHistory = document.getElementById("maintenance-tab-history");
+  // "open" or "history" - which half of the same fetch is currently on screen.
+  var maintenanceView = "open";
+  var maintenanceOpenItems = [];
+  var maintenanceHistoryItems = [];
 
   var URGENCY_LABELS = { emergency: "Emergency", urgent: "Urgent", routine: "Routine" };
 
-  function maintenanceItemRow(item) {
+  function maintenanceDateFromSeconds(seconds) {
+    if (!seconds) return "";
+    try { return new Date(seconds * 1000).toLocaleDateString(); } catch (error) { return ""; }
+  }
+
+  // The photo route is cookie/header-gated like every other endpoint on this page, so a
+  // bare <img src="..."> would ask anonymously and get a 401/404 - fetched as this browser
+  // instead, and handed to the <img> as a blob URL once it actually arrives.
+  function maintenancePhotoImg(itemId) {
+    var img = el("img", "maintenance-photo");
+    img.alt = "Photo attached to this job";
+    fetch("/api/log/" + encodeURIComponent(itemId) + "/photo", { headers: headers() })
+      .then(function (response) {
+        if (!response.ok) throw new Error("no photo");
+        return response.blob();
+      })
+      .then(function (blob) { img.src = URL.createObjectURL(blob); })
+      .catch(function () { img.remove(); });
+    return img;
+  }
+
+  function maintenancePhotoUpload(item, container) {
+    var wrap = el("div", "maintenance-inline");
+    var input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/*";
+    var btn = el("button", "ghost maintenance-photo-btn", "Add photo");
+    btn.type = "button";
+    btn.addEventListener("click", async function () {
+      var file = input.files && input.files[0];
+      if (!file) { toast("Choose a photo first.", "error"); return; }
+      btn.disabled = true;
+      var body = new FormData();
+      body.append("file", file);
+      try {
+        var fetchHeaders = headers();
+        delete fetchHeaders["Content-Type"];  // the browser sets its own multipart boundary
+        var response = await fetch("/api/log/" + encodeURIComponent(item.id) + "/photo", {
+          method: "POST", headers: fetchHeaders, body: body
+        });
+        if (!response.ok) {
+          var detail = "Could not save that photo.";
+          try { detail = (await response.json()).detail || detail; } catch (parseError) {}
+          toast(detail, "error");
+          return;
+        }
+        toast("Photo saved.", "success");
+        loadMaintenance();
+      } catch (error) {
+        toast("Could not save that photo.", "error");
+      } finally {
+        btn.disabled = false;
+      }
+    });
+    wrap.appendChild(input);
+    wrap.appendChild(btn);
+    container.appendChild(wrap);
+  }
+
+  // Vendor and cost are rarely both known the moment an issue is first reported - this
+  // lets either be filled in later, on an item that was logged without them.
+  function maintenanceVendorCostEditor(item, container) {
+    var toggle = el("button", "ghost maintenance-inline-toggle", "+ Add vendor & cost");
+    toggle.type = "button";
+    var wrap = el("div", "maintenance-inline");
+    wrap.hidden = true;
+    var vendorInput = document.createElement("input");
+    vendorInput.type = "text"; vendorInput.maxLength = 80; vendorInput.placeholder = "Vendor";
+    var costInput = document.createElement("input");
+    costInput.type = "text"; costInput.maxLength = 12; costInput.inputMode = "decimal";
+    costInput.placeholder = "$";
+    var saveBtn = el("button", "ghost maintenance-photo-btn", "Save");
+    saveBtn.type = "button";
+    toggle.addEventListener("click", function () {
+      wrap.hidden = !wrap.hidden;
+      if (!wrap.hidden) vendorInput.focus();
+    });
+    saveBtn.addEventListener("click", async function () {
+      saveBtn.disabled = true;
+      try {
+        var response = await fetch(
+          "/api/log/" + encodeURIComponent(item.id) + "/vendor-cost",
+          {
+            method: "POST", headers: headers(),
+            body: JSON.stringify({ vendor: vendorInput.value, amount: costInput.value })
+          }
+        );
+        if (!response.ok) {
+          var detail = "Could not save that.";
+          try { detail = (await response.json()).detail || detail; } catch (parseError) {}
+          toast(detail, "error");
+          return;
+        }
+        toast("Saved.", "success");
+        loadMaintenance();
+      } catch (error) {
+        toast("Could not save that.", "error");
+      } finally {
+        saveBtn.disabled = false;
+      }
+    });
+    wrap.appendChild(vendorInput);
+    wrap.appendChild(costInput);
+    wrap.appendChild(saveBtn);
+    container.appendChild(toggle);
+    container.appendChild(wrap);
+  }
+
+  function maintenanceOpenRow(item) {
     var row = el("div", "maintenance-item");
     var urgency = item.urgency || "routine";
     row.appendChild(el("span", "badge badge-" + urgency, URGENCY_LABELS[urgency] || "Routine"));
@@ -2129,31 +2281,80 @@
     var metaBits = [];
     if (item.happened_on) metaBits.push("since " + item.happened_on);
     if (item.vendor) metaBits.push(item.vendor);
+    if (item.amount) metaBits.push(money(item.amount));
     if (metaBits.length) row.appendChild(el("div", "maintenance-meta", metaBits.join(" · ")));
+
+    var actions = el("div", "maintenance-row-actions");
     var doneBtn = el("button", "ghost maintenance-done", "Mark done");
     doneBtn.type = "button";
     doneBtn.addEventListener("click", async function () {
       doneBtn.disabled = true;
       try {
-        await fetch("/api/log/" + encodeURIComponent(item.id) + "/done", {
-          method: "POST", headers: headers()
-        });
-      } catch (error) { /* the panel just refreshes to whatever the server still has */ }
+        var response = await fetch(
+          "/api/maintenance/" + encodeURIComponent(item.id) + "/complete",
+          { method: "POST", headers: headers() }
+        );
+        if (response.ok) {
+          var data = await response.json();
+          var completed = data && data.entry;
+          if (completed && completed.amount) {
+            toast(
+              "Marked done - logged a " + money(completed.amount) + " expense" +
+                (completed.vendor ? " for " + completed.vendor : "") + ".",
+              "success"
+            );
+          } else {
+            toast("Marked done.", "success");
+          }
+        } else {
+          toast("Could not mark that done.", "error");
+        }
+      } catch (error) {
+        toast("Could not mark that done.", "error");
+      }
+      doneBtn.disabled = false;
       loadMaintenance();
       refreshLog();
     });
-    row.appendChild(doneBtn);
+    actions.appendChild(doneBtn);
+    row.appendChild(actions);
+
+    if (!item.vendor && !item.amount) maintenanceVendorCostEditor(item, row);
     return row;
   }
 
-  function drawMaintenance(items) {
+  function maintenanceHistoryRow(item) {
+    var row = el("div", "maintenance-item");
+    if (item.property_label) row.appendChild(el("span", "badge", item.property_label));
+    row.appendChild(el("div", "maintenance-what", item.what || ""));
+    var metaBits = [];
+    var closedLabel = maintenanceDateFromSeconds(item.closed_at);
+    if (closedLabel) metaBits.push("done " + closedLabel);
+    else if (item.happened_on) metaBits.push("since " + item.happened_on);
+    if (item.vendor) metaBits.push(item.vendor);
+    if (item.amount) metaBits.push(money(item.amount));
+    if (metaBits.length) row.appendChild(el("div", "maintenance-meta", metaBits.join(" · ")));
+
+    if (item.has_photo) {
+      row.appendChild(maintenancePhotoImg(item.id));
+    } else {
+      maintenancePhotoUpload(item, row);
+    }
+    return row;
+  }
+
+  function drawMaintenance() {
     maintenanceResults.textContent = "";
+    var items = maintenanceView === "open" ? maintenanceOpenItems : maintenanceHistoryItems;
     if (!items.length) {
       maintenanceResults.appendChild(el("div", "side-empty",
-        "Nothing open. Log an issue above as soon as one comes up."));
+        maintenanceView === "open"
+          ? "Nothing open. Log an issue above as soon as one comes up."
+          : "Nothing completed yet - marking an issue done moves it here."));
       return;
     }
-    items.forEach(function (item) { maintenanceResults.appendChild(maintenanceItemRow(item)); });
+    var rowFn = maintenanceView === "open" ? maintenanceOpenRow : maintenanceHistoryRow;
+    items.forEach(function (item) { maintenanceResults.appendChild(rowFn(item)); });
   }
 
   async function loadMaintenance() {
@@ -2161,16 +2362,28 @@
     try {
       var response = await fetch("/api/maintenance", { headers: headers() });
       var data = await response.json();
-      drawMaintenance((data && data.open) || []);
+      maintenanceOpenItems = (data && data.open) || [];
+      maintenanceHistoryItems = (data && data.history) || [];
+      drawMaintenance();
     } catch (error) {
       maintenanceResults.textContent = "";
       maintenanceResults.appendChild(el("div", "danger-text", "Could not load your open issues."));
     }
   }
 
+  function setMaintenanceView(view) {
+    maintenanceView = view;
+    maintenanceTabOpen.setAttribute("aria-pressed", String(view === "open"));
+    maintenanceTabHistory.setAttribute("aria-pressed", String(view === "history"));
+    drawMaintenance();
+  }
+  maintenanceTabOpen.addEventListener("click", function () { setMaintenanceView("open"); });
+  maintenanceTabHistory.addEventListener("click", function () { setMaintenanceView("history"); });
+
   document.getElementById("open-maintenance").addEventListener("click", function () {
     maintenanceCard.hidden = false;
     closeSide();
+    setMaintenanceView("open");
     loadMaintenance();
   });
   document.getElementById("maintenance-close").addEventListener("click", function () {
@@ -2186,7 +2399,9 @@
       what: maintenanceWhat.value,
       kind: "maintenance",
       urgency: maintenanceUrgency.value,
-      property_id: maintenanceProp.value
+      property_id: maintenanceProp.value,
+      vendor: maintenanceVendor.value,
+      amount: maintenanceCost.value
     };
     // Same reason as the property and log forms' save buttons: a double-click here would
     // log the same issue twice, worse for a real emergency someone is re-clicking in a hurry.
@@ -2209,6 +2424,9 @@
     }
     maintenanceWhat.value = "";
     maintenanceUrgency.value = "routine";
+    maintenanceVendor.value = "";
+    maintenanceCost.value = "";
+    setMaintenanceView("open");
     loadMaintenance();
     refreshLog();
   });
@@ -2969,6 +3187,22 @@
     });
     return items;
   }
+
+  // The empty-state shortcuts - styled as pills, so they had to actually work as buttons
+  // rather than just describe what the app can do. Same destinations the command palette
+  // already offers, just one click away before a first-time visitor even knows it exists.
+  document.getElementById("start-ask").addEventListener("click", function () { box.focus(); });
+  document.getElementById("start-numbers").addEventListener("click", function () {
+    document.getElementById("open-deal").click();
+  });
+  document.getElementById("start-property").addEventListener("click", function () {
+    side.classList.add("open");
+    var propsSection = document.getElementById("props");
+    if (propsSection.scrollIntoView) propsSection.scrollIntoView({ block: "center" });
+  });
+  document.getElementById("start-notice").addEventListener("click", function () {
+    document.getElementById("open-notice-wizard").click();
+  });
 
   function renderPalette(query) {
     var needle = query.trim().toLowerCase();
