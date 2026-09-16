@@ -100,6 +100,11 @@
   .badge-website { background: #2f6f4f; color: #fff; }
   .badge-youtube { background: #b23b3b; color: #fff; }
   .badge-podcast { background: #7a4fb2; color: #fff; }
+  /* Maintenance urgency, same at-a-glance idea: an emergency must never look like routine
+     upkeep waiting its turn. */
+  .badge-emergency { background: var(--danger-bg); color: var(--danger); }
+  .badge-urgent { background: var(--warn-bg); color: var(--warn-ink); }
+  .badge-routine { background: var(--user); color: var(--muted); }
   .meta { color: var(--muted); font-size: 12px; margin-top: 6px; }
   .free-counter { color: var(--muted); font-size: 12px; padding: 4px 2px 0; }
   /* A client-side file rule ("too big", "too many") is not Jay saying anything - it never
@@ -385,6 +390,35 @@
   .notice-source { margin-top: 5px; font-size: 12.5px; color: var(--muted); line-height: 1.5; }
   .notice-escalation { margin: 4px 0 0; font-size: 13px; }
 
+  /* Maintenance Tracker - a focused view over the same log_entries the sidebar's "What's
+     going on" panel already writes, not a second store. */
+  .maintenance-card { max-width: 30rem; width: 100%; }
+  #maintenance-form { display: grid; gap: 8px; margin-bottom: 4px; }
+  #maintenance-form input {
+    width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px;
+    background: var(--bg); color: var(--ink); font: inherit; font-size: 13px;
+  }
+  #maintenance-form .pair { display: flex; gap: 6px; }
+  #maintenance-form .field { display: grid; gap: 4px; flex: 1; min-width: 0; }
+  #maintenance-form .field label {
+    font-size: 11px; color: var(--muted); font-weight: 600;
+    text-transform: uppercase; letter-spacing: .02em;
+  }
+  #maintenance-form select {
+    width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px;
+    background: var(--bg); color: var(--ink); font: inherit; font-size: 13px;
+  }
+  #maintenance-results { margin-top: 6px; }
+  .maintenance-item { padding: 10px 2px; border-top: 1px solid var(--line); }
+  .maintenance-item:first-child { border-top: 0; }
+  .maintenance-what { font-size: 14px; line-height: 1.4; margin: 4px 0 2px; }
+  .maintenance-meta { color: var(--muted); font-size: 12px; }
+  /* .ghost already gives the transparent/bordered/muted-text look every secondary button
+     in this app uses - this only tightens the size for an inline row action. A bare
+     button element defaults to solid-accent-background-plus-white-text, which is exactly
+     backwards for something meant to sit quietly in a list. */
+  .maintenance-done { padding: 3px 9px; font-size: 12px; border-radius: 6px; margin-top: 6px; }
+
   /* A nudge is a reminder, not an alert - calm, dismissible, gone for good once dismissed. */
   #nudges { max-width: 780px; margin: 0 auto; }
   .nudge-card {
@@ -505,6 +539,7 @@
     <div class="side-head"><h3>Tools</h3></div>
     <button class="ghost" id="open-deal" type="button">Deal Analyzer</button>
     <button class="ghost" id="open-notice-wizard" type="button">Which notice do I need?</button>
+    <button class="ghost" id="open-maintenance" type="button">Maintenance Tracker</button>
     <button class="ghost" id="handoff" type="button">Hand this to a property manager</button>
     <div class="whoami" id="whoami" hidden>
       <span id="whoami-name"></span>
@@ -716,6 +751,38 @@
     <p class="notice-escalation" id="notice-escalation" hidden>
       <a class="link" id="notice-escalation-link" target="_blank" rel="noopener noreferrer"></a>
     </p>
+  </div>
+</div>
+
+<div class="scrim" id="maintenance-card" hidden>
+  <div class="card maintenance-card">
+    <div class="deal-head">
+      <h2>Maintenance Tracker</h2>
+      <button class="ghost" id="maintenance-close" type="button" title="Close" aria-label="Close">✕</button>
+    </div>
+    <p class="deal-sub">Open issues across your properties, worst first. Log one in a few
+      words - nothing here diagnoses the repair or replaces a licensed contractor.</p>
+    <form id="maintenance-form">
+      <label class="vh" for="maintenance-what">What's broken?</label>
+      <input id="maintenance-what" type="text" maxlength="240"
+             placeholder="What's broken? e.g. No heat in unit 2" required />
+      <div class="pair">
+        <div class="field">
+          <label for="maintenance-urgency">Urgency</label>
+          <select id="maintenance-urgency">
+            <option value="routine">Routine</option>
+            <option value="urgent">Urgent</option>
+            <option value="emergency">Emergency</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="maintenance-prop">Building</label>
+          <select id="maintenance-prop" title="Which building"></select>
+        </div>
+      </div>
+      <button type="submit">Log it</button>
+    </form>
+    <div id="maintenance-results"></div>
   </div>
 </div>
 
@@ -1921,6 +1988,7 @@
   var logForm = document.getElementById("log-form");
   var logWhat = document.getElementById("log-what");
   var logProp = document.getElementById("log-prop");
+  var maintenanceProp = document.getElementById("maintenance-prop");
   var acctTeaser = document.getElementById("acct-teaser");
   var acctCard = document.getElementById("accounting-card");
   var acctProp = document.getElementById("acct-prop");
@@ -1938,7 +2006,7 @@
   };
 
   function drawPropPicker(items) {
-    [logProp, acctProp].forEach(function (select) {
+    [logProp, acctProp, maintenanceProp].forEach(function (select) {
       var chosen = select.value;
       select.textContent = "";
       var any = el("option", null, items.length ? "Whole portfolio" : "No buildings added yet");
@@ -2014,6 +2082,103 @@
     }
     clearLogForm();
     logForm.hidden = true;
+    refreshLog();
+  });
+
+  // Maintenance Tracker - a focused view over the same log_entries the sidebar's "What's
+  // going on" panel already writes (kind=maintenance), not a second store: adding here and
+  // adding there land in the same place, and closing one closes it everywhere.
+  var maintenanceCard = document.getElementById("maintenance-card");
+  var maintenanceForm = document.getElementById("maintenance-form");
+  var maintenanceWhat = document.getElementById("maintenance-what");
+  var maintenanceUrgency = document.getElementById("maintenance-urgency");
+  var maintenanceResults = document.getElementById("maintenance-results");
+
+  var URGENCY_LABELS = { emergency: "Emergency", urgent: "Urgent", routine: "Routine" };
+
+  function maintenanceItemRow(item) {
+    var row = el("div", "maintenance-item");
+    var urgency = item.urgency || "routine";
+    row.appendChild(el("span", "badge badge-" + urgency, URGENCY_LABELS[urgency] || "Routine"));
+    if (item.property_label) row.appendChild(el("span", "badge", item.property_label));
+    row.appendChild(el("div", "maintenance-what", item.what || ""));
+    var metaBits = [];
+    if (item.happened_on) metaBits.push("since " + item.happened_on);
+    if (item.vendor) metaBits.push(item.vendor);
+    if (metaBits.length) row.appendChild(el("div", "maintenance-meta", metaBits.join(" · ")));
+    var doneBtn = el("button", "ghost maintenance-done", "Mark done");
+    doneBtn.type = "button";
+    doneBtn.addEventListener("click", async function () {
+      doneBtn.disabled = true;
+      try {
+        await fetch("/api/log/" + encodeURIComponent(item.id) + "/done", {
+          method: "POST", headers: headers()
+        });
+      } catch (error) { /* the panel just refreshes to whatever the server still has */ }
+      loadMaintenance();
+      refreshLog();
+    });
+    row.appendChild(doneBtn);
+    return row;
+  }
+
+  function drawMaintenance(items) {
+    maintenanceResults.textContent = "";
+    if (!items.length) {
+      maintenanceResults.appendChild(el("div", "side-empty",
+        "Nothing open. Log an issue above as soon as one comes up."));
+      return;
+    }
+    items.forEach(function (item) { maintenanceResults.appendChild(maintenanceItemRow(item)); });
+  }
+
+  async function loadMaintenance() {
+    skeletonRows(maintenanceResults, 2);
+    try {
+      var response = await fetch("/api/maintenance", { headers: headers() });
+      var data = await response.json();
+      drawMaintenance((data && data.open) || []);
+    } catch (error) {
+      maintenanceResults.textContent = "";
+      maintenanceResults.appendChild(el("div", "danger-text", "Could not load your open issues."));
+    }
+  }
+
+  document.getElementById("open-maintenance").addEventListener("click", function () {
+    maintenanceCard.hidden = false;
+    closeSide();
+    loadMaintenance();
+  });
+  document.getElementById("maintenance-close").addEventListener("click", function () {
+    maintenanceCard.hidden = true;
+  });
+
+  maintenanceForm.addEventListener("submit", async function (event) {
+    event.preventDefault();
+    if (!maintenanceWhat.value.trim()) { maintenanceWhat.focus(); return; }
+    var fields = {
+      what: maintenanceWhat.value,
+      kind: "maintenance",
+      urgency: maintenanceUrgency.value,
+      property_id: maintenanceProp.value
+    };
+    try {
+      var response = await fetch("/api/log", {
+        method: "POST", headers: headers(), body: JSON.stringify(fields)
+      });
+      if (!response.ok) {
+        var detail = "Could not save that.";
+        try { detail = (await response.json()).detail || detail; } catch (e) {}
+        note(detail);
+        return;
+      }
+    } catch (error) {
+      note("Could not save that: " + error);
+      return;
+    }
+    maintenanceWhat.value = "";
+    maintenanceUrgency.value = "routine";
+    loadMaintenance();
     refreshLog();
   });
 
@@ -2112,6 +2277,10 @@
   function refreshLog() {
     loadLog();
     if (!acctCard.hidden) loadAccounting();
+    // Same log_entries table as the Maintenance Tracker modal - closing an item from the
+    // sidebar panel, or Jay logging one in chat, must not leave that modal showing a stale
+    // list if it happens to be open at the same time.
+    if (!maintenanceCard.hidden) loadMaintenance();
   }
 
   function drawSummary(totals) {
@@ -2747,6 +2916,9 @@
         } },
       { label: "Open Notice Wizard", run: function () {
           document.getElementById("open-notice-wizard").click();
+        } },
+      { label: "Open Maintenance Tracker", run: function () {
+          document.getElementById("open-maintenance").click();
         } },
       { label: "Open your properties", run: function () {
           side.classList.add("open");

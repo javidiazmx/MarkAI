@@ -262,6 +262,99 @@ def test_the_bound_log_reads_back_with_the_building_named(ledger):
     assert item.property_label == "2145 W Division"
 
 
+# --- maintenance urgency --------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("emergency", "emergency"),
+        ("URGENT", "urgent"),
+        ("routine", "routine"),
+        ("", ""),
+        ("asap", ""),
+    ],
+)
+def test_urgency_is_a_closed_list_anything_else_is_unset(raw, expected):
+    entry = parse({"kind": "maintenance", "what": "Leak", "urgency": raw})
+    assert entry.urgency == expected
+
+
+def test_open_maintenance_sorts_emergency_first_regardless_of_age(ledger):
+    log = _owner_log(ledger)
+    log.add(
+        {
+            "kind": "maintenance",
+            "what": "Loose cabinet handle",
+            "urgency": "routine",
+            "date": "2026-01-01",
+        }
+    )
+    log.add({"kind": "maintenance", "what": "Gas smell in unit 3", "urgency": "emergency"})
+    items = log.open_maintenance()
+    assert [i.what for i in items] == ["Gas smell in unit 3", "Loose cabinet handle"], (
+        "a five-minute-old emergency must outrank a week-old routine issue"
+    )
+
+
+def test_open_maintenance_excludes_other_kinds_and_closed_items(ledger):
+    log = _owner_log(ledger)
+    log.add({"kind": "expense", "what": "New sign", "urgency": "emergency"})
+    saved = log.add({"kind": "maintenance", "what": "Broken window", "urgency": "urgent"})
+    log.add({"kind": "maintenance", "what": "Already fixed faucet", "status": "done"})
+    ledger.close(OWNER, saved.id)
+    assert log.open_maintenance() == []
+
+
+def test_a_database_with_no_urgency_column_is_migrated(tmp_path):
+    """The shape this table shipped in before urgency was added."""
+    import sqlite3
+
+    path = tmp_path / "ledger.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        "CREATE TABLE log_entries (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL,"
+        " property_id TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL, what TEXT NOT NULL,"
+        " amount REAL, vendor TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '',"
+        " happened_on TEXT NOT NULL DEFAULT '', created_at REAL NOT NULL);"
+    )
+    conn.execute(
+        "INSERT INTO log_entries (id, owner_id, kind, what, status, created_at)"
+        " VALUES (?, ?, ?, ?, ?, ?)",
+        ("e1", OWNER, "maintenance", "Old row from before urgency existed", "open", 0.0),
+    )
+    conn.commit()
+    conn.close()
+
+    store = Ledger(path)
+    (entry,) = store.open_items(OWNER)
+    assert entry.urgency == ""
+    store.close_db()
+
+
+def test_the_tool_sets_urgency_on_a_maintenance_issue(ledger):
+    log = _owner_log(ledger)
+    result = run_log_tool(
+        log,
+        {
+            "action": "add",
+            "kind": "maintenance",
+            "what": "Gas smell in the basement",
+            "amount": 0,
+            "vendor": "",
+            "date": "",
+            "property": "",
+            "status": "",
+            "urgency": "emergency",
+            "search": "",
+            "since_days": 0,
+            "entry_id": "",
+        },
+    )
+    assert result["saved"]["urgency"] == "emergency"
+    assert "emergency" in result["reads_back_as"]
+
+
 # --- the tool ------------------------------------------------------------------------------
 
 
@@ -394,6 +487,26 @@ def test_the_standing_block_carries_the_open_items_and_the_last_few():
     assert 'days_ago="8"' in block
     assert 'amount="8000.00"' in block
     assert 'property="2145 W Division"' in block
+
+
+def test_urgency_reaches_the_standing_block_so_jay_can_tell_the_two_apart():
+    """Without this, an open emergency and a loose cabinet handle read identically in the
+    one place Jay can mention an open issue unprompted, before ever calling the tool."""
+    entry = Entry(
+        id="e1",
+        kind="maintenance",
+        what="Gas smell in unit 3",
+        status="open",
+        urgency="emergency",
+    )
+    block = build_log_block([entry], [entry], total=1, today=TODAY)
+    assert 'urgency="emergency"' in block
+
+
+def test_a_routine_or_unset_urgency_is_left_out_of_the_standing_block():
+    entry = Entry(id="e1", kind="expense", what="New sign", status="")
+    block = build_log_block([entry], [], total=1, today=TODAY)
+    assert "urgency=" not in block
 
 
 def test_the_standing_block_is_nothing_when_the_log_is_empty():

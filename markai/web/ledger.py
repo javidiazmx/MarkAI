@@ -73,6 +73,12 @@ SYNONYMS = {
 OPEN = "open"
 DONE = "done"
 
+# Only meaningful on a "maintenance" row - Pablo Gonzalez's episode on AI maintenance
+# coordination (the podcast content that flagged this whole gap) put it exactly this way:
+# a landlord's first job on a new issue is telling a leaking faucet from a gas smell.
+# "" means not set, which is every other kind and any maintenance row logged before this.
+URGENCY = ("routine", "urgent", "emergency")
+
 MAX_WHAT_CHARS = 240
 MAX_VENDOR_CHARS = 80
 MAX_AMOUNT = 10_000_000
@@ -205,6 +211,7 @@ class Entry:
     happened_on: str = ""
     property_id: str = ""
     property_label: str = ""
+    urgency: str = ""
     created_at: float = 0.0
 
     def money(self) -> str:
@@ -221,6 +228,7 @@ class Entry:
             "happened_on": self.happened_on,
             "property_id": self.property_id,
             "property_label": self.property_label,
+            "urgency": self.urgency,
         }
 
     def one_line(self) -> str:
@@ -232,6 +240,8 @@ class Entry:
             bits.append(self.vendor)
         if self.property_label:
             bits.append(self.property_label)
+        if self.urgency and self.urgency != "routine":
+            bits.append(self.urgency)
         if self.status == OPEN:
             bits.append("still open")
         return " · ".join(bit for bit in bits if bit)
@@ -250,6 +260,9 @@ def parse(raw: dict[str, Any], today: date | None = None) -> Entry:
         # An issue is open until somebody says it is not. That default is the whole reason
         # a landlord can ask "what is still outstanding at the Berwyn place?".
         status = OPEN
+    urgency = str(raw.get("urgency", "") or "").strip().lower()
+    if urgency not in URGENCY:
+        urgency = ""
     return Entry(
         id=_clean(raw.get("id"), 64) or uuid.uuid4().hex,
         kind=kind,
@@ -259,6 +272,7 @@ def parse(raw: dict[str, Any], today: date | None = None) -> Entry:
         status=status,
         happened_on=parse_day(raw.get("date") or raw.get("happened_on"), today).isoformat(),
         property_id=_clean(raw.get("property_id"), 64),
+        urgency=urgency,
     )
 
 
@@ -304,7 +318,18 @@ class Ledger:
         self._conn = sqlite3.connect(self._path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(SCHEMA)
+        self._migrate()
         self._conn.commit()
+
+    def _migrate(self) -> None:
+        """Carry an older log_entries table forward - same ``ALTER TABLE ... ADD COLUMN``
+        move ``AdminStore._migrate`` already made for ``last_ip``/``notes``/``hidden``."""
+        columns = {row[1] for row in self._conn.execute("PRAGMA table_info(log_entries)")}
+        if "urgency" not in columns:
+            self._conn.execute(
+                "ALTER TABLE log_entries ADD COLUMN urgency TEXT NOT NULL DEFAULT ''"
+            )
+            self._conn.commit()
 
     # -- writing -------------------------------------------------------------------------
 
@@ -325,8 +350,8 @@ class Ledger:
                 )
             self._conn.execute(
                 "INSERT OR REPLACE INTO log_entries (id, owner_id, property_id, kind, what,"
-                " amount, vendor, status, happened_on, created_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " amount, vendor, status, happened_on, urgency, created_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     item.id,
                     owner_id,
@@ -337,6 +362,7 @@ class Ledger:
                     item.vendor,
                     item.status,
                     item.happened_on,
+                    item.urgency,
                     time.time(),
                 ),
             )
@@ -387,6 +413,7 @@ class Ledger:
                 status=row["status"],
                 happened_on=row["happened_on"],
                 property_id=row["property_id"],
+                urgency=row["urgency"] if "urgency" in row.keys() else "",
                 created_at=float(row["created_at"]),
             )
             for row in rows
@@ -445,6 +472,20 @@ class Ledger:
         return self._rows(
             "SELECT * FROM log_entries WHERE owner_id = ? AND status = ?"
             " ORDER BY happened_on ASC, created_at ASC LIMIT ?",
+            (owner_id, OPEN, max(1, min(limit, MAX_ENTRIES_PER_OWNER))),
+        )
+
+    def open_maintenance(self, owner_id: str, limit: int = DEFAULT_LIMIT) -> list[Entry]:
+        """Open maintenance issues, worst-first: an emergency logged five minutes ago still
+        outranks a routine one that has waited a week - the whole point of asking for
+        urgency at all is that "oldest first" is the wrong order for this one kind."""
+        if not owner_id:
+            return []
+        return self._rows(
+            "SELECT * FROM log_entries WHERE owner_id = ? AND kind = 'maintenance'"
+            " AND status = ? ORDER BY"
+            " CASE urgency WHEN 'emergency' THEN 0 WHEN 'urgent' THEN 1 ELSE 2 END,"
+            " happened_on ASC, created_at ASC LIMIT ?",
             (owner_id, OPEN, max(1, min(limit, MAX_ENTRIES_PER_OWNER))),
         )
 
@@ -572,6 +613,9 @@ class OwnerLog:
 
     def open_items(self, limit: int = 6) -> list[Entry]:
         return self._labelled(self._ledger.open_items(self._owner, limit=limit))
+
+    def open_maintenance(self, limit: int = DEFAULT_LIMIT) -> list[Entry]:
+        return self._labelled(self._ledger.open_maintenance(self._owner, limit=limit))
 
     def totals(self, property_name: str = "", since_days: int = 0) -> dict[str, float]:
         property_id, _ = self.property_id_for(property_name)

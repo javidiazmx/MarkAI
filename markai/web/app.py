@@ -104,6 +104,7 @@ class LogRequest(BaseModel):
     date: str = Field(default="", max_length=20)
     status: str = Field(default="", max_length=10)
     property_id: str = Field(default="", max_length=64)
+    urgency: str = Field(default="", max_length=10)
 
 
 class PmFitOverrideRequest(BaseModel):
@@ -1014,6 +1015,17 @@ def create_app(
     ) -> dict[str, Any]:
         """Deleting is a person's decision, which is why it is here and not a tool."""
         return {"deleted": get_ledger().delete(owner, entry_id)}
+
+    @app.get("/api/maintenance")
+    def read_maintenance(
+        owner: str = Depends(owner_of), _: None = Depends(require_access)
+    ) -> dict[str, Any]:
+        """Open maintenance issues only, worst-first - the same log_entries rows the
+        generic log already holds, just the one view "what needs attention right now"
+        actually needs: an emergency first regardless of how recently it was reported."""
+        log = owner_log(owner)
+        items = log.open_maintenance() if log else []
+        return {"open": [item.to_dict() for item in items]}
 
     @app.get("/api/properties")
     def properties(

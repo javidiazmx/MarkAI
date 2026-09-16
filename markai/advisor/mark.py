@@ -40,7 +40,7 @@ from markai.advisor.guardrails import (
     plain_punctuation,
     strip_disclaimer,
 )
-from markai.advisor.log_tool import LOG_TOOL, add_dedupe_key, run_log_tool
+from markai.advisor.log_tool import LOG_TOOL, add_dedupe_key, more_severe_urgency, run_log_tool
 from markai.advisor.prompt_builder import (
     build_business_block,
     build_citations,
@@ -455,6 +455,18 @@ class MarkAdvisor:
                     try:
                         if dedupe_key and dedupe_key in logged_adds:
                             result = logged_adds[dedupe_key]
+                            saved = result.get("saved") if isinstance(result, dict) else None
+                            new_urgency = tool_input.get("urgency")
+                            # Same event, but a second parallel call in this turn named it
+                            # more severe than the first - correct the row already written
+                            # rather than silently keeping the less urgent classification,
+                            # which for "emergency" is the one mistake this field exists to
+                            # avoid. Reuses the saved id so this replaces that row in place.
+                            if saved and more_severe_urgency(new_urgency, saved.get("urgency")):
+                                upgraded_input = dict(tool_input)
+                                upgraded_input["_entry_id"] = saved.get("id")
+                                result = run_log_tool(log, upgraded_input)
+                                logged_adds[dedupe_key] = result
                         elif name == EPISODE_TOOL["name"]:
                             result = run_episode_tool(self.retriever, tool_input)
                         elif name == LOG_TOOL["name"]:

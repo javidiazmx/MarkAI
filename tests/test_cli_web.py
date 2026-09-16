@@ -2012,6 +2012,35 @@ def test_an_open_item_can_be_closed_and_deleted(settings, store):
     assert client.get("/api/log", headers=headers).json()["entries"] == []
 
 
+def test_maintenance_route_returns_only_open_maintenance_worst_first(settings, store):
+    client = _client(settings, store)
+    headers = {"X-Browser-Id": "b1"}
+    client.post(
+        "/api/log", json={"kind": "expense", "what": "New sign", "amount": 200}, headers=headers
+    )
+    client.post(
+        "/api/log",
+        json={"kind": "maintenance", "what": "Loose cabinet handle", "urgency": "routine"},
+        headers=headers,
+    )
+    client.post(
+        "/api/log",
+        json={"kind": "maintenance", "what": "Gas smell in unit 3", "urgency": "emergency"},
+        headers=headers,
+    )
+    open_items = client.get("/api/maintenance", headers=headers).json()["open"]
+    assert [item["what"] for item in open_items] == [
+        "Gas smell in unit 3",
+        "Loose cabinet handle",
+    ]
+
+
+def test_maintenance_route_is_gated_by_the_access_code(settings, store):
+    settings = settings.model_copy(update={"web_access_code": "letmein"})
+    client = _client(settings, store)
+    assert client.get("/api/maintenance", headers={"X-Browser-Id": "b1"}).status_code == 401
+
+
 def test_the_handoff_carries_what_is_still_open(settings, store):
     client = _client(settings, store, FakeAdvisor("Call a plumber."))
     headers = {"X-Browser-Id": "b1"}
@@ -3060,6 +3089,31 @@ def test_notice_wizard_is_gated_by_the_access_code(settings, store):
 
 
 # --- the Deal Analyzer panel and conversation search (index.html) -------------------------
+
+
+def test_closing_or_adding_a_log_entry_anywhere_refreshes_the_maintenance_tracker_too():
+    """Marking an item done from the sidebar's generic log panel, or Jay logging one in
+    chat, must not leave an already-open Maintenance Tracker showing a stale list - both
+    panels read the same log_entries rows."""
+    from pathlib import Path
+
+    page = Path("markai/web/static/index.html").read_text(encoding="utf-8")
+    start = page.index("function refreshLog()")
+    end = page.index("\n  }", start)
+    body = page[start:end]
+    assert "loadMaintenance()" in body
+
+
+def test_the_page_has_a_maintenance_tracker_panel():
+    from pathlib import Path
+
+    page = Path("markai/web/static/index.html").read_text(encoding="utf-8")
+    assert 'id="open-maintenance"' in page
+    assert 'id="maintenance-card"' in page
+    assert 'id="maintenance-what"' in page and 'id="maintenance-urgency"' in page
+    assert "/api/maintenance" in page
+    assert "/api/log" in page, "adding must write to the same log the sidebar panel uses"
+    assert ".innerHTML" not in page.replace("never innerHTML", "")
 
 
 def test_the_page_has_a_deal_analyzer_panel():

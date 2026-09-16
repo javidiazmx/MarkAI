@@ -32,12 +32,18 @@ LOG_TOOL: dict[str, Any] = {
         "The user's own running log of what is happening at their properties: expenses, "
         "bills, rent received, maintenance issues, visits and notes. Use action 'add' when "
         "they tell you something happened or was paid or is broken, and confirm in your "
-        "answer what you wrote down. Use 'find' when they ask about anything they told you "
-        "before - what was paid, when somebody came out, what is still open, what happened "
-        "at a building. Use 'total' for how much they have spent or collected; never add "
-        "the money up yourself. Use 'close' when they say something is fixed or paid. "
-        "Never invent an entry they did not describe, and never state a figure from this "
-        "log that a call did not return."
+        "answer what you wrote down. For a maintenance issue specifically, set 'urgency' "
+        "from what they describe (a gas smell, no heat in winter, or an active leak is "
+        "'emergency'; something that needs a licensed vendor soon but is not dangerous is "
+        "'urgent'; a cosmetic or non-urgent fix is 'routine'), and say plainly in your "
+        "answer whether it sounds like something to call a vendor for now, schedule "
+        "routine repair, or - only for a genuine emergency - stop what they are doing and "
+        "call one immediately; never diagnose the repair itself or promise a cost. Use "
+        "'find' when they ask about anything they told you before - what was paid, when "
+        "somebody came out, what is still open, what happened at a building. Use 'total' "
+        "for how much they have spent or collected; never add the money up yourself. Use "
+        "'close' when they say something is fixed or paid. Never invent an entry they did "
+        "not describe, and never state a figure from this log that a call did not return."
     ),
     "strict": True,
     "input_schema": {
@@ -96,6 +102,17 @@ LOG_TOOL: dict[str, Any] = {
                     "open. For 'find', 'open' returns only what is outstanding."
                 ),
             },
+            "urgency": {
+                "type": "string",
+                "enum": ["routine", "urgent", "emergency", ""],
+                "description": (
+                    "For 'add' on a maintenance issue only: how serious it sounds from "
+                    "their own description - 'emergency' for something dangerous or "
+                    "actively damaging (gas smell, no heat in freezing weather, active "
+                    "flooding), 'urgent' for something that needs a vendor soon but is not "
+                    "dangerous, 'routine' otherwise. Empty string when it does not apply."
+                ),
+            },
             "search": {
                 "type": "string",
                 "description": (
@@ -127,6 +144,7 @@ LOG_TOOL: dict[str, Any] = {
             "date",
             "property",
             "status",
+            "urgency",
             "search",
             "since_days",
             "entry_id",
@@ -168,6 +186,21 @@ def add_dedupe_key(tool_input: dict[str, Any]) -> tuple[str, ...] | None:
     )
 
 
+# Deliberately not part of the dedupe key above: two parallel calls for "the same event"
+# that only disagree on urgency are not describing two different events, so they must
+# still collapse into one row - but silently keeping whichever one happened to run first
+# would mean a same-turn self-correction from "urgent" to "emergency" is the kind of
+# mistake that stays invisible for as long as the issue sits unresolved.
+_URGENCY_RANK = {"": 0, "routine": 1, "urgent": 2, "emergency": 3}
+
+
+def more_severe_urgency(candidate: Any, current: Any) -> bool:
+    """True when ``candidate`` outranks ``current`` on the routine/urgent/emergency scale."""
+    return _URGENCY_RANK.get(str(candidate or "").strip().lower(), 0) > _URGENCY_RANK.get(
+        str(current or "").strip().lower(), 0
+    )
+
+
 def run_log_tool(log: Any, tool_input: dict[str, Any]) -> dict[str, Any]:
     """Serve ``property_log``. Always returns a JSON-serializable dict, never raises."""
     from markai.web.ledger import LogError
@@ -181,6 +214,10 @@ def run_log_tool(log: Any, tool_input: dict[str, Any]) -> dict[str, Any]:
         try:
             saved = log.add(
                 {
+                    # Never part of the tool's own schema - the model can't set this, only
+                    # mark.py's severity-upgrade path does, to replace a duplicate row in
+                    # place instead of writing a second one.
+                    "id": args.get("_entry_id") or "",
                     "kind": args.get("kind"),
                     "what": args.get("what"),
                     "amount": args.get("amount") or None,
@@ -188,6 +225,7 @@ def run_log_tool(log: Any, tool_input: dict[str, Any]) -> dict[str, Any]:
                     "date": args.get("date"),
                     "status": args.get("status"),
                     "property": args.get("property"),
+                    "urgency": args.get("urgency"),
                 }
             )
         except LogError as exc:

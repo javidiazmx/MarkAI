@@ -538,6 +538,46 @@ def test_a_repeated_add_call_in_one_turn_only_logs_once(settings, store, tmp_pat
     ledger.close_db()
 
 
+def test_a_parallel_add_that_corrects_urgency_upward_replaces_the_first_not_a_second_row(
+    settings, store, tmp_path
+):
+    """Two parallel calls for the same maintenance issue that disagree only on urgency are
+    still one event - but the more severe classification must win, not whichever call the
+    model happened to emit first."""
+    from markai.web.ledger import Ledger, OwnerLog
+
+    ledger = Ledger(tmp_path / "ledger.db")
+    log = OwnerLog(ledger, "account:abc", [])
+    base_args = {
+        "action": "add",
+        "kind": "maintenance",
+        "what": "Smell in the basement",
+        "amount": 0,
+        "vendor": "",
+        "date": "",
+        "property": "",
+        "status": "",
+        "urgency": "urgent",
+        "search": "",
+        "since_days": 0,
+        "entry_id": "",
+    }
+    urgent_call = dict(base_args)
+    emergency_call = {**base_args, "urgency": "emergency"}
+    finals = [
+        parallel_tool_use_message(
+            [("property_log", urgent_call), ("property_log", emergency_call)]
+        ),
+        text_message("Logged it - sounds serious, get someone out now."),
+    ]
+    advisor, client = build_advisor(settings, store, finals)
+    advisor.ask("Smell in the basement, not sure how bad", log=log)
+
+    (entry,) = log.recent()
+    assert entry.urgency == "emergency", "the more severe call must win, not the first one"
+    assert len(log.open_maintenance()) == 1, "one event, one row - never two"
+
+
 def test_the_log_rides_along_with_the_next_question(settings, store, tmp_path):
     from markai.web.ledger import Ledger, OwnerLog
 

@@ -302,6 +302,11 @@ def _log_attrs(item: Any, today: date) -> str:
         attrs.append(f'property="{escape_attr(item.property_label, 80)}"')
     if item.status:
         attrs.append(f'status="{escape_attr(item.status, 10)}"')
+    if getattr(item, "urgency", ""):
+        # Without this, an open emergency and a loose cabinet handle read identically here -
+        # the one surface where Jay can mention an open issue unprompted would have no way
+        # to tell which of those it is unless it went and searched for it.
+        attrs.append(f'urgency="{escape_attr(item.urgency, 10)}"')
     return " ".join(attrs)
 
 
