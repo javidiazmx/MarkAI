@@ -41,6 +41,35 @@ _REASON_TERMS = {
     "no_cause_nonrenewal": "notice non-renewal terminate tenancy renewing month-to-month",
 }
 
+# A jurisdiction's in-force facts can include anything the corpus has on renting there at
+# all - security deposits, licensing, screening, a property manager's own continuing
+# education hours. None of that is a notice rule. Without this filter, a jurisdiction with
+# nothing that scores against the reason/tenure query (see the fallback below) would show
+# whatever it has instead of nothing - which is how a live user was once shown a fact about
+# a property manager's continuing-education requirement in answer to "which notice do I
+# need". This is deliberately broader than the three wizard reasons (it also catches
+# landlord-entry notices, foreclosure notices, etc.) because ranking narrows the good match
+# to the top from here; this filter's only job is keeping out topics that are not about
+# notices, eviction, or ending/renewing a tenancy at all.
+_NOTICE_DOMAIN_TERMS = frozenset(
+    {
+        "notice",
+        "notices",
+        "eviction",
+        "evict",
+        "evicting",
+        "terminate",
+        "terminating",
+        "termination",
+        "renew",
+        "renewal",
+        "renewing",
+        "nonrenewal",
+        "tenancy",
+        "vacate",
+    }
+)
+
 
 def _excludes_chicago(jurisdiction_lower: str) -> bool:
     """A jurisdiction label can name Chicago while meaning the opposite of "in Chicago" -
@@ -109,6 +138,19 @@ def find_notice_rules(
     candidates = [
         o for o in book.in_force(today) if _jurisdiction_matches(o.jurisdiction, jurisdiction)
     ]
+    if not candidates:
+        return []
+    # Jurisdiction alone is not topic: a jurisdiction's facts cover everything the corpus
+    # has on renting there, not just notices. Narrow to the notice/eviction/tenancy domain
+    # before any reason/tenure scoring, so the "show something rather than nothing" fallback
+    # below can only ever fall back to notice-related facts, never an unrelated one.
+    #
+    # Checked against the topic alone, not the full o.terms() bag: a rule's own body text
+    # can mention a domain word incidentally (a property-manager licensing fact talking
+    # about "timely renewal fees" for the license itself, nothing to do with a tenancy) and
+    # that must not be enough to pass a fact through as notice-related. The topic is the
+    # curated label the fact was actually filed under, and is what should decide this.
+    candidates = [o for o in candidates if _NOTICE_DOMAIN_TERMS & _terms(o.topic)]
     if not candidates:
         return []
     # Tenure only means anything for a non-renewal notice - the tenure tiers describe how

@@ -110,15 +110,41 @@ def test_a_superseded_ordinance_is_left_out():
     assert find_notice_rules(book, "Chicago", "no_cause_nonrenewal", 5.0, TODAY) == []
 
 
-def test_when_nothing_mentions_the_reason_the_jurisdictions_other_facts_still_show():
-    """Better to show what this jurisdiction does have than nothing at all."""
+def test_when_nothing_mentions_the_reason_the_jurisdictions_other_notice_facts_still_show():
+    """Better to show what this jurisdiction has on notices than nothing at all - but only
+    if it is actually about notices; see the next test for the case that must NOT show."""
     book = FactBook(
         ordinances=[
-            _rule("chi-1", "Chicago", "Something unrelated", "A fact about parking permits.")
+            _rule(
+                "chi-1",
+                "Chicago",
+                "Notice of entry / showings",
+                "Landlords must give 48 hours notice before entering a unit.",
+            )
         ]
     )
     results = find_notice_rules(book, "Chicago", "nonpayment", None, TODAY)
     assert [o.id for o in results] == ["chi-1"]
+
+
+def test_a_fact_unrelated_to_notices_never_shows_even_as_a_last_resort():
+    """A live bug: asking Chicago's Notice Wizard about nonpayment once surfaced a fact
+    about a property manager's continuing-education requirement, because it was the only
+    Chicago-ish fact in the corpus and the old fallback showed "whatever this jurisdiction
+    has" rather than nothing. A jurisdiction with only off-topic facts must return []."""
+    book = FactBook(
+        ordinances=[
+            _rule(
+                "chi-1",
+                "Illinois",
+                "Continuing education",
+                "Active good standing requires completing continuing education hours "
+                "every two years and timely renewal of a property manager's own license.",
+            ),
+            _rule("chi-2", "Illinois", "Rental licensing", "Landlords must hold a license."),
+        ]
+    )
+    assert find_notice_rules(book, "Illinois (no local ordinance)", "nonpayment", None, TODAY) == []
 
 
 def test_results_are_capped_at_five():
@@ -141,20 +167,20 @@ def test_a_jurisdiction_label_that_names_chicago_while_meaning_the_opposite_is_n
             _rule(
                 "suburb-1",
                 "Cook County (suburbs outside Chicago)",
-                "Security deposit interest",
-                "Buildings of 24 units or less in suburban Cook County are exempt.",
+                "Non-renewal notice",
+                "Buildings of 24 units or less in suburban Cook County get 60 days notice.",
             ),
             _rule(
                 "suburb-2",
                 "Chicago suburbs",
-                "Security deposit",
-                "In Chicago suburbs the RLTO does not apply.",
+                "Notice to terminate month-to-month tenancy",
+                "In Chicago suburbs, thirty days notice ends a month-to-month tenancy.",
             ),
             _rule(
                 "il-outside",
                 "Illinois (outside Chicago)",
-                "Security deposit interest",
-                "The Illinois Security Deposit Interest Act applies outside Chicago.",
+                "Notice to terminate month-to-month tenancy",
+                "Thirty days notice is required to terminate a month-to-month tenancy.",
             ),
         ]
     )
@@ -182,8 +208,8 @@ def test_a_label_naming_chicago_and_cook_together_answers_for_suburban_cook_too(
             _rule(
                 "shared-1",
                 "Chicago/Cook County",
-                "Tenant belongings and lockouts",
-                "Landlords cannot remove a tenant's belongings or change the locks.",
+                "Notice to terminate month-to-month tenancy",
+                "A month-to-month tenancy of this kind ends on thirty days notice.",
             ),
             _rule(
                 "chi-only",
@@ -210,7 +236,7 @@ def test_tenure_is_ignored_for_reasons_that_have_no_tenure_tiers():
             _rule(
                 "nonpay",
                 "Suburban Cook County",
-                "Nonpayment",
+                "Voiding a five-day notice by accepting payment",
                 "Voiding a 5-day notice by accepting payment after it was served.",
             ),
             _rule(
