@@ -57,13 +57,20 @@ def _jurisdiction_matches(ordinance_jurisdiction: str, wizard_jurisdiction: str)
     ("Cook County", "Suburban Cook County", "Cook County, IL" all mean the same RTLO rule
     here) - but never lets a Chicago-specific rule answer for anywhere else, which is the
     actual mistake this tool exists to prevent.
+
+    A label that names Chicago and Cook County together ("Chicago/Cook County", "Cook
+    County (including Chicago)") states one rule for both, not a Chicago-only rule that
+    happens to mention the county - unlike the Chicago Fair Notice Ordinance's own
+    tenure-escalated notice periods, which are always filed under "Chicago" alone, never
+    paired with "Cook" in the same label. So any label mentioning Cook County answers for
+    Suburban Cook County; only a Chicago-only label (no "cook" in it at all) does not.
     """
     j = ordinance_jurisdiction.lower()
     excludes_chicago = _excludes_chicago(j)
     if wizard_jurisdiction == "Chicago":
         return "chicago" in j and not excludes_chicago
     if wizard_jurisdiction == "Suburban Cook County":
-        return "cook" in j and ("chicago" not in j or excludes_chicago)
+        return "cook" in j
     if wizard_jurisdiction == "Evanston":
         return "evanston" in j
     if wizard_jurisdiction == "Illinois (no local ordinance)":

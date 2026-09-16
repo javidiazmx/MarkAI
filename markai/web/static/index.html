@@ -493,7 +493,7 @@
       <textarea id="prop-notes" rows="2" maxlength="400"
                 placeholder="Anything that matters: heat type, vouchers, year built"></textarea>
       <div class="pair">
-        <button type="submit">Save</button>
+        <button type="submit" id="prop-save">Save</button>
         <button class="ghost" id="prop-cancel" type="button">Cancel</button>
       </div>
     </form>
@@ -525,7 +525,7 @@
       </div>
       <select id="log-prop" title="Which building"></select>
       <div class="pair">
-        <button type="submit">Save</button>
+        <button type="submit" id="log-save">Save</button>
         <button class="ghost" id="log-cancel" type="button">Cancel</button>
       </div>
     </form>
@@ -780,7 +780,7 @@
           <select id="maintenance-prop" title="Which building"></select>
         </div>
       </div>
-      <button type="submit">Log it</button>
+      <button type="submit" id="maintenance-save">Log it</button>
     </form>
     <div id="maintenance-results"></div>
   </div>
@@ -932,10 +932,16 @@
     return h;
   }
 
-  document.getElementById("save-code").addEventListener("click", function () {
+  function saveAccessCode() {
     sessionStorage.setItem("mark_code", codeInput.value.trim());
     codeInput.value = "";
     loadStatus();
+  }
+  document.getElementById("save-code").addEventListener("click", saveAccessCode);
+  // The field sits outside a <form>, so Enter otherwise does nothing - every other
+  // password-style gate in this app (and the admin page's own) should feel the same.
+  codeInput.addEventListener("keydown", function (event) {
+    if (event.key === "Enter") { event.preventDefault(); saveAccessCode(); }
   });
 
   function el(tag, cls, text) {
@@ -1901,10 +1907,16 @@
     clearPropForm();
   });
 
+  var propSaveBtn = document.getElementById("prop-save");
+
   propForm.addEventListener("submit", async function (event) {
     event.preventDefault();
     var fields = propFields();
     if (!fields.label.trim()) { propLabel.focus(); return; }
+    // Without this, a fast double-click (or a double Enter) fires this POST twice - there
+    // is no server-side dedupe for an "add" the way the model's own tool calls get, so it
+    // would file the same property twice, silently, every time it happened.
+    propSaveBtn.disabled = true;
     try {
       var response = await fetch("/api/properties", {
         method: "POST", headers: headers(), body: JSON.stringify(fields)
@@ -1918,6 +1930,8 @@
     } catch (error) {
       note("Could not save that: " + error);
       return;
+    } finally {
+      propSaveBtn.disabled = false;
     }
     clearPropForm();
     propForm.hidden = true;
@@ -2055,6 +2069,8 @@
     clearLogForm();
   });
 
+  var logSaveBtn = document.getElementById("log-save");
+
   logForm.addEventListener("submit", async function (event) {
     event.preventDefault();
     if (!logWhat.value.trim()) { logWhat.focus(); return; }
@@ -2066,6 +2082,9 @@
       date: document.getElementById("log-date").value,
       property_id: logProp.value
     };
+    // Same reason as the property form's save button: nothing here dedupes a manual
+    // double-submit, so two clicks would log the same thing twice.
+    logSaveBtn.disabled = true;
     try {
       var response = await fetch("/api/log", {
         method: "POST", headers: headers(), body: JSON.stringify(fields)
@@ -2079,6 +2098,8 @@
     } catch (error) {
       note("Could not save that: " + error);
       return;
+    } finally {
+      logSaveBtn.disabled = false;
     }
     clearLogForm();
     logForm.hidden = true;
@@ -2153,6 +2174,8 @@
     maintenanceCard.hidden = true;
   });
 
+  var maintenanceSaveBtn = document.getElementById("maintenance-save");
+
   maintenanceForm.addEventListener("submit", async function (event) {
     event.preventDefault();
     if (!maintenanceWhat.value.trim()) { maintenanceWhat.focus(); return; }
@@ -2162,6 +2185,9 @@
       urgency: maintenanceUrgency.value,
       property_id: maintenanceProp.value
     };
+    // Same reason as the property and log forms' save buttons: a double-click here would
+    // log the same issue twice, worse for a real emergency someone is re-clicking in a hurry.
+    maintenanceSaveBtn.disabled = true;
     try {
       var response = await fetch("/api/log", {
         method: "POST", headers: headers(), body: JSON.stringify(fields)
@@ -2175,6 +2201,8 @@
     } catch (error) {
       note("Could not save that: " + error);
       return;
+    } finally {
+      maintenanceSaveBtn.disabled = false;
     }
     maintenanceWhat.value = "";
     maintenanceUrgency.value = "routine";
@@ -3000,12 +3028,32 @@
     }
   });
 
+  // Every tool modal opens from its own header button and closes the same way: its own
+  // "X". Escape only ever did that for the command palette - a landlord deep in the Deal
+  // Analyzer or the Notice Wizard had no keyboard way out, which is the one interaction the
+  // palette (built later) got right and the earlier modals didn't. Rather than duplicate
+  // each button's own cleanup (a debounce timer cleared here, a totals reload there) this
+  // just clicks the same close button a mouse would, so there is exactly one place that
+  // logic lives.
+  // "tour-skip" is here too: the onboarding tour is a `.scrim` like the rest and has
+  // nothing mandatory in it (unlike "welcome", which is a notice to acknowledge, not
+  // dismiss), so it should give way to Escape the same way every other closable one does.
+  var ESCAPABLE_MODAL_CLOSE_IDS = [
+    "handoff-close", "acct-close", "deal-close", "notice-close", "maintenance-close", "tour-skip"
+  ];
+
   document.addEventListener("keydown", function (event) {
     if (event.key === "k" && (event.metaKey || event.ctrlKey)) {
       event.preventDefault();
       if (paletteCard.hidden) openPalette(); else closePalette();
     } else if (event.key === "Escape" && !paletteCard.hidden) {
       closePalette();
+    } else if (event.key === "Escape") {
+      for (var i = 0; i < ESCAPABLE_MODAL_CLOSE_IDS.length; i++) {
+        var closeBtn = document.getElementById(ESCAPABLE_MODAL_CLOSE_IDS[i]);
+        var card = closeBtn && closeBtn.closest(".scrim");
+        if (card && !card.hidden) { closeBtn.click(); break; }
+      }
     }
   });
 

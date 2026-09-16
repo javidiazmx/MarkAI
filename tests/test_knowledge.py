@@ -10,7 +10,7 @@ from markai.knowledge.chunking import approx_tokens, chunk_document
 from markai.knowledge.embeddings import build_embedder
 from markai.knowledge.retriever import Retriever, reciprocal_rank_fusion, tokenize
 from markai.knowledge.store import KnowledgeStore
-from markai.models import Document, Segment, SourceKind
+from markai.models import Chunk, Document, RetrievedChunk, Segment, SourceKind
 from tests.fakes import FakeEmbedder
 
 # --- chunking -------------------------------------------------------------------------
@@ -277,6 +277,44 @@ def test_retrieval_finds_the_heat_episode(settings, store):
 def test_gibberish_is_not_covered(settings, store):
     retriever = Retriever(store, None, settings)
     assert retriever.retrieve("zzzqqq wubble frobnicate").coverage == "none"
+
+
+def _episode_chunk(doc_id, kind, episode, score, chunk_id=None):
+    doc = Document(
+        id=doc_id,
+        kind=kind,
+        title=doc_id,
+        locator=doc_id,
+        text="x",
+        episode=episode,
+    )
+    chunk = Chunk(id=chunk_id or f"{doc_id}:0000", doc_id=doc_id, index=0, text="x")
+    return RetrievedChunk(chunk=chunk, document=doc, score=score)
+
+
+def test_dedupe_collapses_the_same_episode_ingested_as_youtube_and_podcast():
+    """The one real dual-ingestion case: the same episode, once via YouTube and once via
+    the RSS feed, should collapse to a single (YouTube-preferred) chunk."""
+    candidates = [
+        _episode_chunk("yt-1", SourceKind.YOUTUBE, "198", 0.9),
+        _episode_chunk("pod-1", SourceKind.PODCAST, "198", 0.8),
+    ]
+    result = Retriever._dedupe_episodes(candidates)
+    assert len(result) == 1
+    assert result[0].document.kind == SourceKind.YOUTUBE
+
+
+def test_dedupe_leaves_two_same_kind_docs_sharing_an_episode_number_alone():
+    """A real-corpus case: the podcast feed reused one itunes:episode number across two
+    unrelated entries (a bonus announcement and a numbered interview). Both are `podcast`
+    documents, so this is not the YouTube+RSS dual-ingestion case, and collapsing them
+    would silently drop one of two unrelated, genuinely relevant chunks."""
+    candidates = [
+        _episode_chunk("pod-a", SourceKind.PODCAST, "311", 0.9),
+        _episode_chunk("pod-b", SourceKind.PODCAST, "311", 0.8),
+    ]
+    result = Retriever._dedupe_episodes(candidates)
+    assert len(result) == 2
 
 
 def test_a_stopword_only_query_is_not_covered(settings, store):

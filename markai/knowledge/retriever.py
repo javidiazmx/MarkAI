@@ -352,12 +352,6 @@ class Retriever:
         if lexical_used:
             positive_count = len(lex_ranking)
         else:
-            positive_count = sum(
-                1
-                for rc in candidates
-                if rc.vector_rank is not None
-                and self._cosine_at_rank(rc.vector_rank, vec_ranking, top_cosine) >= 0
-            )
             positive_count = len(vec_ranking) if vector_used else 0
         overlap_ratio = self._overlap_ratio(tokens, lex_ranking[0] if lex_ranking else None)
         coverage = self._coverage(
@@ -385,24 +379,32 @@ class Retriever:
         )
 
     @staticmethod
-    def _cosine_at_rank(rank: int, ranking: list[str], top: float) -> float:
-        """Placeholder kept trivial: positive cosine entries are the whole vector ranking."""
-        return top if 0 < rank <= len(ranking) else -1.0
-
-    @staticmethod
     def _dedupe_episodes(candidates: list[RetrievedChunk]) -> list[RetrievedChunk]:
         """Collapse the same episode ingested twice (e.g. YouTube + RSS) to one chunk.
 
-        Only applies when an episode number appears under two different documents. The
-        surviving chunk prefers the YouTube document (it has timestamped deep links),
+        Only applies when an episode number appears under two different documents *of
+        different kinds* - the one real way this project dual-ingests one episode. Two
+        documents of the same kind sharing an episode number are not that: the podcast
+        feed itself has repeated an ``itunes:episode`` number across two unrelated entries
+        (confirmed in the real corpus - a bonus "Special NBOA Soiree Announcement" episode
+        and a numbered interview both carry episode "311"). Collapsing on the number alone
+        would silently drop one of two unrelated, genuinely relevant chunks; requiring a
+        kind mismatch keeps the real YouTube+RSS case working without that false positive.
+        The surviving chunk prefers the YouTube document (it has timestamped deep links),
         then the highest fused score. Input must already be sorted best-first.
         """
         docs_by_episode: dict[str, set[str]] = {}
+        kinds_by_episode: dict[str, set[SourceKind]] = {}
         for rc in candidates:
             ep = rc.document.episode
             if ep:
                 docs_by_episode.setdefault(ep, set()).add(rc.document.id)
-        duplicated = {ep for ep, ids in docs_by_episode.items() if len(ids) > 1}
+                kinds_by_episode.setdefault(ep, set()).add(rc.document.kind)
+        duplicated = {
+            ep
+            for ep, ids in docs_by_episode.items()
+            if len(ids) > 1 and len(kinds_by_episode.get(ep, ())) > 1
+        }
         if not duplicated:
             return candidates
 

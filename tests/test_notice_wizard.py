@@ -170,6 +170,37 @@ def test_a_jurisdiction_label_that_names_chicago_while_meaning_the_opposite_is_n
     assert il_ids == {"il-outside"}
 
 
+def test_a_label_naming_chicago_and_cook_together_answers_for_suburban_cook_too():
+    """ "Chicago/Cook County" or "Cook County (including Chicago)" states one rule for both
+    places, not a Chicago-only rule that happens to mention the county - real facts.yaml
+    entries like the illegal-lockout ban and the hand-delivery requirement are genuinely
+    shared this way. But a Chicago-only label (no "cook" in it at all) - like the Fair
+    Notice Ordinance's own tenure-escalated notice periods always are - must still never
+    answer for Suburban Cook County."""
+    book = FactBook(
+        ordinances=[
+            _rule(
+                "shared-1",
+                "Chicago/Cook County",
+                "Tenant belongings and lockouts",
+                "Landlords cannot remove a tenant's belongings or change the locks.",
+            ),
+            _rule(
+                "chi-only",
+                "Chicago",
+                "Lease renewal notice",
+                "60 days notice for non-renewal, 120 if three years or longer.",
+            ),
+        ]
+    )
+    cook_ids = {
+        o.id
+        for o in find_notice_rules(book, "Suburban Cook County", "no_cause_nonrenewal", 5.0, TODAY)
+    }
+    assert cook_ids == {"shared-1"}, "the joint label answers here too"
+    assert "chi-only" not in cook_ids, "a Chicago-only label never does"
+
+
 def test_tenure_is_ignored_for_reasons_that_have_no_tenure_tiers():
     """Tenure tiers only exist for a no-cause non-renewal notice. Passing a tenure_years
     for nonpayment or a lease violation must not let a stray tenure word (e.g. "three

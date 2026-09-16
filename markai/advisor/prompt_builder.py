@@ -250,6 +250,7 @@ def build_log_block(
     open_items: list[Any],
     total: int = 0,
     today: date | None = None,
+    open_total: int | None = None,
 ) -> str:
     """The last things that happened at their buildings, and what is still outstanding.
 
@@ -259,6 +260,12 @@ def build_log_block(
     still open without being asked; anything older comes back through the tool, which
     searches on demand.
 
+    ``open_items`` itself is already capped by the caller (a handful of rows for a prompt),
+    so its length is not how many are actually open once a portfolio has more than that -
+    ``open_total`` is the real, unlimited count and is what the ``open`` attribute reports;
+    it falls back to ``len(open_items)`` only for a caller that has not been updated to pass
+    it, which undercounts exactly the way this attribute used to everywhere.
+
     Every value is escaped. These are the landlord's own words, but they arrived through a
     form and a model, and neither of those is a reason to trust text inside a prompt.
     """
@@ -266,7 +273,8 @@ def build_log_block(
         return ""
     now = today or date.today()
     shown = {getattr(item, "id", "") for item in open_items[:MAX_LOG_OPEN]}
-    attrs = [f'entries="{max(total, len(recent))}"', f'open="{len(open_items)}"']
+    open_count = len(open_items) if open_total is None else open_total
+    attrs = [f'entries="{max(total, len(recent))}"', f'open="{open_count}"']
     lines = ["<property_log " + " ".join(attrs) + ">"]
     for item in open_items[:MAX_LOG_OPEN]:
         lines.append("<open " + _log_attrs(item, now) + ">")

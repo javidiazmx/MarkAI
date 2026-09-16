@@ -230,7 +230,13 @@ class MarkAdvisor:
         if log is None:
             return ""
         try:
-            return build_log_block(log.recent(), log.open_items(), log.count(), date.today())
+            return build_log_block(
+                log.recent(),
+                log.open_items(),
+                log.count(),
+                date.today(),
+                open_total=log.open_count(),
+            )
         except Exception as exc:  # a log that cannot be read is not a failed answer
             logger.warning("could not read the property log: %s", type(exc).__name__)
             return ""

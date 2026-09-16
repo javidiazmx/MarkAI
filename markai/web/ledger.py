@@ -466,12 +466,20 @@ class Ledger:
         )
 
     def open_items(self, owner_id: str, limit: int = DEFAULT_LIMIT) -> list[Entry]:
-        """What is still outstanding, oldest first: the ones that have been waiting."""
+        """What is still outstanding, worst-first then oldest: the same urgency-first order
+        `open_maintenance` uses, so a fresh emergency is never pushed out of this list's cap
+        by older routine rows in a caller that only takes the first few - the model's own
+        ambient log context, the owner's monthly digest, and the property-manager handoff
+        notes all read this list through a small `limit` rather than the maintenance-only
+        endpoint, so an emergency has to sort first here too or those three narrate a stale
+        bill while a real one goes unmentioned.
+        """
         if not owner_id:
             return []
         return self._rows(
-            "SELECT * FROM log_entries WHERE owner_id = ? AND status = ?"
-            " ORDER BY happened_on ASC, created_at ASC LIMIT ?",
+            "SELECT * FROM log_entries WHERE owner_id = ? AND status = ? ORDER BY"
+            " CASE urgency WHEN 'emergency' THEN 0 WHEN 'urgent' THEN 1 ELSE 2 END,"
+            " happened_on ASC, created_at ASC LIMIT ?",
             (owner_id, OPEN, max(1, min(limit, MAX_ENTRIES_PER_OWNER))),
         )
 
@@ -538,6 +546,20 @@ class Ledger:
             return int(
                 self._conn.execute(
                     "SELECT COUNT(*) FROM log_entries WHERE owner_id = ?", (owner_id,)
+                ).fetchone()[0]
+            )
+
+    def open_count(self, owner_id: str) -> int:
+        """How many rows are actually open, unlimited - `open_items` above is capped to a
+        handful for a prompt or a page, and that cap must never be read back as the truth
+        about how much is outstanding."""
+        if not owner_id:
+            return 0
+        with self._lock:
+            return int(
+                self._conn.execute(
+                    "SELECT COUNT(*) FROM log_entries WHERE owner_id = ? AND status = ?",
+                    (owner_id, OPEN),
                 ).fetchone()[0]
             )
 
@@ -616,6 +638,9 @@ class OwnerLog:
 
     def open_maintenance(self, limit: int = DEFAULT_LIMIT) -> list[Entry]:
         return self._labelled(self._ledger.open_maintenance(self._owner, limit=limit))
+
+    def open_count(self) -> int:
+        return self._ledger.open_count(self._owner)
 
     def totals(self, property_name: str = "", since_days: int = 0) -> dict[str, float]:
         property_id, _ = self.property_id_for(property_name)

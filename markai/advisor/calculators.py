@@ -320,8 +320,8 @@ _RATE_FIELDS = (
 def _validate(name: str, data: dict[str, Any]) -> str | None:
     for key, value in data.items():
         if key == "years":
-            if not isinstance(value, int | float) or not (1 <= float(value) <= 40):
-                return f"{key} must be a number of years between 1 and 40."
+            if not isinstance(value, int | float) or not (1 <= float(value) <= 50):
+                return f"{key} must be a number of years between 1 and 50."
             continue
         if not isinstance(value, int | float) or isinstance(value, bool):
             return f"{key} must be a number."

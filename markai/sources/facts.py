@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, PrivateAttr, field_validator, model_validator
 
 # Raised from 5: a handful of city/county ordinances sharing "notice", "evict", "years" with
 # a question could fill every slot before a state-wide Illinois rule ever got a chance,
@@ -76,6 +76,10 @@ class Ordinance(BaseModel):
     url: str | None = None
     notes: str | None = None
     keywords: list[str] = Field(default_factory=list)
+    # Populated lazily by `terms()` and never invalidated: the book is loaded once per
+    # process and never mutated, so tokenizing the same rule on every `select()` call (one
+    # per chat question, times every ordinance in the file) would be pure waste.
+    _terms_cache: set[str] | None = PrivateAttr(default=None)
 
     @field_validator("citation")
     @classmethod
@@ -102,7 +106,11 @@ class Ordinance(BaseModel):
         return not (self.effective_to and as_of > self.effective_to)
 
     def terms(self) -> set[str]:
-        return _terms(" ".join([self.topic, self.jurisdiction, self.rule, " ".join(self.keywords)]))
+        if self._terms_cache is None:
+            self._terms_cache = _terms(
+                " ".join([self.topic, self.jurisdiction, self.rule, " ".join(self.keywords)])
+            )
+        return self._terms_cache
 
 
 # Units that are measures rather than money. Checked at the front of the unit so "USD per
@@ -134,6 +142,8 @@ class CostRange(BaseModel):
     source: str | None = None
     notes: str | None = None
     keywords: list[str] = Field(default_factory=list)
+    # Same lazy cache as `Ordinance.terms()`, and for the same reason.
+    _terms_cache: set[str] | None = PrivateAttr(default=None)
 
     @model_validator(mode="after")
     def _low_below_high(self) -> CostRange:
@@ -142,7 +152,11 @@ class CostRange(BaseModel):
         return self
 
     def terms(self) -> set[str]:
-        return _terms(" ".join([self.item, self.market, self.unit, " ".join(self.keywords)]))
+        if self._terms_cache is None:
+            self._terms_cache = _terms(
+                " ".join([self.item, self.market, self.unit, " ".join(self.keywords)])
+            )
+        return self._terms_cache
 
     def money(self) -> str:
         """The range as it should read, which is not always dollars.

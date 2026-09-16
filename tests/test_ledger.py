@@ -193,11 +193,35 @@ def test_the_log_is_searched_by_what_they_wrote(ledger):
     assert ledger.find(OWNER, "furnace") == []
 
 
-def test_what_is_still_open_comes_back_oldest_first(ledger):
+def test_what_is_still_open_comes_back_oldest_first_within_the_same_urgency(ledger):
     ledger.add(OWNER, {"kind": "maintenance", "what": "No heat in unit 2", "date": "2026-09-01"})
     ledger.add(OWNER, {"kind": "maintenance", "what": "Gutter loose", "date": "2026-08-01"})
     ledger.add(OWNER, {"kind": "maintenance", "what": "Fixed the buzzer", "status": "done"})
     assert [e.what for e in ledger.open_items(OWNER)] == ["Gutter loose", "No heat in unit 2"]
+
+
+def test_open_items_is_worst_first_like_open_maintenance_not_just_oldest_first(ledger):
+    """`open_items` feeds the model's ambient log context, the monthly digest, and the
+    property-manager handoff notes - all three read it through a small `limit`, so a fresh
+    emergency has to sort ahead of older routine rows here too, the same as the dedicated
+    `open_maintenance` view, or those three narrate stale trivia while a real emergency goes
+    unmentioned."""
+    ledger.add(
+        OWNER, {"kind": "bill", "what": "Water bill", "status": "open", "date": "2026-01-01"}
+    )
+    ledger.add(
+        OWNER, {"kind": "note", "what": "Tenant asked about a lease renewal", "status": "open"}
+    )
+    ledger.add(
+        OWNER,
+        {
+            "kind": "maintenance",
+            "what": "Gas smell in the basement",
+            "urgency": "emergency",
+            "date": "2026-09-14",
+        },
+    )
+    assert [e.what for e in ledger.open_items(OWNER)][0] == "Gas smell in the basement"
 
 
 def test_closing_an_item_takes_it_off_the_list(ledger):
@@ -205,6 +229,23 @@ def test_closing_an_item_takes_it_off_the_list(ledger):
     assert ledger.close(OWNER, saved.id) is True
     assert ledger.open_items(OWNER) == []
     assert ledger.close("browser:someone-else", saved.id) is False, "not theirs to close"
+
+
+def test_open_count_is_not_capped_the_way_open_items_is(ledger):
+    """`open_items`' own `limit` is a display cap, not the truth about how much is
+    outstanding - a portfolio with more open rows than that cap must still report its real
+    count, not silently repeat the cap back as if it were the total."""
+    for i in range(3):
+        ledger.add(OWNER, {"kind": "maintenance", "what": f"Issue {i}"})
+    assert len(ledger.open_items(OWNER, limit=2)) == 2
+    assert ledger.open_count(OWNER) == 3
+
+
+def test_open_count_is_zero_with_no_owner_or_nothing_open(ledger):
+    assert ledger.open_count("") == 0
+    assert ledger.open_count(OWNER) == 0
+    ledger.add(OWNER, {"kind": "maintenance", "what": "Fixed already", "status": "done"})
+    assert ledger.open_count(OWNER) == 0
 
 
 def test_the_money_is_added_up_in_code(ledger):
@@ -487,6 +528,16 @@ def test_the_standing_block_carries_the_open_items_and_the_last_few():
     assert 'days_ago="8"' in block
     assert 'amount="8000.00"' in block
     assert 'property="2145 W Division"' in block
+
+
+def test_the_standing_blocks_open_count_is_the_real_total_not_the_capped_list_length():
+    """`open_items` is already capped by the caller (a handful of rows for a prompt) - the
+    `open="N"` attribute must report how many are truly outstanding, not just how many made
+    it into that capped list, or a landlord with more open items than the cap sees an
+    undercount every single question."""
+    open_item = Entry(id="e1", kind="maintenance", what="No heat in unit 2", status="open")
+    block = build_log_block([open_item], [open_item], total=1, today=TODAY, open_total=9)
+    assert 'open="9"' in block
 
 
 def test_urgency_reaches_the_standing_block_so_jay_can_tell_the_two_apart():
