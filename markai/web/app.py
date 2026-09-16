@@ -745,6 +745,26 @@ def create_app(
     def theme_css() -> FileResponse:
         return FileResponse(STATIC_DIR / "theme.css", media_type="text/css")
 
+    # PWA installability assets - static, public, no auth needed. Named routes rather than
+    # a StaticFiles mount, matching every other static file this app already serves.
+    _pwa_files = {
+        "/manifest.json": ("manifest.json", "application/manifest+json"),
+        "/sw.js": ("sw.js", "text/javascript"),
+        "/favicon.png": ("favicon.png", "image/png"),
+        "/icons/icon-192.png": ("icons/icon-192.png", "image/png"),
+        "/icons/icon-512.png": ("icons/icon-512.png", "image/png"),
+        "/icons/icon-512-maskable.png": ("icons/icon-512-maskable.png", "image/png"),
+        "/icons/apple-touch-icon.png": ("icons/apple-touch-icon.png", "image/png"),
+    }
+    for _route, (_rel_path, _media_type) in _pwa_files.items():
+
+        def _serve_pwa_file(
+            rel_path: str = _rel_path, media_type: str = _media_type
+        ) -> FileResponse:
+            return FileResponse(STATIC_DIR / rel_path, media_type=media_type)
+
+        app.get(_route, include_in_schema=False)(_serve_pwa_file)
+
     def _admin_rows(history: Any, fits: dict[str, Any]) -> list[dict[str, Any]]:
         """Every visitor as a flat dict, signed-up landlords first, then anonymous ones.
 

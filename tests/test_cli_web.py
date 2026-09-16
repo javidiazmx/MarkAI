@@ -3095,6 +3095,20 @@ def test_the_page_has_a_conversation_search_box():
     assert 'id="thread-search"' in page
 
 
+def test_the_thread_delete_button_is_not_hover_only_on_touch():
+    """:hover never fires on a touch device - a bare `opacity: 0` on the per-conversation
+    delete button would leave it permanently invisible (not just tidied away) on a phone.
+    It must only hide behind a (hover: hover) media query, not unconditionally."""
+    from pathlib import Path
+
+    page = Path("markai/web/static/index.html").read_text(encoding="utf-8")
+    start = page.index(".thread .drop {")
+    end = page.index("}", start)
+    bare_rule = page[start:end]
+    assert "opacity: 0" not in bare_rule, "the unconditional rule must not itself hide the button"
+    assert "@media (hover: hover)" in page
+
+
 def test_the_page_has_a_notice_wizard_panel():
     from pathlib import Path
 

@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Jay · Your Chicagoland AI Advisor</title>
 <link rel="stylesheet" href="/theme.css" />
+<link rel="manifest" href="/manifest.json" />
+<meta name="theme-color" content="#1f6f4a" />
+<link rel="icon" href="/favicon.png" type="image/png" />
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
 <style>
   /* Everything shared (colors, spacing, radius, shadow, type scale, buttons, modals,
      skeletons, toasts, empty states) lives in theme.css now. This block keeps only what
@@ -271,9 +275,15 @@
   .thread.on .pick { background: var(--user); font-weight: 600; }
   .thread .drop {
     background: none; border: 0; color: var(--muted); cursor: pointer;
-    font-size: 13px; padding: 4px 7px; opacity: 0;
+    font-size: 13px; padding: 4px 7px;
   }
-  .thread:hover .drop, .thread .drop:focus-visible { opacity: 1; }
+  /* Hidden-until-hover only where hover actually exists - :hover never fires on a touch
+     device, so a bare opacity:0 here would leave delete permanently invisible on a phone,
+     not just tidier on desktop. */
+  @media (hover: hover) and (pointer: fine) {
+    .thread .drop { opacity: 0; }
+    .thread:hover .drop, .thread .drop:focus-visible { opacity: 1; }
+  }
   .side-empty { color: var(--muted); font-size: 13px; padding: 10px 9px; line-height: 1.5; }
   .burger, .side-close { padding: 0 11px; font-size: 17px; line-height: 1; }
   @media (min-width: 900px) {
@@ -2894,6 +2904,15 @@
   loadAccount();
   loadNudges();
 })();
+</script>
+<script>
+  // Installable, not offline-first - see sw.js's own note on why API calls are never
+  // cached. Feature-detected like every other optional browser API this page touches.
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", function () {
+      navigator.serviceWorker.register("/sw.js").catch(function () { /* still just a website */ });
+    });
+  }
 </script>
 </body>
 </html>
