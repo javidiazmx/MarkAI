@@ -160,18 +160,35 @@ class BusinessProfile(BaseModel):
         )
 
 
+class MunicipalCodeSource(BaseModel):
+    """A government code of ordinances, too large to fetch live, supplied as a local text
+    file and split into one Document per chapter - the natural citation unit for a legal
+    code, and small enough for the normal chunker to handle well.
+    """
+
+    jurisdiction: str
+    file: str
+    citation_url: str
+    published: str | None = None
+
+
 class SourceManifest(BaseModel):
     """Top-level shape of ``sources/sources.yaml``."""
 
     websites: list[WebsiteSource] = Field(default_factory=list)
     youtube: YouTubeSection = Field(default_factory=YouTubeSection)
     podcast: PodcastSection = Field(default_factory=PodcastSection)
+    municipal_codes: list[MunicipalCodeSource] = Field(default_factory=list)
     tools: list[ToolLink] = Field(default_factory=list)
     business: BusinessProfile = Field(default_factory=BusinessProfile)
 
     def is_empty(self) -> bool:
         return not (
-            self.websites or self.youtube.has_sources() or self.podcast.episodes or self.podcast.rss
+            self.websites
+            or self.youtube.has_sources()
+            or self.podcast.episodes
+            or self.podcast.rss
+            or self.municipal_codes
         )
 
     def counts(self) -> dict[str, int]:
@@ -182,6 +199,7 @@ class SourceManifest(BaseModel):
             "youtube_urls_file": 1 if self.youtube.urls_file else 0,
             "podcast_episodes": len(self.podcast.episodes),
             "podcast_rss": 1 if self.podcast.rss else 0,
+            "municipal_codes": len(self.municipal_codes),
             "tools": len(self.tools),
         }
 

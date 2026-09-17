@@ -20,6 +20,7 @@ from rich.markup import escape
 from rich.table import Table
 
 from markai.config import Settings
+from markai.ingest.municipal_code import ingest_municipal_code
 from markai.ingest.podcast import ingest_podcast, resolve_transcript_plan
 from markai.ingest.websites import ingest_websites, make_client
 from markai.ingest.youtube import (
@@ -373,6 +374,15 @@ def _iter_sources(
                 log=log,
             ),
         )
+
+    if _wanted(SourceKind.WEBSITE, only):
+        for code in manifest.municipal_codes:
+            if log:
+                log(f"Municipal code: {code.jurisdiction}")
+            yield from _guarded(
+                SourceKind.WEBSITE,
+                lambda code=code: ingest_municipal_code(code, settings.project_root),
+            )
 
 
 def _guarded(kind: SourceKind, factory) -> Iterator[Document | IngestFailure]:

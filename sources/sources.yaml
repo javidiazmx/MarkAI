@@ -312,6 +312,17 @@ podcast:
   episodes: []
 
 # ---------------------------------------------------------------------------------------
+# GOVERNMENT CODES too large to fetch live - a local text export, split into one Document
+# per chapter. Never a third-party blog: the owner's own rule for anything a landlord will
+# act on is GC Realty's indexed content or a government page, nothing else.
+# ---------------------------------------------------------------------------------------
+municipal_codes:
+  - jurisdiction: Chicago
+    file: data/raw/municipal-codes/chicago.txt
+    citation_url: https://library.municode.com/il/chicago/codes/code_of_ordinances
+    published: "Current through Council Journal of June 17, 2026"
+
+# ---------------------------------------------------------------------------------------
 # TOOLS Mark can recommend when they fit the question.
 # ---------------------------------------------------------------------------------------
 tools:
