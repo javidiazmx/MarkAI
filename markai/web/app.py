@@ -1417,8 +1417,9 @@ def create_app(
                 detail={
                     "signup_required": True,
                     "message": (
-                        "That is your free questions used up. A free account keeps Jay "
-                        "going, and it takes a minute."
+                        "Add your info so nothing gets lost. Jay will remember this "
+                        "conversation and give you sharper answers for your rental "
+                        "instead of general advice."
                     ),
                 },
             )

@@ -637,7 +637,7 @@
 
 <div class="scrim" id="signup-card" hidden>
   <div class="card">
-    <h2>Keep going, free</h2>
+    <h2>Keep track of this conversation</h2>
     <p id="signup-why"></p>
     <form id="signup-form">
       <input id="su-name" type="text" maxlength="80" autocomplete="name"
@@ -650,7 +650,7 @@
              placeholder="Neighborhood where your rental is" required />
       <div class="formerr" id="signup-error"></div>
       <div class="row-buttons">
-        <button type="submit" id="signup-go">Create my free account</button>
+        <button type="submit" id="signup-go">Save my conversation</button>
       </div>
       <p class="fineprint">
         No password to remember. This browser keeps you signed in, and the neighborhood is
@@ -1384,7 +1384,8 @@
 
   function askToSignUp(why) {
     document.getElementById("signup-why").textContent = why ||
-      "That is your free questions used up. Tell Jay who you are and keep going.";
+      "Add your info so nothing gets lost. Jay will remember this conversation and give " +
+      "you sharper answers for your rental instead of general advice.";
     signupError.textContent = "";
     signupCard.hidden = false;
     document.getElementById("su-name").focus();
