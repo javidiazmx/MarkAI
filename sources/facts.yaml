@@ -1,11 +1,11 @@
 ordinances:
   - id: mined-545
     jurisdiction: "Illinois"
-    topic: "notice writing arrive least"
-    rule: "This notice must be in writing and must arrive to the tenant at least 30 days before their move-out date."
-    citation: "O'Flaherty Law: Illinois notice to move out"
-    url: "https://www.oflaherty-law.com/learn-about-law/how-much-notice-do-you-have-to-give-a-tenant-to-move-out-in-illinois"
-    notes: "From: This notice must be in writing and must arrive to the tenant at least 30 days before their move-out date."
+    topic: "Notice to end month-to-month tenancy"
+    rule: "For a month-to-month tenancy, the notice to end the tenancy must be in writing and must reach the tenant at least 30 days before the move-out date."
+    citation: "Eviction Process in Illinois: Understanding Your Legal Options"
+    url: "https://www.gcrealtyinc.com/blog/eviction-process-in-illinois-understanding-your-legal-options"
+    notes: "Corrected: this entry was mined from a third-party law firm blog (O'Flaherty Law), which is not an allowed source - GC Realty's own indexed content or a government page only. The same 30-day rule is already stated in GC's own blog - see mined-135, sourced from the same page - so this entry was re-pointed there instead."
   - id: mined-462
     jurisdiction: "Chicago"
     topic: "Minimum ceiling height by room type"
@@ -2956,10 +2956,10 @@ ordinances:
   - id: mined-36
     jurisdiction: "Chicago"
     topic: "Eviction notice"
-    rule: "Landlords must provide a 10-day notice to comply for non-payment of rent or a 30-day notice for lease violations or non-renewal, and must obtain a court order."
-    citation: "Chicago Residential Landlord and Tenant Ordinance (RLTO)"
-    url: "https://www.gcrealtyinc.com/blog/chicago-residential-landlord-and-tenant-ordinance"
-    notes: "From: Landlords must provide proper notice for evictions, including a 10-day notice to comply for non-payment of rent or a 30-day notice for lease violations or non-renewal."
+    rule: "Landlords must provide a 5-day notice to comply for non-payment of rent or a 10-day notice for lease violations, and must obtain a court order to evict."
+    citation: "What Makes a Chicagoland Rental Property Hard to Manage"
+    url: "https://www.gcrealtyinc.com/blog/what-makes-a-chicagoland-rental-property-hard-to-manage"
+    notes: "Corrected: the GC blog post originally cited here (chicago-residential-landlord-and-tenant-ordinance) itself states a 10-day notice for non-payment and a 30-day notice for lease violations - that page has the day counts backwards and inflated. The correct figures (5-day nonpayment, 10-day lease violation) are confirmed by Illinois's own eviction notice law, by Cook County's enacted RTLO text (which uses the same 5-day/10-day split), and by GC's own correctly-stated content elsewhere - see mined-142, mined-337, mined-113, mined-335 - so this entry was re-pointed to a GC source that has it right rather than left citing the page with the error."
   - id: mined-35
     jurisdiction: "Evanston, IL"
     topic: "Non-renewal notice"
