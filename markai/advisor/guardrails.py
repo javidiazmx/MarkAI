@@ -916,13 +916,46 @@ def ensure_disclaimer(answer: str, flags: list[str], already_given: bool = False
     return f"{answer.rstrip()}{separator}{LEGAL_DISCLAIMER}"
 
 
+_HIGH_RISK_ALREADY_HANDLED = (
+    "can't help",
+    "cannot help",
+    "won't help",
+    "is illegal",
+    "are illegal",
+    "would be illegal",
+    "protected class",
+    "protected characteristic",
+    "can't be based on",
+    "cannot be based on",
+    "against the law",
+    "against fair housing",
+    "violates fair housing",
+    "fair housing violation",
+    "fair housing law",
+)
+
+
 def ensure_high_risk_response(answer: str, flags: list[str]) -> str:
-    """Replace an answer that failed to decline a discriminatory or self-help request."""
+    """Replace an answer that failed to decline a discriminatory or self-help request.
+
+    A question can trip the high-risk classifier (it pattern-matches the *question*, before
+    any answer exists) while still deserving a real answer: "can I refuse a voucher holder"
+    is a landlord asking whether something is legal, not asking for help doing it, and the
+    right answer is exactly what a well-instructed model gives - explain that it's illegal,
+    then the lawful alternative. Overwriting that with the canned refusal was a real bug: a
+    landlord would watch a correct, compliant answer stream in and then get yanked away and
+    replaced with a reply that doesn't even address what they asked. So "already handled it"
+    covers more than literal refusal phrasing - any answer that already states the action is
+    illegal or protected-class-based counts, on the same trust basis the "can't help" check
+    already used: the system prompt is the primary enforcement (see the module docstring),
+    this is the backstop for when a model skips a decline entirely, not a re-derivation of
+    correctness from the answer's text.
+    """
     if FLAG_HIGH_RISK not in flags:
         return answer
     low = _norm(answer)
-    already_declined = "can't help" in low or "cannot help" in low or "won't help" in low
-    if already_declined:
+    already_handled = any(phrase in low for phrase in _HIGH_RISK_ALREADY_HANDLED)
+    if already_handled:
         return answer
     return f"{HIGH_RISK_RESPONSE}\n\n{LEGAL_DISCLAIMER}"
 

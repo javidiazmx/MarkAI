@@ -156,6 +156,23 @@ def test_high_risk_response_keeps_an_answer_that_already_declined():
     assert ensure_high_risk_response(good, [FLAG_HIGH_RISK]) == good
 
 
+def test_high_risk_response_keeps_a_compliant_answer_that_never_says_cant_help():
+    """A live bug: "Can I refuse a voucher holder in Chicago?" is a legality question, not
+    a request for help discriminating, and the model correctly answered it - explained the
+    action is illegal, then gave the lawful alternative - without ever using a literal
+    "can't help" refusal phrase. The old check replaced that correct, compliant answer with
+    the canned refusal, so a landlord watched a good answer stream in and then get yanked
+    away for one that didn't even address what they asked."""
+    good = (
+        "No. Turning someone down solely because they have a voucher is illegal in Chicago "
+        "and Cook County, and statewide in Illinois. Source of income is a protected class "
+        "under the Illinois Human Rights Act.\n\n"
+        "What you can still do: apply your normal screening exactly as you do to everyone "
+        "else."
+    )
+    assert ensure_high_risk_response(good, [FLAG_HIGH_RISK]) == good
+
+
 def test_high_risk_response_is_a_noop_without_the_flag():
     answer = "Screen everyone the same way."
     assert ensure_high_risk_response(answer, []) == answer
