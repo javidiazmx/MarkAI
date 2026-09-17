@@ -162,6 +162,16 @@ def find_notice_rules(
     asked = _terms(query)
     if not asked:
         return candidates[:5]
+    # Score by topic overlap first, not the full terms() bag: a fact's body can share a
+    # word with the reason query purely by accident - a tenant's own right to terminate
+    # early for domestic violence shares "notice" and "rent" with a nonpayment query - and
+    # that must not let it tie with, or outrank, a fact actually filed under a matching
+    # topic. Same "topic is the curated signal" reasoning as the domain filter above.
+    topic_scored = [(len(asked & _terms(o.topic)), o) for o in candidates]
+    topic_scored = [(score, o) for score, o in topic_scored if score]
+    if topic_scored:
+        topic_scored.sort(key=lambda pair: (-pair[0], -len(asked & pair[1].terms()), pair[1].id))
+        return [o for _, o in topic_scored[:5]]
     scored = [(len(asked & o.terms()), o) for o in candidates]
     scored = [(score, o) for score, o in scored if score]
     if not scored:

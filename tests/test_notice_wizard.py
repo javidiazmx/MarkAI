@@ -227,6 +227,35 @@ def test_a_label_naming_chicago_and_cook_together_answers_for_suburban_cook_too(
     assert "chi-only" not in cook_ids, "a Chicago-only label never does"
 
 
+def test_an_unrelated_tenant_right_does_not_outrank_the_matching_notice_fact():
+    """A live bug: asking the Illinois wizard about nonpayment surfaced "Early Lease
+    Termination For Violence Victims" ahead of the actual 5-day notice fact. Its topic
+    contains "termination" (passing the notice-domain filter) and its body happens to
+    share "notice" and "rent" with the nonpayment query, tying it with facts that are
+    actually about a nonpayment notice - and the tie broke in its favor purely because its
+    id sorts first alphabetically. A fact whose topic shares nothing with the reason asked
+    must not survive when a topically-matching fact is available."""
+    book = FactBook(
+        ordinances=[
+            _rule(
+                "violence-notice",
+                "Illinois",
+                "Early lease termination for violence victims",
+                "Tenants under threat of domestic or sexual violence can terminate the "
+                "lease early without owing future rent after providing written notice.",
+            ),
+            _rule(
+                "nonpay-notice",
+                "Illinois",
+                "Eviction notice",
+                "A 5-day notice is the legal prerequisite to an eviction in Illinois.",
+            ),
+        ]
+    )
+    results = find_notice_rules(book, "Illinois (no local ordinance)", "nonpayment", None, TODAY)
+    assert [o.id for o in results] == ["nonpay-notice"]
+
+
 def test_tenure_is_ignored_for_reasons_that_have_no_tenure_tiers():
     """Tenure tiers only exist for a no-cause non-renewal notice. Passing a tenure_years
     for nonpayment or a lease violation must not let a stray tenure word (e.g. "three
