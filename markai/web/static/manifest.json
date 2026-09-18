@@ -1,7 +1,7 @@
 {
   "name": "Jay - Chicagoland Landlord Advisor",
   "short_name": "Jay",
-  "description": "Your Chicagoland AI landlord advisor - notices, deal analysis, and property tracking.",
+  "description": "Straight answers on Chicagoland landlording - notices, deal numbers, and what is going on at your buildings.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

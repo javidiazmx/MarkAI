@@ -218,7 +218,7 @@ def test_reset_starts_a_new_conversation(settings, store):
 def test_the_index_page_is_served(settings, store):
     response = _client(settings, store).get("/")
     assert response.status_code == 200
-    assert "Your Chicagoland AI Advisor" in response.text
+    assert "Your Chicagoland Landlord Advisor" in response.text
 
 
 def test_importing_the_module_needs_no_credentials(monkeypatch):
@@ -590,7 +590,7 @@ def test_the_page_no_longer_shows_the_corpus_counts():
     page = Path("markai/web/static/index.html").read_text(encoding="utf-8")
     assert "passages · " not in page
     assert "keyword + semantic search" not in page
-    assert "Your Chicagoland AI Advisor" in page
+    assert "Your Chicagoland Landlord Advisor" in page
 
 
 # --- attaching files to a question ---------------------------------------------------------
