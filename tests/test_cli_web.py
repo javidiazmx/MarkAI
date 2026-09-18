@@ -218,7 +218,7 @@ def test_reset_starts_a_new_conversation(settings, store):
 def test_the_index_page_is_served(settings, store):
     response = _client(settings, store).get("/")
     assert response.status_code == 200
-    assert "Your Chicagoland Landlord Advisor" in response.text
+    assert "Your Chicagoland Advisor" in response.text
 
 
 def test_importing_the_module_needs_no_credentials(monkeypatch):
@@ -548,7 +548,7 @@ def test_the_page_and_the_notice_call_the_assistant_jay():
     page = Path("markai/web/static/index.html").read_text(encoding="utf-8")
     assert IDENTITY_NOTICE.startswith("Jay is an AI assistant")
     assert "Mark Ainley" in IDENTITY_NOTICE, "whose style it borrows is still named"
-    assert "<h1>Jay</h1>" in page
+    assert "<h1>Ask Jay</h1>" in page
     assert 'addMessage("mark", "Jay")' in page
 
 
@@ -590,7 +590,7 @@ def test_the_page_no_longer_shows_the_corpus_counts():
     page = Path("markai/web/static/index.html").read_text(encoding="utf-8")
     assert "passages · " not in page
     assert "keyword + semantic search" not in page
-    assert "Your Chicagoland Landlord Advisor" in page
+    assert "Your Chicagoland Advisor" in page
 
 
 # --- attaching files to a question ---------------------------------------------------------
