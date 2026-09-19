@@ -70,6 +70,7 @@ def offline(monkeypatch):
     ``_ytdlp_extract`` itself.
     """
     from markai.ingest import pipeline, websites, youtube
+    from markai.web import accounts
 
     monkeypatch.setattr(websites, "_sleep", lambda _seconds: None)
     monkeypatch.setattr(youtube, "_sleep", lambda _seconds: None)
@@ -79,6 +80,12 @@ def offline(monkeypatch):
         raise youtube.RateLimitedError(f"stubbed: no network in tests ({url})")
 
     monkeypatch.setattr(youtube, "_ytdlp_extract", blocked)
+
+    # A signup's email domain gets a real DNS lookup in production. Default it to "yes,
+    # reachable" so every existing test's fake domain (example.com and friends) keeps
+    # working without a real query - a test that wants the rejection path patches this
+    # itself to return False.
+    monkeypatch.setattr(accounts, "_domain_can_receive_mail", lambda domain: True)
 
 
 @pytest.fixture(autouse=True)

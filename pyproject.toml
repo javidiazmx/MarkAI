@@ -42,6 +42,10 @@ dependencies = [
   # FastAPI's UploadFile (the maintenance-photo upload route) parses multipart/form-data
   # through this at request time - without it every route in app.py fails to even build.
   "python-multipart>=0.0.9",
+  # A signup's email domain is checked for an MX record before the lead is accepted - the
+  # standard library can resolve A/AAAA but has no MX record type, so this is required, not
+  # optional, for that check.
+  "dnspython>=2.6",
 ]
 
 [project.optional-dependencies]

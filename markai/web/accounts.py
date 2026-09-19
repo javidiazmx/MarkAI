@@ -32,20 +32,78 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import dns.exception
+import dns.resolver
+
 logger = logging.getLogger(__name__)
 
 MAX_NAME_CHARS = 80
 MAX_EMAIL_CHARS = 200
 MAX_PHONE_CHARS = 30
 MAX_NEIGHBORHOOD_CHARS = 80
-MIN_PHONE_DIGITS = 10
 
 SESSION_DAYS = 30
 
-# Deliberately loose. Whether an address is theirs is not a regex's business; this catches
-# a missing @ and a trailing comma.
+# Shape first, then substance: a regex can't tell whether an address is theirs, but it can
+# tell whether the domain could ever receive mail at all, and it costs nothing to check.
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s.]+(\.[^@\s.]+)+$")
 _DIGITS = re.compile(r"\d")
+
+# The well-known throwaway-inbox services. Someone using one of these isn't planning to be
+# reachable - the point of the form is a real lead, not a technically-valid string.
+_DISPOSABLE_EMAIL_DOMAINS = frozenset(
+    {
+        "mailinator.com",
+        "guerrillamail.com",
+        "guerrillamailblock.com",
+        "10minutemail.com",
+        "tempmail.com",
+        "temp-mail.org",
+        "throwawaymail.com",
+        "yopmail.com",
+        "trashmail.com",
+        "getnada.com",
+        "sharklasers.com",
+        "dispostable.com",
+        "fakeinbox.com",
+        "maildrop.cc",
+        "mintemail.com",
+        "mailnesia.com",
+        "moakt.com",
+    }
+)
+
+# NANP format: the first digit of the area code and of the exchange code are always 2-9 -
+# an easy, dependency-free way to reject "1234567890" (area code starting with 1) or
+# "0000000000" (starting with 0) without needing a phone-number library. 555 is reserved for
+# fiction and directory assistance and was never assigned as a real area code.
+_NANP_PHONE = re.compile(r"^[2-9]\d{2}[2-9]\d{6}$")
+_RESERVED_AREA_CODES = frozenset({"555"})
+
+
+def _domain_can_receive_mail(domain: str) -> bool:
+    """True if the domain has an MX record.
+
+    Deliberately not "or an A record" - a bare A record with no MX is the exact signature
+    of a parked or typo-squatted domain ("gmial.com" resolves to a parking page's IP but
+    has never had mail service), not a small legitimate domain being minimal. Any domain
+    that actually wants email today - Gmail, a custom Google Workspace domain, a business
+    host - sets an explicit MX record; one that doesn't is not somewhere a real message
+    would arrive.
+
+    A DNS problem (timeout, resolver hiccup, the domain's nameserver being slow) fails
+    open - a landlord typing a real address should never be turned away because a lookup
+    was briefly unreliable. This only rejects a definitive "no mail here": NXDOMAIN (the
+    domain does not exist) or a clean answer with no MX record in it.
+    """
+    try:
+        dns.resolver.resolve(domain, "MX", lifetime=4.0)
+        return True
+    except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
+        return False
+    except dns.exception.DNSException:
+        return True
+
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS accounts (
@@ -114,6 +172,28 @@ def normalize_email(value: Any) -> str:
     return _clean(value, MAX_EMAIL_CHARS).lower()
 
 
+def _normalize_us_phone(phone: str) -> str | None:
+    """The bare 10 digits, if this is a plausible US/Canada number - ``None`` otherwise.
+
+    Strips a leading country code 1, then validates the first 10 digits against NANP
+    format and the one reserved block worth calling out by name - anything after that is
+    left alone, since a real business line written with an extension ("312-555-0134 x22")
+    is exactly the kind of real number this should accept, not reject. Deliberately not a
+    full phone-number library: this does not know a disconnected number from a working one,
+    only a plausible one from an impossible one - "1234567890" and "5555555555" fail, a
+    real-shaped number passes.
+    """
+    digits = "".join(_DIGITS.findall(phone))
+    if digits.startswith("1") and len(digits) > 10:
+        digits = digits[1:]
+    core = digits[:10]
+    if len(core) < 10 or not _NANP_PHONE.match(core):
+        return None
+    if core[:3] in _RESERVED_AREA_CODES or len(set(core)) == 1:
+        return None
+    return core
+
+
 def parse(raw: dict[str, Any]) -> Account:
     """Validate the form. Every message names its field, so it can be shown as it is."""
     name = _clean(raw.get("name"), MAX_NAME_CHARS)
@@ -122,14 +202,19 @@ def parse(raw: dict[str, Any]) -> Account:
     email = normalize_email(raw.get("email"))
     if not _EMAIL.match(email):
         raise SignupError("That email address does not look right.")
-    phone = _clean(raw.get("phone"), MAX_PHONE_CHARS)
-    if len(_DIGITS.findall(phone)) < MIN_PHONE_DIGITS:
-        raise SignupError("A phone number with the area code, please.")
+    domain = email.rsplit("@", 1)[-1]
+    if domain in _DISPOSABLE_EMAIL_DOMAINS:
+        raise SignupError("Please use an email address we can actually reach you at.")
+    if not _domain_can_receive_mail(domain):
+        raise SignupError("That email domain doesn't look right - check it for a typo.")
+    phone_raw = _clean(raw.get("phone"), MAX_PHONE_CHARS)
+    if _normalize_us_phone(phone_raw) is None:
+        raise SignupError("A real US phone number with the area code, please.")
     return Account(
         id=secrets.token_hex(16),
         email=email,
         name=name,
-        phone=phone,
+        phone=phone_raw,
         neighborhood=_clean(raw.get("neighborhood"), MAX_NEIGHBORHOOD_CHARS),
     )
 

@@ -42,13 +42,35 @@ def test_every_field_is_kept_and_the_email_is_normalized():
         ("email", "javier", "email address"),
         ("email", "javier@", "email address"),
         ("email", "javier@example", "email address"),
-        ("phone", "555", "area code"),
-        ("phone", "", "area code"),
+        ("email", "javier@mailinator.com", "reach you at"),
+        ("email", "javier@guerrillamail.com", "reach you at"),
+        ("phone", "555", "phone number"),
+        ("phone", "", "phone number"),
+        ("phone", "1234567890", "phone number"),  # area code can't start with 1
+        ("phone", "0123456789", "phone number"),  # area code can't start with 0
+        ("phone", "5551234567", "phone number"),  # 555 is reserved, never a real area code
+        ("phone", "1111111111", "phone number"),  # every fake-number generator's filler
+        ("phone", "2222222222", "phone number"),  # NANP-valid shape, still all one digit
     ],
 )
 def test_a_field_that_cannot_be_used_says_which_one(field, value, message):
     with pytest.raises(SignupError, match=message):
         parse({**FORM, field: value})
+
+
+def test_a_real_shaped_area_code_with_a_555_exchange_is_still_accepted():
+    """555 the area code is reserved fiction; 555 as the *exchange* (the middle three of a
+    real area code) is just an ordinary number - "312-555-0134" is GC Realty's own test
+    fixture and must keep working."""
+    assert parse({**FORM, "phone": "312-555-0134"}).phone
+
+
+def test_an_email_domain_that_cannot_receive_mail_is_rejected(monkeypatch):
+    from markai.web import accounts
+
+    monkeypatch.setattr(accounts, "_domain_can_receive_mail", lambda domain: False)
+    with pytest.raises(SignupError, match="typo"):
+        parse({**FORM, "email": "javier@thisdomaindoesnotexist.invalid"})
 
 
 def test_the_neighborhood_is_wanted_but_not_demanded():
