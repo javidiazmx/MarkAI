@@ -1372,14 +1372,11 @@
   // that was coming."
   var freeCounter = document.getElementById("free-counter");
   function drawFreeCounter() {
-    var showing = account.required && !account.signed_in && account.free_left !== null &&
-      account.free_left !== undefined;
-    freeCounter.hidden = !showing;
-    if (showing) {
-      freeCounter.textContent = account.free_left === 1
-        ? "1 free question left"
-        : account.free_left + " free questions left";
-    }
+    // Owner decision: the countdown itself isn't shown - a landlord finding out how many
+    // questions are left should happen at the signup card, not as a running number they
+    // watch drop toward zero. free_left is still tracked and still gates the wall exactly
+    // as before; only this display is gone.
+    freeCounter.hidden = true;
   }
 
   function askToSignUp(why) {
