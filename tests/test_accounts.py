@@ -106,7 +106,7 @@ def test_a_subdomain_of_a_disposable_provider_is_still_rejected(email):
 
 
 def test_a_domain_that_merely_ends_with_a_disposable_name_is_not_rejected():
-    """"notmailinator.com" is not a subdomain of "mailinator.com" - a suffix check done by
+    """ "notmailinator.com" is not a subdomain of "mailinator.com" - a suffix check done by
     string-slicing rather than dot-boundary would wrongly conflate the two."""
     assert parse({**FORM, "email": "javier@notmailinator.com"}).email
 
