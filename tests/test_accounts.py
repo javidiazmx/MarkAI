@@ -6,7 +6,13 @@ import time
 
 import pytest
 
-from markai.web.accounts import Accounts, SignupError, anonymous_owner, parse
+from markai.web.accounts import (
+    Accounts,
+    SignupError,
+    anonymous_owner,
+    ensure_domain_is_reachable,
+    parse,
+)
 
 FORM = {
     "name": "Javier Diaz",
@@ -65,12 +71,44 @@ def test_a_real_shaped_area_code_with_a_555_exchange_is_still_accepted():
     assert parse({**FORM, "phone": "312-555-0134"}).phone
 
 
-def test_an_email_domain_that_cannot_receive_mail_is_rejected(monkeypatch):
+async def test_an_email_domain_that_cannot_receive_mail_is_rejected(monkeypatch):
     from markai.web import accounts
 
-    monkeypatch.setattr(accounts, "_domain_can_receive_mail", lambda domain: False)
+    async def unreachable(domain: str) -> bool:
+        return False
+
+    monkeypatch.setattr(accounts, "_domain_can_receive_mail", unreachable)
     with pytest.raises(SignupError, match="typo"):
-        parse({**FORM, "email": "javier@thisdomaindoesnotexist.invalid"})
+        await ensure_domain_is_reachable("javier@thisdomaindoesnotexist.invalid")
+
+
+async def test_a_reachable_domain_passes():
+    # The autouse "offline" fixture stubs _domain_can_receive_mail to True, so this only
+    # needs to confirm the happy path raises nothing - not a real DNS query.
+    await ensure_domain_is_reachable("javier@example.com")
+
+
+@pytest.mark.parametrize(
+    "email",
+    [
+        "javier@abc.mailinator.com",
+        "javier@sub.deeper.mailinator.com",
+        "javier@sub.guerrillamail.com",
+    ],
+)
+def test_a_subdomain_of_a_disposable_provider_is_still_rejected(email):
+    """A live finding: the blocklist used to be an exact match, so "abc.mailinator.com"
+    sailed through untouched - and since these services wildcard MX for every subdomain,
+    the reachability check didn't catch it either. The domain check must cover the whole
+    family, not just the bare domain."""
+    with pytest.raises(SignupError, match="reach you at"):
+        parse({**FORM, "email": email})
+
+
+def test_a_domain_that_merely_ends_with_a_disposable_name_is_not_rejected():
+    """"notmailinator.com" is not a subdomain of "mailinator.com" - a suffix check done by
+    string-slicing rather than dot-boundary would wrongly conflate the two."""
+    assert parse({**FORM, "email": "javier@notmailinator.com"}).email
 
 
 def test_the_neighborhood_is_wanted_but_not_demanded():

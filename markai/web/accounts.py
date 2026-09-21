@@ -32,6 +32,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import dns.asyncresolver
 import dns.exception
 import dns.resolver
 
@@ -73,6 +74,19 @@ _DISPOSABLE_EMAIL_DOMAINS = frozenset(
     }
 )
 
+
+def _is_disposable_domain(domain: str) -> bool:
+    """True for a listed domain or any subdomain of one.
+
+    Exact-matching alone lets "abc.mailinator.com" straight through - Mailinator (and most
+    of these services) wildcards MX for every subdomain, so it passes the MX check too. A
+    listed domain poisons everything under it.
+    """
+    return domain in _DISPOSABLE_EMAIL_DOMAINS or any(
+        domain.endswith(f".{blocked}") for blocked in _DISPOSABLE_EMAIL_DOMAINS
+    )
+
+
 # NANP format: the first digit of the area code and of the exchange code are always 2-9 -
 # an easy, dependency-free way to reject "1234567890" (area code starting with 1) or
 # "0000000000" (starting with 0) without needing a phone-number library. 555 is reserved for
@@ -81,7 +95,7 @@ _NANP_PHONE = re.compile(r"^[2-9]\d{2}[2-9]\d{6}$")
 _RESERVED_AREA_CODES = frozenset({"555"})
 
 
-def _domain_can_receive_mail(domain: str) -> bool:
+async def _domain_can_receive_mail(domain: str) -> bool:
     """True if the domain has an MX record.
 
     Deliberately not "or an A record" - a bare A record with no MX is the exact signature
@@ -95,9 +109,16 @@ def _domain_can_receive_mail(domain: str) -> bool:
     open - a landlord typing a real address should never be turned away because a lookup
     was briefly unreliable. This only rejects a definitive "no mail here": NXDOMAIN (the
     domain does not exist) or a clean answer with no MX record in it.
+
+    Async on purpose, not a convenience: this used to be a synchronous call, which meant a
+    slow-to-answer domain held a worker thread from FastAPI's shared thread pool for up to
+    the full timeout - the same pool every other route, including the chat endpoint, is
+    offloaded to. A handful of signups pointed at domains with blackholed DNS could have
+    starved that pool for every other user. A native async resolve holds no thread at all
+    while it waits, so it cannot do that no matter how many run at once.
     """
     try:
-        dns.resolver.resolve(domain, "MX", lifetime=4.0)
+        await dns.asyncresolver.resolve(domain, "MX", lifetime=2.5)
         return True
     except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
         return False
@@ -195,7 +216,14 @@ def _normalize_us_phone(phone: str) -> str | None:
 
 
 def parse(raw: dict[str, Any]) -> Account:
-    """Validate the form. Every message names its field, so it can be shown as it is."""
+    """Validate the form. Every message names its field, so it can be shown as it is.
+
+    Local and synchronous on purpose: every check here is a string match, nothing that
+    touches the network. The one check that does - whether the email domain can actually
+    receive mail - lives in :func:`ensure_domain_is_reachable`, called separately, because
+    it has to be awaited to avoid tying up a worker thread while it waits on someone else's
+    DNS server.
+    """
     name = _clean(raw.get("name"), MAX_NAME_CHARS)
     if len(name) < 2:
         raise SignupError("Tell us your name.")
@@ -203,10 +231,8 @@ def parse(raw: dict[str, Any]) -> Account:
     if not _EMAIL.match(email):
         raise SignupError("That email address does not look right.")
     domain = email.rsplit("@", 1)[-1]
-    if domain in _DISPOSABLE_EMAIL_DOMAINS:
+    if _is_disposable_domain(domain):
         raise SignupError("Please use an email address we can actually reach you at.")
-    if not _domain_can_receive_mail(domain):
-        raise SignupError("That email domain doesn't look right - check it for a typo.")
     phone_raw = _clean(raw.get("phone"), MAX_PHONE_CHARS)
     if _normalize_us_phone(phone_raw) is None:
         raise SignupError("A real US phone number with the area code, please.")
@@ -217,6 +243,19 @@ def parse(raw: dict[str, Any]) -> Account:
         phone=phone_raw,
         neighborhood=_clean(raw.get("neighborhood"), MAX_NEIGHBORHOOD_CHARS),
     )
+
+
+async def ensure_domain_is_reachable(email: str) -> None:
+    """Raise :class:`SignupError` if the address's domain plainly cannot receive mail.
+
+    Split out from :func:`parse` so the network wait is a real ``await``, not a blocking
+    call sitting inside a worker thread borrowed from the same pool every other route
+    shares - see :func:`_domain_can_receive_mail` for why that mattered. Call this before
+    :meth:`Accounts.create`, which assumes it has already been checked.
+    """
+    domain = email.rsplit("@", 1)[-1]
+    if not await _domain_can_receive_mail(domain):
+        raise SignupError("That email domain doesn't look right - check it for a typo.")
 
 
 class Accounts:

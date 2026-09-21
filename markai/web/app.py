@@ -696,20 +696,32 @@ def create_app(
         }
 
     @app.post("/api/account")
-    def create_account(
+    async def create_account(
         payload: SignupRequest,
         response: Response,
         browser: str = Depends(browser_of),
         _: None = Depends(require_access),
         __: None = Depends(rate_limit_public_forms),
     ) -> dict[str, Any]:
-        from markai.web.accounts import SignupError, anonymous_owner
+        from markai.web.accounts import (
+            SignupError,
+            anonymous_owner,
+            ensure_domain_is_reachable,
+            parse,
+        )
 
         accounts = get_accounts()
         # Checked before the row exists, so one person filling the form on their phone and
         # their laptop reaches the CRM once.
         already_a_lead = accounts.seen_before(payload.email)
         try:
+            # Local checks first - a malformed email or an obviously fake phone should
+            # never reach a network call at all. Only once the form is well-formed does
+            # the domain get checked, and that check is awaited rather than blocking: a
+            # domain with unresponsive DNS must not be able to tie up a worker thread from
+            # the pool every other route shares.
+            account = parse(payload.model_dump())
+            await ensure_domain_is_reachable(account.email)
             saved, token = accounts.create(payload.model_dump())
         except SignupError as exc:
             # The message names the field, so it is meant to be shown.

@@ -81,11 +81,15 @@ def offline(monkeypatch):
 
     monkeypatch.setattr(youtube, "_ytdlp_extract", blocked)
 
-    # A signup's email domain gets a real DNS lookup in production. Default it to "yes,
-    # reachable" so every existing test's fake domain (example.com and friends) keeps
+    # A signup's email domain gets a real, awaited DNS lookup in production. Default it to
+    # "yes, reachable" so every existing test's fake domain (example.com and friends) keeps
     # working without a real query - a test that wants the rejection path patches this
-    # itself to return False.
-    monkeypatch.setattr(accounts, "_domain_can_receive_mail", lambda domain: True)
+    # itself to return False. Async because the real function is: awaiting a plain bool
+    # raises TypeError, so the stub has to be a coroutine too.
+    async def reachable(domain: str) -> bool:
+        return True
+
+    monkeypatch.setattr(accounts, "_domain_can_receive_mail", reachable)
 
 
 @pytest.fixture(autouse=True)
