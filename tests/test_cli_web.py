@@ -218,7 +218,7 @@ def test_reset_starts_a_new_conversation(settings, store):
 def test_the_index_page_is_served(settings, store):
     response = _client(settings, store).get("/")
     assert response.status_code == 200
-    assert "Your Chicagoland Advisor" in response.text
+    assert "Your Chicagoland Landlord Advisor" in response.text
 
 
 def test_importing_the_module_needs_no_credentials(monkeypatch):
@@ -590,7 +590,7 @@ def test_the_page_no_longer_shows_the_corpus_counts():
     page = Path("markai/web/static/index.html").read_text(encoding="utf-8")
     assert "passages · " not in page
     assert "keyword + semantic search" not in page
-    assert "Your Chicagoland Advisor" in page
+    assert "Your Chicagoland Landlord Advisor" in page
 
 
 # --- attaching files to a question ---------------------------------------------------------
@@ -1111,17 +1111,19 @@ SIGNUP = {
 }
 
 
-def test_two_questions_are_answered_then_the_wall(settings, store):
+def test_four_questions_are_answered_then_the_wall(settings, store):
     client = _client(settings, store, FakeAdvisor())
     headers = {"X-Browser-Id": "b1"}
 
-    assert client.get("/api/account", headers=headers).json()["free_left"] == 2
+    assert client.get("/api/account", headers=headers).json()["free_left"] == 4
     assert _ask(client, "t1", "First question").status_code == 200
-    assert client.get("/api/account", headers=headers).json()["free_left"] == 1
+    assert client.get("/api/account", headers=headers).json()["free_left"] == 3
     assert _ask(client, "t2", "Second question").status_code == 200
+    assert _ask(client, "t3", "Third question").status_code == 200
+    assert _ask(client, "t4", "Fourth question").status_code == 200
 
     walled = client.post(
-        "/api/chat", json={"session_id": "t3", "message": "Third"}, headers=headers
+        "/api/chat", json={"session_id": "t5", "message": "Fifth"}, headers=headers
     )
     assert walled.status_code == 403
     assert walled.json()["detail"]["signup_required"] is True
@@ -1196,14 +1198,14 @@ def test_a_failed_answer_does_not_spend_a_free_question(settings, store):
     client = _client(settings, store, advisor)
     headers = {"X-Browser-Id": "b1"}
     _ask(client, "t1", "First question")
-    assert client.get("/api/account", headers=headers).json()["free_left"] == 2
+    assert client.get("/api/account", headers=headers).json()["free_left"] == 4
 
 
 def test_another_browser_still_has_its_own_free_questions(settings, store):
     client = _client(settings, store, FakeAdvisor())
     _ask(client, "t1", "One", browser="b1")
     _ask(client, "t2", "Two", browser="b1")
-    assert client.get("/api/account", headers={"X-Browser-Id": "b2"}).json()["free_left"] == 2
+    assert client.get("/api/account", headers={"X-Browser-Id": "b2"}).json()["free_left"] == 4
     assert _ask(client, "t3", "One", browser="b2").status_code == 200
 
 
@@ -1214,7 +1216,7 @@ def test_deleting_the_conversations_does_not_hand_back_a_free_question(settings,
     _ask(client, "t2", "Two")
     client.delete("/api/threads/t1", headers=headers)
     client.delete("/api/threads/t2", headers=headers)
-    assert client.get("/api/account", headers=headers).json()["free_left"] == 0
+    assert client.get("/api/account", headers=headers).json()["free_left"] == 2
 
 
 def test_the_gate_can_be_turned_off(settings, store):
@@ -1509,7 +1511,7 @@ def test_doctor_reports_on_the_page_the_accounts_and_the_crm(tmp_path, monkeypat
     bare = runner.invoke(app, ["doctor"])
     assert bare.exit_code == 0
     assert "Web access code" in bare.stdout and "not set" in bare.stdout
-    assert "2 free question" in bare.stdout and "No password" in bare.stdout
+    assert "4 free question" in bare.stdout and "No password" in bare.stdout
     assert "MARKAI_LEAD_EMAIL_TO" in bare.stdout, "it says how to wire the leads up"
     assert "fine on 127.0.0.1" in bare.stdout
 
@@ -1599,7 +1601,7 @@ def test_old_databases_load_and_keep_what_they_hold(tmp_path):
     old.execute(
         "INSERT INTO accounts VALUES ('b-javid','Javier','javier@example.com','312','Logan',1.0)"
     )
-    old.execute("INSERT INTO usage VALUES ('b-javid', 2)")
+    old.execute("INSERT INTO usage VALUES ('b-javid', 4)")
     old.commit()
     old.close()
 
@@ -1614,7 +1616,7 @@ def test_old_databases_load_and_keep_what_they_hold(tmp_path):
     properties = client.get("/api/properties", headers=headers).json()["properties"]
     assert [p["label"] for p in properties] == ["2145 W Division"]
 
-    # The two questions already spent still count, so the wall stays where it was.
+    # The four questions already spent still count, so the wall stays where it was.
     assert client.get("/api/account", headers=headers).json()["free_left"] == 0
     walled = client.post("/api/chat", json={"session_id": "x", "message": "third"}, headers=headers)
     assert walled.status_code == 403

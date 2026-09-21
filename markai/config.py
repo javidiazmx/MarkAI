@@ -199,12 +199,12 @@ class Settings(BaseSettings):
         ),
     )
     free_questions_before_signup: int = Field(
-        default=2,
+        default=4,
         ge=0,
         le=100,
         description=(
-            "Questions a browser gets answered before the signup form. Two, because a "
-            "landlord who has had two real answers knows what they are signing up for."
+            "Questions a browser gets answered before the signup form. Four, so a "
+            "landlord gets a real feel for what they are signing up for before being asked."
         ),
     )
 
