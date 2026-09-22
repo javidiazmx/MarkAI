@@ -174,7 +174,10 @@
     letter-spacing: .06em; color: var(--muted);
   }
   .side-top button { padding: 5px 11px; font-size: 13px; border-radius: 8px; }
-  #threads { flex: 1; overflow-y: auto; padding: 8px; min-height: 60px; }
+  /* Bounded, not flex:1 - a nearly-empty list used to stretch to fill the whole sidebar,
+     shoving "Your properties" and "Tools" out of sight below a wall of blank space. Capped
+     at a sensible height instead, so the sections below sit right after it either way. */
+  #threads { max-height: 38vh; overflow-y: auto; padding: 8px; min-height: 60px; }
   .side-section { border-top: 1px solid var(--line); padding: 8px; }
   /* A "jump to this section" action (the command palette, an empty-state shortcut) needs
      something that visibly happens even when the section was already on screen the whole
@@ -295,7 +298,10 @@
   }
   #log-form .pair { display: flex; gap: 6px; }
   #log-form button { padding: 7px 12px; font-size: 13px; border-radius: 7px; }
-  .side-foot { border-top: 1px solid var(--line); padding: 9px; }
+  .side-foot {
+    border-top: 1px solid var(--line); padding: 9px;
+    display: flex; flex-direction: column; gap: 6px;
+  }
   .side-foot button { width: 100%; padding: 9px 10px; font-size: 13px; border-radius: 8px; }
   #handoff-text {
     width: 100%; min-height: 42vh; padding: 10px; border: 1px solid var(--line);
@@ -618,13 +624,13 @@
       </div>
     </form>
     <div class="log-skeleton" id="log-skeleton" hidden></div>
-    <button class="ghost acct-open" id="open-accounting" type="button">
-      <span id="acct-teaser">Income &amp; expenses</span>
-    </button>
   </div>
 
   <div class="side-foot">
     <div class="side-head"><h3>Tools</h3></div>
+    <button class="ghost acct-open" id="open-accounting" type="button">
+      <span id="acct-teaser">Income &amp; expenses</span>
+    </button>
     <button class="ghost" id="open-deal" type="button">Deal Analyzer</button>
     <button class="ghost" id="open-notice-wizard" type="button">Which notice do I need?</button>
     <button class="ghost" id="open-maintenance" type="button">Maintenance Tracker</button>
