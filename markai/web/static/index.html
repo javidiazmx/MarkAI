@@ -174,10 +174,12 @@
     letter-spacing: .06em; color: var(--muted);
   }
   .side-top button { padding: 5px 11px; font-size: 13px; border-radius: 8px; }
-  /* Bounded, not flex:1 - a nearly-empty list used to stretch to fill the whole sidebar,
-     shoving "Your properties" and "Tools" out of sight below a wall of blank space. Capped
-     at a sensible height instead, so the sections below sit right after it either way. */
-  #threads { max-height: 38vh; overflow-y: auto; padding: 8px; min-height: 60px; }
+  /* flex:1 on purpose: the owner wants "Your properties"/"Tools" anchored at the bottom of
+     the sidebar, with the conversation list taking whatever room that leaves - so a
+     landlord with a real list of chats sees as many titles as the screen allows. A short
+     list just shows blank space under its own search box, which reads as "an empty list",
+     not the earlier bug where an unrelated section got shoved down out of sight by it. */
+  #threads { flex: 1; overflow-y: auto; padding: 8px; min-height: 60px; }
   .side-section { border-top: 1px solid var(--line); padding: 8px; }
   /* A "jump to this section" action (the command palette, an empty-state shortcut) needs
      something that visibly happens even when the section was already on screen the whole
