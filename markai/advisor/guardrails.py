@@ -15,9 +15,9 @@ LEGAL_DISCLAIMER = (
 )
 NOT_COVERED_PHRASE = "That's not covered in my training materials."
 IDENTITY_NOTICE = (
-    "Jay is an AI assistant built in the style of Mark Ainley (Straight Up Chicago "
-    "Investor). It is not Mark Ainley, it is not a lawyer, and its answers are not "
-    "reviewed by him or by an attorney."
+    "Jay is an agent built by GC Realty & Development, trained to help landlords manage "
+    "their investments and make things easier for them. It is not Mark Ainley, it is not "
+    "a lawyer, and its answers are not reviewed by him or by an attorney."
 )
 REFUSAL_TEXT = (
     "I can't help with that one. If it's a Chicagoland landlording question, try "

@@ -546,8 +546,8 @@ def test_the_page_and_the_notice_call_the_assistant_jay():
     from markai.advisor.guardrails import IDENTITY_NOTICE
 
     page = Path("markai/web/static/index.html").read_text(encoding="utf-8")
-    assert IDENTITY_NOTICE.startswith("Jay is an AI assistant")
-    assert "Mark Ainley" in IDENTITY_NOTICE, "whose style it borrows is still named"
+    assert IDENTITY_NOTICE.startswith("Jay is an agent built by GC Realty")
+    assert "Mark Ainley" in IDENTITY_NOTICE, "still named, to say plainly it isn't him"
     assert "<h1>Ask Jay</h1>" in page
     assert 'addMessage("mark", "Jay")' in page
 
