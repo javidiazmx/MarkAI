@@ -383,6 +383,13 @@ def create_app(
             raise HTTPException(status_code=401, detail="Admin code required.")
         admin_attempts.record_success(address)
 
+    def require_ingest_webhook_access(x_ingest_token: str | None = Header(default=None)) -> None:
+        """Same fail-closed shape as `require_admin_access`: this route kicks off a real
+        background job, so an unset token refuses every request rather than allowing them."""
+        expected = settings.ingest_token()
+        if not expected or not x_ingest_token or not hmac.compare_digest(x_ingest_token, expected):
+            raise HTTPException(status_code=401, detail="Ingest token required.")
+
     def rate_limit_public_forms(request: Request) -> None:
         if not form_rate_limiter.allow(client_ip_of(request)):
             raise HTTPException(status_code=429, detail="Too many requests. Try again shortly.")
@@ -776,6 +783,62 @@ def create_app(
             crm.deliver_soon()
         except Exception:
             logger.exception("could not queue a candidate lead")
+
+    ingest_lock = threading.Lock()
+    ingest_state = {"running": False}
+
+    def _run_youtube_ingest() -> None:
+        """The actual work, on its own thread with its own store connection - never the one
+        `get_store()` hands to a live chat request, so a slow weekly ingest can't contend
+        with someone asking Jay a question at the same time.
+        """
+        from markai.ingest.pipeline import run_ingest
+        from markai.knowledge.embeddings import build_embedder
+        from markai.knowledge.store import KnowledgeStore
+        from markai.models import SourceKind
+        from markai.sources.manifest import load_manifest
+
+        try:
+            settings.ensure_dirs()
+            store = KnowledgeStore(settings.db_path)
+            try:
+                manifest = load_manifest(settings.sources_file)
+                report = run_ingest(
+                    manifest,
+                    store,
+                    build_embedder(settings),
+                    settings,
+                    only={SourceKind.YOUTUBE},
+                    allow_transcription=False,
+                    log=lambda message: logger.info("weekly youtube ingest: %s", message),
+                )
+                logger.info(
+                    "weekly youtube ingest finished: %d added, %d updated, %d failed",
+                    len(report.added),
+                    len(report.updated),
+                    len(report.failures),
+                )
+            finally:
+                store.close()
+        except Exception:
+            logger.exception("weekly youtube ingest failed")
+        finally:
+            with ingest_lock:
+                ingest_state["running"] = False
+
+    @app.post("/internal/ingest-youtube")
+    def trigger_youtube_ingest(_: None = Depends(require_ingest_webhook_access)) -> dict[str, Any]:
+        """A weekly cron job's entire job is pinging this - see the Render Cron Job set up
+        alongside it. Runs in the background and returns immediately: a cron job's own
+        timeout is not the ingest run's problem, and there is nothing useful to stream back
+        to a `curl` call that fires once and moves on.
+        """
+        with ingest_lock:
+            if ingest_state["running"]:
+                return {"started": False, "reason": "an ingest is already running"}
+            ingest_state["running"] = True
+        threading.Thread(target=_run_youtube_ingest, daemon=True).start()
+        return {"started": True}
 
     @app.get("/admin")
     def admin_page() -> FileResponse:

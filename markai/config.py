@@ -305,6 +305,14 @@ class Settings(BaseSettings):
             "contact details at once."
         ),
     )
+    ingest_webhook_token: SecretStr | None = Field(
+        default=None,
+        description=(
+            "Required for POST /internal/ingest-youtube, sent as header X-Ingest-Token. "
+            "Unset refuses every request rather than allowing them - this route runs a real "
+            "background job, and must never be reachable by a stranger who finds the URL."
+        ),
+    )
     pm_fit_alert_email_to: str = Field(
         default="",
         description=(
@@ -371,6 +379,9 @@ class Settings(BaseSettings):
 
     def admin_code(self) -> str | None:
         return self._reveal(self.admin_access_code)
+
+    def ingest_token(self) -> str | None:
+        return self._reveal(self.ingest_webhook_token)
 
     def youtube_proxy(self) -> str | None:
         return self._reveal(self.youtube_proxy_url)

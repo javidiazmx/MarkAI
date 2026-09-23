@@ -4081,3 +4081,90 @@ def test_regenerate_reads_the_question_off_its_own_slot_not_a_shared_variable():
     ]
     assert "slot.apiMessage" in regenerate_body
     assert "slot.rawQuestion" in regenerate_body
+
+
+# --- the weekly YouTube ingest webhook ----------------------------------------------------
+
+
+def test_the_youtube_ingest_webhook_requires_the_token(settings, store):
+    client = _client(settings, store)
+    assert client.post("/internal/ingest-youtube").status_code == 401
+
+
+def test_the_youtube_ingest_webhook_rejects_the_wrong_token(settings, store):
+    settings = settings.model_copy(update={"ingest_webhook_token": "right-token"})
+    client = _client(settings, store)
+    resp = client.post("/internal/ingest-youtube", headers={"X-Ingest-Token": "wrong"})
+    assert resp.status_code == 401
+
+
+def test_the_youtube_ingest_webhook_starts_a_youtube_only_background_ingest(
+    settings, store, monkeypatch
+):
+    import threading as threading_module
+
+    import markai.ingest.pipeline as pipeline
+    from markai.models import SourceKind
+
+    calls = []
+
+    def fake_run_ingest(manifest, store_arg, embedder, settings_arg, **kwargs):
+        calls.append(kwargs)
+        return pipeline.IngestReport()
+
+    monkeypatch.setattr(pipeline, "run_ingest", fake_run_ingest)
+
+    class ImmediateThread:
+        def __init__(self, target, daemon=None):
+            self._target = target
+
+        def start(self):
+            self._target()
+
+    monkeypatch.setattr(threading_module, "Thread", ImmediateThread)
+
+    settings = settings.model_copy(update={"ingest_webhook_token": "right-token"})
+    settings.sources_file.write_text("websites: []\n", encoding="utf-8")
+    client = _client(settings, store)
+    resp = client.post("/internal/ingest-youtube", headers={"X-Ingest-Token": "right-token"})
+    assert resp.status_code == 200
+    assert resp.json() == {"started": True}
+    assert len(calls) == 1
+    assert calls[0]["only"] == {SourceKind.YOUTUBE}
+    assert calls[0]["allow_transcription"] is False
+
+
+def test_the_youtube_ingest_webhook_refuses_a_second_run_while_one_is_in_progress(
+    settings, store, monkeypatch
+):
+    """A cron job that fires twice (a retry, a manual trigger during the weekly run) must
+    not start a second ingest stepping on the first one's store connection."""
+    import threading as threading_module
+
+    import markai.ingest.pipeline as pipeline
+
+    started = threading_module.Event()
+    finish = threading_module.Event()
+
+    def slow_run_ingest(manifest, store_arg, embedder, settings_arg, **kwargs):
+        started.set()
+        finish.wait(timeout=5)
+        return pipeline.IngestReport()
+
+    monkeypatch.setattr(pipeline, "run_ingest", slow_run_ingest)
+
+    settings = settings.model_copy(update={"ingest_webhook_token": "right-token"})
+    settings.sources_file.write_text("websites: []\n", encoding="utf-8")
+    client = _client(settings, store)
+    headers = {"X-Ingest-Token": "right-token"}
+
+    first = client.post("/internal/ingest-youtube", headers=headers)
+    assert first.status_code == 200
+    assert first.json() == {"started": True}
+    assert started.wait(timeout=5), "the background thread never started"
+
+    second = client.post("/internal/ingest-youtube", headers=headers)
+    assert second.status_code == 200
+    assert second.json()["started"] is False
+
+    finish.set()
