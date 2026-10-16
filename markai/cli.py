@@ -1187,6 +1187,90 @@ def search(
     store.close()
 
 
+@app.command()
+def quotes(
+    topics: list[str] = typer.Argument(..., help="One or more topics to pull passages for."),
+    k: int = typer.Option(6, "-k", help="Passages per topic."),
+    kind: str = typer.Option("all", "--kind", help="all, website, youtube or podcast."),
+    chars: int = typer.Option(900, "--chars", help="Characters of each passage to keep."),
+    out: Path = typer.Option(None, "--out", help="Write markdown here instead of printing."),
+) -> None:
+    """Pull quotable passages out of your own material, with attribution and a link.
+
+    `mark search` is for checking what the retriever found, so it truncates every passage
+    to a couple of lines. This is for the other job: writing something - a blog post, an
+    email, a social post - in the voice of the people who actually said it. Full passages,
+    the episode or page they came from, and a link that lands on the minute.
+
+    Nothing is generated here. Every line is text already in your sources, copied out.
+
+        mark quotes "property management fees" "what owners get wrong" --kind podcast
+        mark quotes "security deposit" -k 10 --out docs\\quotes.md
+    """
+    from markai.knowledge.embeddings import build_embedder
+    from markai.knowledge.episodes import deep_link, format_timestamp
+    from markai.knowledge.retriever import Retriever
+    from markai.models import SourceKind
+
+    wanted = {
+        "all": None,
+        "website": SourceKind.WEBSITE,
+        "youtube": SourceKind.YOUTUBE,
+        "podcast": SourceKind.PODCAST,
+    }
+    if kind.lower() not in wanted:
+        _fail(f"Unknown kind {kind!r}.", "Use all, website, youtube or podcast.")
+    only = wanted[kind.lower()]
+
+    settings = _settings()
+    store = _store(settings)
+    retriever = Retriever(store, build_embedder(settings), settings)
+    if retriever.is_empty():
+        store.close()
+        _fail("The knowledge base is empty.", "Run `mark ingest` first.")
+
+    lines: list[str] = ["# Passages from your own sources", ""]
+    found_any = 0
+    for topic in topics:
+        # Over-fetch when a kind is named: the filter happens after retrieval, so asking
+        # for six podcast passages out of a corpus that is mostly blog posts needs room.
+        result = retriever.retrieve(topic, k * 4 if only else k)
+        picked = [rc for rc in result.chunks if only is None or rc.document.kind == only][:k]
+        lines.append(f"## {topic}")
+        lines.append("")
+        if not picked:
+            lines.append(f"*Nothing in the {kind} material matched.*")
+            lines.append("")
+            continue
+        for rc in picked:
+            found_any += 1
+            text = " ".join(rc.chunk.text.split())[:chars]
+            stamp = format_timestamp(rc.chunk.start_time) if rc.chunk.start_time is not None else ""
+            link = deep_link(rc.document, rc.chunk.start_time) or ""
+            where = [rc.document.title, rc.document.kind.value]
+            if rc.document.episode:
+                where.insert(1, f"ep. {rc.document.episode}")
+            if stamp:
+                where.append(stamp)
+            if rc.document.published_at:
+                where.append(str(rc.document.published_at)[:10])
+            lines.append(f"> {text}")
+            lines.append("")
+            attribution = " · ".join(part for part in where if part)
+            lines.append(f"— {attribution}" + (f" · <{link}>" if link else ""))
+            lines.append("")
+    store.close()
+
+    body = "\n".join(lines)
+    if out:
+        out = Path(out)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(body, encoding="utf-8")
+        console.print(f"[green]OK[/green] {found_any} passages written to {out}")
+    else:
+        console.print(body)
+
+
 def _accounts_store(settings: Any) -> Any:
     from markai.web.accounts import Accounts
 

@@ -4168,3 +4168,58 @@ def test_the_youtube_ingest_webhook_refuses_a_second_run_while_one_is_in_progres
     assert second.json()["started"] is False
 
     finish.set()
+
+
+def test_mark_quotes_pulls_full_passages_with_attribution(tmp_path, monkeypatch):
+    """`mark search` truncates to two lines; writing in their voice needs the whole thing."""
+    from markai.knowledge.chunking import chunk_document
+    from markai.knowledge.store import KnowledgeStore
+    from markai.models import Document, Segment, SourceKind
+
+    manifest = tmp_path / "sources.yaml"
+    manifest.write_text("business:\n  name: GC Realty\nsources: []\n", encoding="utf-8")
+    data = tmp_path / "data"
+    data.mkdir()
+    monkeypatch.setenv("MARKAI_SOURCES_FILE", str(manifest))
+    monkeypatch.setenv("MARKAI_DATA_DIR", str(data))
+
+    said = (
+        "The thing nobody tells you about managing your own place in Chicago is the "
+        "vacancy. Every month that unit sits empty costs you roughly eight to ten percent "
+        "of your annual rent, and that is before you pay to turn it over again."
+    )
+    episode = Document(
+        id="e1",
+        kind=SourceKind.YOUTUBE,
+        title="What Self-Managing Really Costs",
+        locator="https://youtube.com/watch?v=abc123",
+        link="https://youtube.com/watch?v=abc123",
+        episode="311",
+        text=said,
+        segments=[Segment(start=90.0, end=130.0, text=said)],
+    )
+    post = Document(
+        id="w1",
+        kind=SourceKind.WEBSITE,
+        title="A blog post about vacancy",
+        locator="https://example.com/vacancy",
+        text="Vacancy is expensive and costs you money every month it drags on in Chicago.",
+    )
+    store = KnowledgeStore(data / "markai.db")
+    for doc in (episode, post):
+        doc.ensure_hash()
+        store.upsert_document(doc, chunk_document(doc, target_words=60, overlap_words=10))
+    store.close()
+
+    out = tmp_path / "quotes.md"
+    result = runner.invoke(
+        app, ["quotes", "vacancy cost", "-k", "3", "--kind", "youtube", "--out", str(out)]
+    )
+    assert result.exit_code == 0, result.stdout
+
+    body = out.read_text(encoding="utf-8")
+    assert "## vacancy cost" in body
+    assert "eight to ten percent" in body, "the whole passage, not a 220-character stub"
+    assert "ep. 311" in body and "1:30" in body, "attribution a writer can print"
+    assert "t=90s" in body, "the link lands on the minute it was said"
+    assert "A blog post about vacancy" not in body, "--kind youtube means only the episodes"
