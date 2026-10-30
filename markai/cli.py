@@ -1274,62 +1274,126 @@ def quotes(
 @app.command()
 def export(
     out: Path = typer.Option(
-        None, "--out", help="Folder to write the two files into. Default: your data folder."
+        None, "--out", help="Folder to write into. Default: your data folder."
     ),
-    costs: bool = typer.Option(True, "--costs/--no-costs", help="Include the cost ranges."),
+    episodes: bool = typer.Option(
+        False, "--episodes", help="Also the podcast and YouTube transcripts. Much bigger."
+    ),
+    everything: bool = typer.Option(
+        False,
+        "--everything",
+        help="Every indexed page, including the county and federal sites Jay reads.",
+    ),
+    facts: bool = typer.Option(
+        False,
+        "--facts",
+        help="Also the reviewed fact layer, as a separate question-answering pack.",
+    ),
+    part_chars: int = typer.Option(
+        350_000, "--part-chars", help="Roughly how big each part may get before it splits."
+    ),
 ) -> None:
-    """Write two files you can hand to another chatbot, so it knows what Jay knows.
+    """Write your own published material to a file, to hand another chatbot as background.
 
-    One is a short block of rules for that bot's standing instructions; the other is the
-    reviewed fact layer, to upload as a file. Both, not one: the instructions field persists
-    across every conversation, an attachment only applies where you attach it, and the rules
-    are the part that has to always be loaded. A bot reading 547 rules with no instruction to
-    ask which town the building is in will answer a Chicago question with Evanston's notice
-    period, which is a wrong answer rather than a missing one.
+    Everything GC Realty has put out - the service pages, the handbooks, every blog post - in
+    full and in its own words, so a model that reads it knows who you are and what you do.
+    Nothing is summarized and nothing is rewritten. The site's navigation and footer are
+    stripped once instead of being printed on all four hundred pages, and the file splits
+    into parts on a post boundary rather than through the middle of one.
 
-    Nothing private goes in either file: no key, no landlord's name, email or phone, nothing
-    from anyone's property log, no question anyone asked. Entries that are GC Realty's own
-    house rules are labelled as such, and a few are held back entirely - the command tells
-    you which and why.
+    County and federal pages are left out: Jay reads those for ordinances and they are not
+    who you are. `--everything` puts them back. `--episodes` adds the transcripts, which are
+    the bulk of the words and carry a caveat the pack states - a transcript never records who
+    was speaking, and most episodes have a co-host and a guest.
 
-    That bot is not Jay. Its answers are not guarded, logged or reviewed the way Jay's are.
+    `--facts` additionally writes the reviewed fact layer and a short block of rules, for a
+    bot you want answering landlord questions rather than just knowing the background.
 
         mark export
-        mark export --out docs\\grok
+        mark export --episodes --out docs\\grok
     """
     from datetime import date
 
-    from markai.sources.export import context_pack, instructions
-    from markai.sources.facts import facts_path, load_facts
+    from markai.sources.background import background_pack, is_own
 
     settings = _settings()
     manifest = _manifest(settings)
-    path = facts_path(settings.sources_file)
-    book = load_facts(path)
-    if book.is_empty():
-        _fail(f"No facts to export - {path} is empty or missing.", "Run `mark facts review`.")
-
     today = date.today()
     folder = Path(out) if out else settings.data_dir
     folder.mkdir(parents=True, exist_ok=True)
+
+    store = _store(settings)
+    try:
+        docs = store.list_documents()
+    finally:
+        store.close()
+    if not everything:
+        docs = [doc for doc in docs if is_own(doc)]
+    if not docs:
+        _fail(
+            "Nothing indexed to export.",
+            "Run `mark ingest` first - the pack is built from what Jay has already read.",
+        )
+
+    parts = background_pack(
+        docs,
+        manifest.business,
+        today.isoformat(),
+        episodes=episodes,
+        part_chars=max(50_000, part_chars),
+    )
+    written = []
+    for index, body in enumerate(parts, start=1):
+        suffix = "" if len(parts) == 1 else f"-{index}"
+        path = folder / f"gc-background{suffix}.md"
+        path.write_text(body, encoding="utf-8")
+        written.append((path, len(body)))
+
+    console.print(f"[green]OK[/green] {len(docs):,} pages from your own sites:")
+    for path, size in written:
+        console.print(f"  {escape(str(path))} ({size / 1000:,.0f} KB)")
+    if not episodes:
+        console.print("\n`--episodes` adds the podcast and YouTube transcripts.")
+
+    if facts:
+        _export_facts(settings, manifest, folder, today)
+
+
+def _export_facts(settings: Any, manifest: Any, folder: Path, today: Any) -> None:
+    """The question-answering half: the reviewed rules, plus the guardrails they need.
+
+    Separate from the background pack because it is a different job. Background is the
+    company in its own words and nothing bad happens if a model reads it loosely. The fact
+    layer answers "how many days do I have", where reading it loosely means a landlord
+    serving Evanston's notice period on a Chicago tenancy - so it ships with a block of
+    rules for the bot's standing instructions, and is useless without them.
+    """
+    from markai.sources.export import context_pack, instructions
+    from markai.sources.facts import facts_path, load_facts
+
+    path = facts_path(settings.sources_file)
+    book = load_facts(path)
+    if book.is_empty():
+        console.print(f"\n[yellow]![/yellow] No facts to export - {escape(str(path))} is empty.")
+        return
+
     pack_file = folder / "gc-context-pack.md"
     rules_file = folder / "gc-context-instructions.md"
-
-    body, held = context_pack(book, manifest, today, include_costs=costs)
+    body, held = context_pack(book, manifest, today, include_costs=True)
     pack_file.write_text(body, encoding="utf-8")
     rules = instructions(
         manifest,
         kept=len(book.in_force(today)) - len(held),
-        costs=len(book.costs) if costs else 0,
+        costs=len(book.costs),
         today=today,
         pack_name=pack_file.name,
     )
     rules_file.write_text(rules, encoding="utf-8")
 
-    console.print(f"[green]OK[/green] {escape(str(pack_file))} — upload this one as a file")
+    console.print(f"\n[green]OK[/green] {escape(str(pack_file))} — the reviewed rules")
     console.print(
-        f"[green]OK[/green] {escape(str(rules_file))} — paste this into the bot's "
-        f"custom instructions ({len(rules):,} characters)"
+        f"[green]OK[/green] {escape(str(rules_file))} — paste into the bot's custom "
+        f"instructions ({len(rules):,} characters). The rules pack is unsafe without them."
     )
     if held:
         console.print("\nHeld back, deliberately:")

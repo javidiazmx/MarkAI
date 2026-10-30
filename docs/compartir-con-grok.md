@@ -1,18 +1,9 @@
-# Cómo darle a tu bot de Grok el contexto de GC Realty
+# Cómo darle a Grok el trasfondo de GC Realty
 
-`mark export` genera dos archivos. **Son dos a propósito, y la diferencia importa.**
+El objetivo es que Grok sepa **quién es GC Realty y qué hacen** — no que conteste preguntas
+legales. Para eso está `mark export`.
 
-| Archivo | Dónde va | Por qué |
-|---|---|---|
-| `gc-context-instructions.md` | Las **Custom Instructions** de Grok | Persisten en **todas** las conversaciones |
-| `gc-context-pack.md` | Subido como **archivo adjunto** | Solo aplica donde lo adjuntas |
-
-Las reglas de seguridad tienen que estar en la parte que siempre se carga. Si las metes
-dentro del archivo, el primer chat que abras sin adjuntarlo es un bot respondiendo una
-pregunta de Chicago con el plazo de notificación de Evanston — que es una respuesta
-equivocada, no una respuesta faltante.
-
-## Generar los archivos
+## El comando
 
 En `cmd`, dentro de `C:\Users\javid\MarkAI`:
 
@@ -20,87 +11,93 @@ En `cmd`, dentro de `C:\Users\javid\MarkAI`:
 python -m markai export
 ```
 
-Los deja en tu carpeta `data\`. Si los quieres en otro lado:
+Escribe `gc-background.md` en tu carpeta `data\`: todo lo que GC Realty ha publicado — las
+páginas del sitio, los handbooks, cada post del blog — completo y en sus propias palabras.
+Nada resumido, nada reescrito. Si una frase está en el archivo, alguien de GC Realty la
+escribió.
+
+Si es muy grande se parte solo, y **siempre corta entre posts, nunca a la mitad de uno**.
+Cada parte dice cuál es y dónde quedó el encabezado.
 
 ```cmd
-python -m markai export --out docs\grok
+python -m markai export --episodes          :: + transcripciones del podcast y YouTube
+python -m markai export --out docs\grok     :: en otra carpeta
+python -m markai export --part-chars 200000 :: partes más chicas
 ```
 
-El comando te dice en pantalla qué entradas dejó fuera y por qué. No oculta nada.
+## Lo que incluye y lo que no
 
-## Cargarlos en Grok
+**Incluye, por defecto:** solo material de `gcrealtyinc.com` y
+`straightupchicagoinvestor.com`. Las páginas del condado, de HUD y de Illinois quedan fuera
+— Jay las lee para las ordenanzas, pero no son quiénes son ustedes. `--everything` las
+vuelve a meter.
 
-1. **Las instrucciones.** Abre Grok → Settings → Customize / Custom Instructions. Pega
-   el contenido completo de `gc-context-instructions.md`. Son unos 2,900 caracteres, así
-   que entra aunque el límite esté en 4,000.
-2. **El paquete.** Adjunta `gc-context-pack.md` a la conversación. Son ~260 KB, muy por
-   debajo del límite de archivos de Grok.
-3. **Si usas Workspaces / Projects** (recomendado): crea uno llamado *GC Realty*, pon las
-   instrucciones ahí y sube el archivo al workspace. Así el archivo queda adjunto a cada
-   conversación de ese workspace y no tienes que volver a subirlo.
+**Las transcripciones quedan fuera por defecto** (`--episodes` las agrega). Son la mayor
+parte de las palabras y traen una advertencia que el paquete explica: una transcripción no
+registra quién habla, y casi todos los episodios tienen co-host e invitado. "El episodio 311
+cubre esto" es seguro; "Mark dijo esto" normalmente no.
 
-Verifica que funcionó con una pregunta que tenga trampa:
+**La plantilla del sitio se quita una sola vez.** Un crawl de cuatrocientas páginas arrastra
+el mismo menú y el mismo pie de página cuatrocientas veces. Sin quitarlo, eso sería la mayor
+parte del archivo y todo ruido. Cualquier línea que aparezca en buena parte de las páginas se
+descarta una vez, globalmente, y el paquete dice cuántas líneas se fueron. En un sitio chico
+(menos de 12 páginas) no quita nada: con seis páginas, una frase compartida pasaría cualquier
+umbral y se comería tu propio contenido.
 
-> *Tengo un edificio en Evanston. ¿Cuánto aviso debo dar para no renovar?*
+## Cargarlo en Grok
 
-Una respuesta correcta dice **90 días**, cita `mined-35`, y termina con la frase del
-disclaimer. Si contesta 60 días (que es Cook County) o no cita ningún id, las instrucciones
-no se cargaron.
+Súbelo como archivo adjunto. Si es más de una parte, súbelas todas — Grok acepta hasta ~100
+archivos en un mensaje y hasta 48 MB cada uno, así que el tamaño no va a ser el problema.
 
-## Qué contiene el paquete
+Si usas **Workspaces / Projects**, crea uno llamado *GC Realty* y sube los archivos ahí. Así
+quedan adjuntos a cada conversación de ese workspace y no los vuelves a subir.
 
-544 entradas revisadas por ti, agrupadas **por jurisdicción** y no por tema. Esa decisión
-es deliberada: una pregunta de Evanston sobre avisos tiene tres respuestas correctas según
-el motivo — 10 días por falta de pago, 30 por violación del contrato, 90 por no renovar — y
-agrupar por jurisdicción las deja juntas para que el modelo vea la bifurcación. Agrupadas
-por tema quedarían a cientos de líneas de distancia, y el modelo contestaría con la que
-encontró primero. Eso ya pasó una vez en tu propio Notice Wizard; la nota de `mined-546` lo
-documenta.
+No necesitas instrucciones especiales para esto. El paquete trae su propio encabezado que le
+dice al modelo qué está leyendo, incluida la parte honesta: que es el material de una empresa
+de administración, no una fuente neutral, y que varios posts tienen años encima.
 
-Cada entrada lleva su cita textual, su fuente y su id. El id es la parte importante: las
-instrucciones obligan al bot a terminar cada frase factual con el id del que salió, así que
-cualquier invento queda sin id y se detecta con un Ctrl-F. Es la única protección que
-funciona aunque quien lea la respuesta no sepa de leyes.
+## Si además quieres que conteste preguntas
 
-## Qué NO contiene, a propósito
+Eso es otro trabajo y necesita otra cosa:
 
-Nada privado: ninguna llave, ningún nombre, correo o teléfono de un propietario, nada del
-registro de propiedades de nadie, ninguna pregunta que alguien haya hecho.
+```cmd
+python -m markai export --facts
+```
 
-Y tres entradas quedan fuera del paquete por completo:
+Agrega dos archivos más: la capa de hechos revisada (544 entradas con su cita y su fuente) y
+un bloque corto de reglas para las **Custom Instructions** de Grok.
 
-- **`mined-459` y `mined-400`** — los criterios de screening (4x ingresos, score 700, 3x la
-  renta). Publicar los criterios de **una** empresa a un desconocido como si fueran el
-  estándar legal es cómo empieza una queja por impacto dispar. `guardrails.py` tiene un
-  rechazo fijo para este tema precisamente por eso, y Grok no lo tiene.
-- **`mined-337`** — dice que el aviso de 5 días es el prerrequisito legal para *cualquier*
-  desalojo en Illinois. Es cierto para falta de pago y falso para los demás motivos.
-  Reetiquetarla no arregla una frase que está mal como ley.
+Ese bloque **no es opcional**. El trasfondo se puede leer suelto y no pasa nada; la capa de
+hechos contesta "cuántos días tengo", y leerla suelta significa un propietario sirviendo el
+plazo de Evanston en un contrato de Chicago. Jay nunca ve las 544 entradas de golpe —
+`select()` le pone ocho frente a cada pregunta — así que entregarlas todas juntas cambia el
+modo de falla de "no tengo el dato" a "agarré el dato de la ciudad equivocada".
 
-Otras 22 entradas sí van, pero marcadas **"GC Realty policy, not law"** y en su propia
-sección: son cosas como el límite de 14 días para visitas o quién cambia los focos. Son
-reglas de tu casa, no ordenanzas, y llegaban etiquetadas como "Chicago" o "Illinois" igual
-que todo lo demás. El exportador las detecta por la URL de origen (`/resident-handbook`,
-`/owner-handbook`, `/leasing-faq`, etc.), así que cualquier regla que mines mañana de esas
-páginas queda marcada sola.
+Tres entradas quedan fuera del paquete de hechos por completo, y el comando te dice cuáles:
 
-## Dos cosas que deberías decidir
+- **`mined-459` y `mined-400`** — los criterios de screening. Publicar los criterios de *una*
+  empresa como si fueran el estándar legal es cómo empieza una queja por impacto dispar.
+- **`mined-337`** — dice que el aviso de 5 días es el prerrequisito para *cualquier* desalojo
+  en Illinois. Cierto para falta de pago, falso para los demás motivos.
 
-**1. `never_say` está vacío en `sources.yaml`.** En una superficie sin guardrails es el
-único freno que el paquete puede llevar, y ahora mismo no lleva ninguno. Como mínimo valdría
-la pena poner: no cotizar un honorario de administración, y no recomendar a un abogado por
-nombre. El comando te lo recuerda cada vez que corre.
+Otras 22 van marcadas **"GC Realty policy, not law"**, en su propia sección: el límite de 14
+días para visitas, quién cambia los focos. Reglas de tu casa que llegaban etiquetadas como
+"Chicago" igual que una ordenanza. Se detectan por la URL de origen, así que lo que mines
+mañana de `/resident-handbook` queda marcado solo.
 
-**2. Esto es lo más valioso del repo.** 544 hechos revisados, citados y con fuente — el
-trabajo de meses de minería y revisión. Un chatbot de terceros guarda lo que le subes y
-puede entrenar con ello. No es una razón para no hacerlo, pero sí para decidirlo a
-sabiendas en vez de por omisión.
+## Dos cosas que son tu decisión
+
+**`never_say` está vacío** en `sources.yaml`. Solo importa para el paquete de hechos, donde
+es el único freno que viaja. Mínimo sugerido: no cotizar un honorario de administración, y no
+recomendar a un abogado por nombre.
+
+**Esto es lo más valioso del repo.** Un chatbot de terceros guarda lo que le subes y puede
+entrenar con ello. El paquete de trasfondo es todo contenido ya público, así que ahí el
+riesgo es bajo. La capa de hechos no: son meses de minería y revisión tuya, y eso sí lo estás
+regalando. No es razón para no hacerlo, pero sí para decidirlo a sabiendas.
 
 ## Mantenerlo al día
 
-Ninguna entrada en `facts.yaml` tiene fecha de vigencia — ni una sola de las 446 ordenanzas
-tiene `effective_from`. El paquete lleva la fecha de exportación y le dice al bot que las
-ordenanzas suelen cambiar el 1 de enero, pero eso es una advertencia, no una solución.
-
-Vuelve a correr `python -m markai export` cada vez que aceptes hechos nuevos con
-`mark facts review`, y en todo caso antes del **1 de marzo** de cada año.
+Vuelve a correr el comando después de cada `mark ingest` o cada `mark facts review`. Ninguna
+entrada de `facts.yaml` tiene fecha de vigencia, así que el paquete lleva la fecha de
+exportación y avisa que las ordenanzas suelen cambiar el 1 de enero.

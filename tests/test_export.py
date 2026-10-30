@@ -49,6 +49,26 @@ def _pack(*rules, costs=(), manifest=None):
     return body, held
 
 
+def _seed_site(data):
+    """One page of GC's own site, so the background half has something to write."""
+    from markai.knowledge.store import KnowledgeStore
+    from markai.models import Document, SourceKind
+
+    url = "https://www.gcrealtyinc.com/services"
+    doc = Document(
+        id=Document.make_id(SourceKind.WEBSITE, url),
+        kind=SourceKind.WEBSITE,
+        title="Our services",
+        locator=url,
+        text="We manage residential rentals across Chicagoland.",
+        link=url,
+    )
+    doc.ensure_hash()
+    store = KnowledgeStore(data / "markai.db")
+    store.upsert_document(doc, [])
+    store.close()
+
+
 # --- jurisdiction, which is the whole reason this is dangerous -----------------------
 
 
@@ -214,8 +234,9 @@ def test_the_pack_carries_no_settings_no_key_and_nobody_s_question(tmp_path, mon
     store = KnowledgeStore(data / "markai.db")
     store.log_question("s1", "how long do I have to return a deposit", "none", [], True, {})
     store.close()
+    _seed_site(data)
 
-    result = runner.invoke(app, ["export"])
+    result = runner.invoke(app, ["export", "--facts"])
     assert result.exit_code == 0, result.stdout
 
     pack = (data / "gc-context-pack.md").read_text(encoding="utf-8")
@@ -245,7 +266,8 @@ def test_the_files_round_trip_as_utf8(tmp_path, monkeypatch):
     monkeypatch.setenv("MARKAI_SOURCES_FILE", str(manifest))
     monkeypatch.setenv("MARKAI_DATA_DIR", str(data))
 
-    assert runner.invoke(app, ["export"]).exit_code == 0
+    _seed_site(data)
+    assert runner.invoke(app, ["export", "--facts"]).exit_code == 0
     body = (data / "gc-context-pack.md").read_text(encoding="utf-8")
     assert "—" in body and "§" in body
 
@@ -298,7 +320,8 @@ def test_an_empty_never_say_is_flagged_rather_than_passed_over(tmp_path, monkeyp
     monkeypatch.setenv("MARKAI_SOURCES_FILE", str(manifest))
     monkeypatch.setenv("MARKAI_DATA_DIR", str(data))
 
-    result = runner.invoke(app, ["export"])
+    _seed_site(data)
+    result = runner.invoke(app, ["export", "--facts"])
     assert result.exit_code == 0
     assert "never_say" in result.stdout
 
@@ -311,9 +334,11 @@ def test_an_empty_fact_book_fails_instead_of_writing_an_empty_pack(tmp_path, mon
     monkeypatch.setenv("MARKAI_SOURCES_FILE", str(manifest))
     monkeypatch.setenv("MARKAI_DATA_DIR", str(data))
 
-    result = runner.invoke(app, ["export"])
-    assert result.exit_code != 0
+    _seed_site(data)
+    result = runner.invoke(app, ["export", "--facts"])
+    assert result.exit_code == 0, "the background half still has something to say"
     assert not (data / "gc-context-pack.md").exists()
+    assert "No facts to export" in result.stdout
 
 
 def test_every_rule_that_should_be_in_the_pack_is_in_it_exactly_once():
