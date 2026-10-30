@@ -73,6 +73,17 @@ plazo de Evanston en un contrato de Chicago. Jay nunca ve las 544 entradas de go
 `select()` le pone ocho frente a cada pregunta — así que entregarlas todas juntas cambia el
 modo de falla de "no tengo el dato" a "agarré el dato de la ciudad equivocada".
 
+**Tus notas internas no van.** Las notas que escribes en una entrada — donde registras que
+un post tuyo tiene una cifra al revés, o que el Notice Wizard mostraba el aviso equivocado —
+quedan fuera por defecto. Eso no es material para el modelo de un tercero. `--owner-notes`
+las incluye si alguna vez las necesitas.
+
+**El comando revisa antes de escribir.** Si un correo o un teléfono se coló en un campo de
+`facts.yaml` — y `CostRange.source` es justo donde cae una cotización telefónica de un
+proveedor — el export se detiene y te dice en qué entrada y en qué campo está. Las
+direcciones solo avisan, porque la de GC Realty aparece citada legítimamente dentro de
+`mined-165`. También verifica que el paquete no cite ids que no define.
+
 Tres entradas quedan fuera del paquete de hechos por completo, y el comando te dice cuáles:
 
 - **`mined-459` y `mined-400`** — los criterios de screening. Publicar los criterios de *una*

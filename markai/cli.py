@@ -1289,6 +1289,11 @@ def export(
         "--facts",
         help="Also the reviewed fact layer, as a separate question-answering pack.",
     ),
+    owner_notes: bool = typer.Option(
+        False,
+        "--owner-notes",
+        help="Include your own notes on fact entries. They are internal; off by default.",
+    ),
     part_chars: int = typer.Option(
         350_000, "--part-chars", help="Roughly how big each part may get before it splits."
     ),
@@ -1307,7 +1312,10 @@ def export(
     was speaking, and most episodes have a co-host and a guest.
 
     `--facts` additionally writes the reviewed fact layer and a short block of rules, for a
-    bot you want answering landlord questions rather than just knowing the background.
+    bot you want answering landlord questions rather than just knowing the background. Your
+    own notes on those entries stay out of it unless you ask with `--owner-notes`: they are
+    where you record that one of your own posts has a figure backwards, and that is not
+    something to hand a stranger's model.
 
         mark export
         mark export --episodes --out docs\\grok
@@ -1356,10 +1364,20 @@ def export(
         console.print("\n`--episodes` adds the podcast and YouTube transcripts.")
 
     if facts:
-        _export_facts(settings, manifest, folder, today)
+        _export_facts(settings, manifest, folder, today, owner_notes=owner_notes)
 
 
-def _export_facts(settings: Any, manifest: Any, folder: Path, today: Any) -> None:
+def _domain_of(url: str | None) -> str:
+    """The bare domain of the owner's own site, so their published address is not a leak."""
+    from urllib.parse import urlparse
+
+    host = urlparse(str(url or "")).netloc.lower()
+    return host[4:] if host.startswith("www.") else host
+
+
+def _export_facts(
+    settings: Any, manifest: Any, folder: Path, today: Any, owner_notes: bool = False
+) -> None:
     """The question-answering half: the reviewed rules, plus the guardrails they need.
 
     Separate from the background pack because it is a different job. Background is the
@@ -1368,26 +1386,59 @@ def _export_facts(settings: Any, manifest: Any, folder: Path, today: Any) -> Non
     serving Evanston's notice period on a Chicago tenancy - so it ships with a block of
     rules for the bot's standing instructions, and is useless without them.
     """
-    from markai.sources.export import context_pack, instructions
+    from markai.sources.export import (
+        INSTRUCTIONS_TIGHT,
+        context_pack,
+        instructions,
+        orphan_ids,
+        personal_details,
+    )
     from markai.sources.facts import facts_path, load_facts
 
     path = facts_path(settings.sources_file)
     book = load_facts(path)
-    if book.is_empty():
-        console.print(f"\n[yellow]![/yellow] No facts to export - {escape(str(path))} is empty.")
-        return
-
     pack_file = folder / "gc-context-pack.md"
     rules_file = folder / "gc-context-instructions.md"
-    body, held = context_pack(book, manifest, today, include_costs=True)
-    pack_file.write_text(body, encoding="utf-8")
+    if book.is_empty():
+        # Leaving yesterday's pack in the folder is how a stale fact layer gets uploaded
+        # under today's date.
+        stale = [f for f in (pack_file, rules_file) if f.exists()]
+        for old in stale:
+            old.unlink()
+        console.print(f"\n[yellow]![/yellow] No facts to export - {escape(str(path))} is empty.")
+        if stale:
+            console.print(f"  Removed {len(stale)} older file(s) so nothing stale is uploaded.")
+        return
+
+    body, held = context_pack(book, manifest, today, include_costs=True, owner_notes=owner_notes)
     rules = instructions(
         manifest,
         kept=len(book.in_force(today)) - len(held),
         costs=len(book.costs),
         today=today,
         pack_name=pack_file.name,
+        dated_rules=sum(1 for rule in book.in_force(today) if rule.effective_from),
     )
+
+    # Checked before anything is written: a warning printed after the file exists is a
+    # warning printed after the owner has already uploaded it.
+    allow = tuple(d for d in (_domain_of(manifest.business.contact_url),) if d)
+    leaks, addresses = personal_details(book, allow, owner_notes=owner_notes)
+    orphans = orphan_ids(body)
+    if leaks or orphans:
+        detail = []
+        if leaks:
+            detail.append(
+                "Somebody's contact details are in the fact layer: " + "; ".join(leaks[:5])
+            )
+        if orphans:
+            detail.append(
+                "The pack cites entries it does not define: " + ", ".join(orphans[:8]) + ". "
+                "An id with nothing behind it is a citation to nothing."
+            )
+        _fail("Nothing was written.", " ".join(detail) + " Fix sources/facts.yaml and re-run.")
+
+    pack_file.write_text(body, encoding="utf-8")
     rules_file.write_text(rules, encoding="utf-8")
 
     console.print(f"\n[green]OK[/green] {escape(str(pack_file))} — the reviewed rules")
@@ -1395,9 +1446,19 @@ def _export_facts(settings: Any, manifest: Any, folder: Path, today: Any) -> Non
         f"[green]OK[/green] {escape(str(rules_file))} — paste into the bot's custom "
         f"instructions ({len(rules):,} characters). The rules pack is unsafe without them."
     )
+    if len(rules) > INSTRUCTIONS_TIGHT:
+        console.print(
+            f"  [yellow]![/yellow] Over {INSTRUCTIONS_TIGHT:,} characters. The box is "
+            "reported to hold 12,000, but it was briefly cut to 4,000 - if yours refuses "
+            "this, trim `never_say` and `extra_instructions` in sources.yaml first."
+        )
     if held:
         console.print("\nHeld back, deliberately:")
         for line in held:
+            console.print(f"  {escape(line)}")
+    if addresses:
+        console.print("\n[yellow]![/yellow] Street addresses in the fact layer, worth a look:")
+        for line in addresses[:5]:
             console.print(f"  {escape(line)}")
     if not manifest.business.never_say:
         console.print(

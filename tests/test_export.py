@@ -275,10 +275,22 @@ def test_the_files_round_trip_as_utf8(tmp_path, monkeypatch):
 # --- the instructions half -----------------------------------------------------------
 
 
-def test_the_instructions_fit_the_smallest_box_grok_has_offered():
-    """Reported at 12,000 characters and at 4,000 in the same year. Fit the smaller one."""
-    text = instructions(SourceManifest(), kept=443, costs=101, today=TODAY, pack_name="pack.md")
-    assert len(text) < 4000
+def test_the_instructions_fit_the_box_even_fully_loaded():
+    """The bare block proves the floor. A real manifest fills never_say, so test that."""
+    from markai.sources.export import INSTRUCTIONS_LIMIT
+
+    loaded = SourceManifest.model_validate(
+        {
+            "business": {
+                "name": "GC Realty & Development",
+                "never_say": [f"Never say thing number {n}." for n in range(10)],
+                "extra_instructions": "Mention the seven counties. " * 10,
+            }
+        }
+    )
+    for manifest in (SourceManifest(), loaded):
+        text = instructions(manifest, kept=443, costs=101, today=TODAY, pack_name="pack.md")
+        assert len(text) < INSTRUCTIONS_LIMIT
 
 
 def test_the_instructions_ask_for_the_disclaimer_rather_than_forbidding_it():
@@ -326,7 +338,7 @@ def test_an_empty_never_say_is_flagged_rather_than_passed_over(tmp_path, monkeyp
     assert "never_say" in result.stdout
 
 
-def test_an_empty_fact_book_fails_instead_of_writing_an_empty_pack(tmp_path, monkeypatch):
+def test_an_empty_fact_book_writes_no_pack_and_says_so(tmp_path, monkeypatch):
     manifest = tmp_path / "sources.yaml"
     manifest.write_text("websites: []\n", encoding="utf-8")
     data = tmp_path / "data"
@@ -360,3 +372,186 @@ def test_every_rule_that_should_be_in_the_pack_is_in_it_exactly_once():
     assert sorted(found) == sorted(set(found)), "no entry is rendered twice"
     assert set(found) == {f"mined-{n}" for n in range(1, 7)} | {"mined-900"}
     assert len(held) == 1
+
+
+# --- the guards the footer promises ---------------------------------------------------
+
+
+def test_a_vendor_quote_pasted_into_a_cost_entry_stops_the_export():
+    """`CostRange.source` is exactly where a phone quote lands. One paste, a named person."""
+    from markai.sources.export import personal_details
+
+    book = FactBook.model_validate(
+        {
+            "ordinances": [_rule()],
+            "costs": [
+                {
+                    "id": "mined-900",
+                    "item": "Boiler swap",
+                    "low": 9000,
+                    "high": 12000,
+                    "unit": "USD",
+                    "source": "quote from Hernandez HVAC, (312) 555-0199, h@example.com",
+                }
+            ],
+        }
+    )
+    blocking, _ = personal_details(book, ("gcrealtyinc.com",))
+    assert any("phone number" in line and "mined-900" in line for line in blocking)
+    assert any("email address" in line for line in blocking)
+
+
+def test_the_owners_own_domain_is_not_a_leak():
+    from markai.sources.export import personal_details
+
+    book = FactBook.model_validate(
+        {"ordinances": [_rule(citation="Ask mark@gcrealtyinc.com for the current rate card")]}
+    )
+    assert personal_details(book, ("gcrealtyinc.com",))[0] == []
+    assert personal_details(book, ())[0] != [], "and it is a leak when it is not their domain"
+
+
+def test_a_street_address_is_reported_not_blocked():
+    """GC Realty's own address is quoted inside a real entry. Blocking on it blocks them."""
+    from markai.sources.export import personal_details
+
+    book = FactBook.model_validate(
+        {"ordinances": [_rule(notes="From: name GC Realty at 219 E Irving Park Rd as insured.")]}
+    )
+    blocking, addresses = personal_details(book, ())
+    assert blocking == []
+    assert any("219 E Irving Park Rd" in line for line in addresses)
+
+
+def test_the_owners_commentary_stays_out_unless_asked_for():
+    """It is where they record that one of their own posts has a figure backwards."""
+    rule = _rule(notes="Corrected: our own post has this backwards. From: $10 on the first $500.")
+    off, _ = _pack(rule)
+    assert "NOTE FROM THE OWNER" not in off
+    assert "has this backwards" not in off
+    assert "$10 on the first $500." in off, "the quoted half still ships"
+
+    on, _ = context_pack(_book(rule), SourceManifest(), TODAY, owner_notes=True)
+    assert "has this backwards" in on
+
+
+def test_an_id_cited_but_not_defined_is_caught():
+    """The withhold gate is id-level; free text routes straight around it."""
+    from markai.sources.export import orphan_ids
+
+    body, _ = context_pack(
+        _book(_rule(notes="Corrected: see mined-337, which has it right.")),
+        SourceManifest(),
+        TODAY,
+        owner_notes=True,
+    )
+    assert "mined-337" in orphan_ids(body)
+    assert orphan_ids(_pack(_rule())[0]) == []
+
+
+# --- the widening the first version shipped -------------------------------------------
+
+
+def _real_labels():
+    import yaml
+
+    raw = yaml.safe_load(open("sources/facts.yaml", encoding="utf-8"))
+    return sorted({(o.get("jurisdiction") or "") for o in raw.get("ordinances") or []})
+
+
+def test_no_real_label_is_ever_filed_under_a_place_it_excludes():
+    """Data-driven over the live file, because a hand-picked list is what missed this.
+
+    The first version matched `"chicago" in label`, so "Chicago suburbs", "Cook County
+    (suburbs outside Chicago)" and "Illinois (outside Chicago)" all printed under
+    `## Chicago` - the Evanston mistake pointed inward, and `notice_wizard._excludes_chicago`
+    already existed to prevent it.
+    """
+    from markai.sources.export import headings_for
+
+    for label in _real_labels():
+        low = label.lower()
+        headings = [heading for _, heading in headings_for(label)]
+        if "outside" in low or "suburb" in low or "chicagoland" in low or "chicago area" in low:
+            assert "Chicago" not in headings, f"{label!r} filed under Chicago"
+        if "outside" in low:
+            assert "Illinois (statewide)" not in headings, f"{label!r} filed as statewide"
+
+
+def test_a_label_naming_two_places_is_filed_under_both():
+    from markai.sources.export import headings_for
+
+    assert [h for _, h in headings_for("Chicago / Cook County, IL")] == [
+        "Chicago",
+        "Cook County (suburban / unincorporated)",
+    ]
+    assert [h for _, h in headings_for("Oak Park, Evanston, Mount Prospect")] == [
+        "Evanston",
+        "Oak Park",
+        "Mount Prospect",
+    ]
+
+
+def test_a_rule_naming_two_places_prints_under_each():
+    body, _ = _pack({"id": "mined-1", "jurisdiction": "Cook County (including Chicago)"})
+    assert body.count("`mined-1`") == 2
+    assert "## Chicago" in body and "## Cook County (suburban / unincorporated)" in body
+
+
+def test_a_town_is_not_matched_on_a_fragment_of_its_name():
+    """ "Schaumburg" contains "cha" and "Wilmette" contains "il"."""
+    from markai.sources.export import headings_for
+
+    assert [h for _, h in headings_for("Schaumburg, IL")] == ["Schaumburg"]
+    assert [h for _, h in headings_for("Wilmette")] == ["Wilmette"]
+
+
+def test_a_voucher_rule_does_not_claim_to_apply_everywhere():
+    from markai.sources.export import headings_for
+
+    assert [h for _, h in headings_for("Section 8 / HUD")] == [
+        "Federal, but only for voucher and subsidized tenancies"
+    ]
+    assert [h for _, h in headings_for("Federal (HUD/FHA)")] == [
+        "Federal, but only for voucher and subsidized tenancies"
+    ]
+    assert [h for _, h in headings_for("Federal (Fair Housing)")] == ["Applies anywhere (federal)"]
+
+
+def test_the_stacking_line_names_the_sections_that_exist():
+    with_baselines, _ = _pack(
+        {"id": "mined-1", "jurisdiction": "Illinois"},
+        {"id": "mined-2", "jurisdiction": "Evanston"},
+    )
+    assert "*Illinois (statewide)* stack" in with_baselines
+
+    without, _ = _pack({"id": "mined-1", "jurisdiction": "Evanston"})
+    assert "No section here applies everywhere" in without
+    assert "apply everywhere" not in without.replace("No section here applies everywhere", "")
+
+
+def test_a_pasted_email_header_never_becomes_the_quoted_source():
+    """ "From: " is the RFC 5322 header every forwarded thread opens with."""
+    quote, note = split_note(
+        "Spoke to the owner on N Kedzie. Forwarded thread From: maria@example.com, "
+        "she wants the deposit back."
+    )
+    assert quote == ""
+    assert note.startswith("Spoke to the owner")
+
+
+def test_the_policy_marker_is_the_same_string_in_both_files():
+    """The one literal the two files must agree on is the marker the bot looks for."""
+    rules = instructions(SourceManifest(), kept=1, costs=0, today=TODAY, pack_name="p.md")
+    body, _ = _pack(
+        {"id": "mined-1", "url": "https://www.gcrealtyinc.com/resident-handbook"},
+    )
+    assert POLICY_LABEL in rules and POLICY_LABEL in body
+
+
+def test_the_refusal_text_is_handed_over_byte_exact():
+    """Owner-approved wording, reproduced under an instruction to repeat it word for word."""
+    from markai.advisor.guardrails import HIGH_RISK_RESPONSE
+
+    rules = instructions(SourceManifest(), kept=1, costs=0, today=TODAY, pack_name="p.md")
+    assert HIGH_RISK_RESPONSE in rules
