@@ -90,6 +90,7 @@ Then:
 | `mark search --scores` | Same, showing the keyword and semantic scores behind the coverage verdict |
 | `mark episodes "boilers"` | Which episodes cover a topic: number, guest, topics, and a link that lands on the minute |
 | `mark episodes --guest "Jane Doe"` | The catalog, filtered to the episodes whose title names someone |
+| `mark export` | Two files for another chatbot: the rules for its instructions, the facts to upload |
 | `mark facts mine` | Reads every indexed source and proposes rules and prices out of them |
 | `mark facts review` | Walks the proposals; the ones you accept go into `facts.yaml` |
 | `mark facts validate` | Checks `sources/facts.yaml`: every ordinance cites something, the dates make sense |

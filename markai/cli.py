@@ -1271,6 +1271,77 @@ def quotes(
         console.print(body)
 
 
+@app.command()
+def export(
+    out: Path = typer.Option(
+        None, "--out", help="Folder to write the two files into. Default: your data folder."
+    ),
+    costs: bool = typer.Option(True, "--costs/--no-costs", help="Include the cost ranges."),
+) -> None:
+    """Write two files you can hand to another chatbot, so it knows what Jay knows.
+
+    One is a short block of rules for that bot's standing instructions; the other is the
+    reviewed fact layer, to upload as a file. Both, not one: the instructions field persists
+    across every conversation, an attachment only applies where you attach it, and the rules
+    are the part that has to always be loaded. A bot reading 547 rules with no instruction to
+    ask which town the building is in will answer a Chicago question with Evanston's notice
+    period, which is a wrong answer rather than a missing one.
+
+    Nothing private goes in either file: no key, no landlord's name, email or phone, nothing
+    from anyone's property log, no question anyone asked. Entries that are GC Realty's own
+    house rules are labelled as such, and a few are held back entirely - the command tells
+    you which and why.
+
+    That bot is not Jay. Its answers are not guarded, logged or reviewed the way Jay's are.
+
+        mark export
+        mark export --out docs\\grok
+    """
+    from datetime import date
+
+    from markai.sources.export import context_pack, instructions
+    from markai.sources.facts import facts_path, load_facts
+
+    settings = _settings()
+    manifest = _manifest(settings)
+    path = facts_path(settings.sources_file)
+    book = load_facts(path)
+    if book.is_empty():
+        _fail(f"No facts to export - {path} is empty or missing.", "Run `mark facts review`.")
+
+    today = date.today()
+    folder = Path(out) if out else settings.data_dir
+    folder.mkdir(parents=True, exist_ok=True)
+    pack_file = folder / "gc-context-pack.md"
+    rules_file = folder / "gc-context-instructions.md"
+
+    body, held = context_pack(book, manifest, today, include_costs=costs)
+    pack_file.write_text(body, encoding="utf-8")
+    rules = instructions(
+        manifest,
+        kept=len(book.in_force(today)) - len(held),
+        costs=len(book.costs) if costs else 0,
+        today=today,
+        pack_name=pack_file.name,
+    )
+    rules_file.write_text(rules, encoding="utf-8")
+
+    console.print(f"[green]OK[/green] {escape(str(pack_file))} — upload this one as a file")
+    console.print(
+        f"[green]OK[/green] {escape(str(rules_file))} — paste this into the bot's "
+        f"custom instructions ({len(rules):,} characters)"
+    )
+    if held:
+        console.print("\nHeld back, deliberately:")
+        for line in held:
+            console.print(f"  {escape(line)}")
+    if not manifest.business.never_say:
+        console.print(
+            "\n[yellow]![/yellow] `never_say` in sources.yaml is empty. On a surface with no "
+            "guardrails it is the only brake the pack carries - worth filling in."
+        )
+
+
 def _accounts_store(settings: Any) -> Any:
     from markai.web.accounts import Accounts
 
